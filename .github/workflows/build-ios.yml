@@ -2,10 +2,7 @@ name: Build iOS App
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +10,7 @@ permissions:
 
 jobs:
   build-ios:
-    runs-on: macos-latest
+    runs-on: macos-14
     name: iOS (aarch64)
 
     steps:
@@ -22,7 +19,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-ios
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -38,32 +35,30 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Tauri CLI
-        run: npm run tauri -- --version || npx @tauri-apps/cli --version
-
-      - name: Initialize iOS project (if needed)
-        run: |
-          if [ ! -d "src-tauri/gen/apple" ]; then
-            npx tauri ios init
-          fi
+      - name: Initialize iOS project
+        run: npx tauri ios init
 
       - name: Build frontend
         run: npm run build
 
-      - name: Build iOS (debug, no signing)
-        run: npx tauri ios build --debug
-        env:
-          # For CI builds without signing, we build debug only
-          # For production releases, configure signing in GitHub Secrets:
-          #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD,
-          #   APPLE_SIGNING_IDENTITY, APPLE_PROVISIONING_PROFILE
-          TAURI_APPLE_DEVELOPMENT_TEAM: ""
+      - name: Build iOS (simulator, no signing)
+        run: |
+          cd src-tauri/gen/apple
+          xcodebuild \
+            -project "sysml-studio.xcodeproj" \
+            -scheme "sysml-studio_iOS" \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: ios-debug
-          path: |
-            src-tauri/gen/apple/build/**/*.app
-            src-tauri/gen/apple/build/**/*.ipa
+          name: ios-simulator-debug
+          path: src-tauri/gen/apple/build/
           retention-days: 14

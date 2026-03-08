@@ -2,10 +2,7 @@ name: Build Android App
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -39,9 +36,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Android NDK
-        run: |
-          sdkmanager --install "ndk;27.0.12077973"
-          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+        run: sdkmanager --install "ndk;27.0.12077973"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -52,14 +47,10 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install Tauri CLI
-        run: npx @tauri-apps/cli --version
-
-      - name: Initialize Android project (if needed)
-        run: |
-          if [ ! -d "src-tauri/gen/android" ]; then
-            npx tauri android init
-          fi
+      - name: Initialize Android project
+        run: npx tauri android init
+        env:
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
       - name: Build frontend
         run: npm run build
@@ -67,7 +58,7 @@ jobs:
       - name: Build Android APK (debug)
         run: npx tauri android build --debug
         env:
-          NDK_HOME: ${{ env.NDK_HOME }}
+          NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
