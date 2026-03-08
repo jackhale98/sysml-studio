@@ -219,3 +219,156 @@ pub fn get_connected_elements(
 
     Ok(graph.connected_elements(element_id).into_iter().collect())
 }
+
+/// Syntax highlighting token from tree-sitter parse tree
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct HighlightToken {
+    pub start: u32,
+    pub end: u32,
+    pub kind: String,  // "keyword", "type", "comment", "string", "number", "punctuation", "definition", "property", "operator"
+}
+
+/// Walk the tree-sitter parse tree and extract highlight tokens
+#[tauri::command]
+pub fn get_highlight_ranges(state: State<'_, AppState>) -> Result<Vec<HighlightToken>, String> {
+    let parser = state.parser.lock().map_err(|e| e.to_string())?;
+    let tree = parser.tree().ok_or("No parse tree available")?;
+
+    let mut tokens = Vec::new();
+    let mut cursor = tree.root_node().walk();
+    walk_for_highlights(&mut cursor, &mut tokens);
+
+    // Sort by start position for efficient decoration application
+    tokens.sort_by_key(|t| t.start);
+    Ok(tokens)
+}
+
+fn walk_for_highlights(cursor: &mut tree_sitter::TreeCursor, tokens: &mut Vec<HighlightToken>) {
+    loop {
+        let node = cursor.node();
+
+        // Process leaf nodes and specific named nodes
+        if node.child_count() == 0 {
+            // Leaf node — classify it
+            let start = node.start_byte() as u32;
+            let end = node.end_byte() as u32;
+            if start == end {
+                // Skip zero-width nodes
+                if !cursor.goto_next_sibling() {
+                    loop {
+                        if !cursor.goto_parent() { return; }
+                        if cursor.goto_next_sibling() { break; }
+                    }
+                }
+                continue;
+            }
+
+            let kind_str = node.kind();
+            let is_named = node.is_named();
+
+            let highlight = if !is_named {
+                // Anonymous (literal) nodes — keywords and punctuation
+                classify_anonymous(kind_str)
+            } else {
+                // Named leaf nodes
+                classify_named_leaf(kind_str, cursor)
+            };
+
+            if let Some(h) = highlight {
+                tokens.push(HighlightToken { start, end, kind: h.to_string() });
+            }
+        } else {
+            // Non-leaf named nodes — handle comments and doc_comments as whole spans
+            let kind_str = node.kind();
+            match kind_str {
+                "doc_comment" | "comment_element" | "block_comment" => {
+                    tokens.push(HighlightToken {
+                        start: node.start_byte() as u32,
+                        end: node.end_byte() as u32,
+                        kind: "comment".to_string(),
+                    });
+                    // Don't recurse into comment children
+                    if !cursor.goto_next_sibling() {
+                        loop {
+                            if !cursor.goto_parent() { return; }
+                            if cursor.goto_next_sibling() { break; }
+                        }
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        // Depth-first traversal
+        if node.child_count() > 0 && cursor.goto_first_child() {
+            continue;
+        }
+        if cursor.goto_next_sibling() {
+            continue;
+        }
+        loop {
+            if !cursor.goto_parent() { return; }
+            if cursor.goto_next_sibling() { break; }
+        }
+    }
+}
+
+fn classify_anonymous(text: &str) -> Option<&'static str> {
+    match text {
+        // SysML keywords
+        "package" | "part" | "def" | "attribute" | "port" | "connection" | "interface" |
+        "item" | "action" | "state" | "transition" | "constraint" | "requirement" |
+        "concern" | "view" | "viewpoint" | "rendering" | "allocation" | "analysis" |
+        "case" | "use" | "verification" | "enum" | "enumeration" | "occurrence" |
+        "flow" | "import" | "alias" | "abstract" | "readonly" | "derived" |
+        "in" | "out" | "inout" | "first" | "then" | "do" | "entry" | "exit" |
+        "if" | "else" | "accept" | "send" | "assign" | "assert" | "satisfy" |
+        "after" | "at" | "when" | "decide" | "merge" | "fork" | "join" |
+        "private" | "protected" | "public" | "ref" | "connect" | "to" |
+        "allocate" | "expose" | "exhibit" | "include" | "perform" |
+        "require" | "assume" | "verify" | "subject" | "actor" | "objective" |
+        "stakeholder" | "calc" | "function" | "predicate" | "metadata" |
+        "about" | "doc" | "comment" | "variation" | "variant" | "individual" |
+        "snapshot" | "timeslice" | "event" | "bind" | "succession" | "message" |
+        "dependency" | "filter" | "render" | "return" => Some("keyword"),
+
+        // Operators
+        ":>" | ":>>" | "~" | "=" | "==" | "!=" | "<" | ">" | "<=" | ">=" |
+        "+" | "-" | "*" | "/" | "**" | ".." | "->" | "." | "::" => Some("operator"),
+
+        // Punctuation
+        "{" | "}" | "(" | ")" | "[" | "]" | ";" | ":" | "," | "|" | "&" | "@" | "#" => Some("punctuation"),
+
+        // Boolean/null literals
+        "true" | "false" | "null" => Some("literal"),
+
+        _ => None,
+    }
+}
+
+fn classify_named_leaf(kind: &str, cursor: &tree_sitter::TreeCursor) -> Option<&'static str> {
+    match kind {
+        "identifier" => {
+            // Check parent context to determine if this is a type name or definition name
+            let field = cursor.field_name();
+            match field {
+                Some("name") => {
+                    // Check grandparent to see if this is a definition name
+                    // We can't easily look at grandparent with the cursor, so just return "definition"
+                    Some("definition")
+                }
+                Some("type") | Some("target") => Some("type"),
+                _ => {
+                    // Bare identifier — could be a type reference after ":"
+                    // We'll let the parent classification handle it
+                    None
+                }
+            }
+        }
+        "qualified_name" => None, // will be handled by its children
+        "number_literal" | "integer_literal" | "real_literal" => Some("number"),
+        "string_literal" => Some("string"),
+        _ => None,
+    }
+}

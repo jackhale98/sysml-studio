@@ -1,7 +1,98 @@
-import React, { useRef, useCallback, useEffect, useState } from "react";
+import React, { useRef, useCallback, useEffect, useMemo } from "react";
+import { EditorView as CMEditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorState, Compartment } from "@codemirror/state";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { bracketMatching, indentOnInput, foldGutter, foldKeymap } from "@codemirror/language";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { lintGutter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
+import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
 import { useModelStore } from "../../stores/model-store";
 import { useUIStore } from "../../stores/ui-store";
-import { SYSML_KEYWORDS } from "../../lib/constants";
+import {
+  sysmlBrowserHighlighting,
+  sysmlTreeSitterHighlighting,
+  dispatchHighlightTokens,
+} from "./sysml-language";
+import { getHighlightRanges } from "../../lib/tauri-bridge";
+
+const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+
+// ─── CodeMirror Theme ───
+
+const darkTheme = CMEditorView.theme({
+  "&": {
+    backgroundColor: "var(--bg-primary)",
+    color: "#94a3b8",
+    height: "100%",
+    fontSize: "13px",
+    fontFamily: "var(--font-mono)",
+  },
+  ".cm-content": { caretColor: "#60a5fa", padding: "12px 0" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#60a5fa", borderLeftWidth: "2px" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgba(59,130,246,0.25)",
+  },
+  ".cm-gutters": {
+    backgroundColor: "var(--bg-secondary)",
+    color: "#334155",
+    border: "none",
+    borderRight: "1px solid var(--border)",
+  },
+  ".cm-activeLineGutter": { backgroundColor: "rgba(59,130,246,0.08)", color: "#64748b" },
+  ".cm-activeLine": { backgroundColor: "rgba(59,130,246,0.06)" },
+  ".cm-foldGutter .cm-gutterElement": { color: "#475569", padding: "0 4px" },
+  ".cm-matchingBracket": { backgroundColor: "rgba(59,130,246,0.2)", outline: "1px solid rgba(59,130,246,0.4)" },
+  ".cm-selectionMatch": { backgroundColor: "rgba(59,130,246,0.12)" },
+  ".cm-searchMatch": { backgroundColor: "rgba(251,191,36,0.2)", outline: "1px solid rgba(251,191,36,0.4)" },
+  // Lint gutter icons
+  ".cm-lint-marker-error": { content: '"●"', color: "#ef4444" },
+  ".cm-lint-marker-warning": { content: '"●"', color: "#fbbf24" },
+  // Highlighted scroll target line
+  ".cm-highlight-line": { backgroundColor: "rgba(59,130,246,0.15)", transition: "background 0.3s" },
+}, { dark: true });
+
+const lightTheme = CMEditorView.theme({
+  "&": {
+    backgroundColor: "var(--bg-primary)",
+    color: "#334155",
+    height: "100%",
+    fontSize: "13px",
+    fontFamily: "var(--font-mono)",
+  },
+  ".cm-content": { caretColor: "#2563eb", padding: "12px 0" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "#2563eb", borderLeftWidth: "2px" },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+    backgroundColor: "rgba(37,99,235,0.15)",
+  },
+  ".cm-gutters": {
+    backgroundColor: "var(--bg-secondary)",
+    color: "#94a3b8",
+    border: "none",
+    borderRight: "1px solid var(--border)",
+  },
+  ".cm-activeLineGutter": { backgroundColor: "rgba(37,99,235,0.06)", color: "#64748b" },
+  ".cm-activeLine": { backgroundColor: "rgba(37,99,235,0.04)" },
+  ".cm-foldGutter .cm-gutterElement": { color: "#94a3b8", padding: "0 4px" },
+  ".cm-matchingBracket": { backgroundColor: "rgba(37,99,235,0.15)", outline: "1px solid rgba(37,99,235,0.3)" },
+  ".cm-selectionMatch": { backgroundColor: "rgba(37,99,235,0.08)" },
+  ".cm-searchMatch": { backgroundColor: "rgba(245,158,11,0.15)", outline: "1px solid rgba(245,158,11,0.3)" },
+  ".cm-highlight-line": { backgroundColor: "rgba(37,99,235,0.1)", transition: "background 0.3s" },
+}, { dark: false });
+
+// ─── Snippet Toolbar Items ───
+
+const SNIPPETS = [
+  { label: "part def", text: "part def NewPart {\n  \n}" },
+  { label: "part", text: "part newPart : PartType;" },
+  { label: "attribute", text: "attribute name : String;" },
+  { label: "port", text: "port portName : PortType;" },
+  { label: "action", text: "action def NewAction {\n  \n}" },
+  { label: "state", text: "state def NewState {\n  \n}" },
+  { label: "requirement", text: 'requirement def NewReq {\n  doc /* Description */\n}' },
+  { label: "enum", text: "enum def Status {\n  enum active;\n  enum inactive;\n}" },
+] as const;
+
+// ─── Editor Component ───
 
 export function EditorView() {
   const source = useModelStore((s) => s.source);
@@ -9,82 +100,195 @@ export function EditorView() {
   const model = useModelStore((s) => s.model);
   const scrollToLine = useUIStore((s) => s.scrollToLine);
   const clearScrollToLine = useUIStore((s) => s.clearScrollToLine);
+  const theme = useUIStore((s) => s.theme);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<CMEditorView | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const editorContainerRef = useRef<HTMLDivElement>(null);
-  const [highlightedLine, setHighlightedLine] = useState<number | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const themeCompartment = useRef(new Compartment());
+  // Track if source is being updated from outside (store → editor sync)
+  const externalUpdateRef = useRef(false);
 
-  const handleChange = useCallback((newSource: string) => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => {
-      updateSource(newSource);
-    }, 300);
-  }, [updateSource]);
+  // Choose highlight mode
+  const highlightExtension = useMemo(() => {
+    return isTauri ? sysmlTreeSitterHighlighting() : sysmlBrowserHighlighting();
+  }, []);
 
-  // Scroll to target line when navigated from diagram/browser
+  // Fetch tree-sitter highlights from Rust backend
+  const fetchHighlights = useCallback(async (view: CMEditorView) => {
+    if (!isTauri) return;
+    try {
+      const tokens = await getHighlightRanges();
+      if (tokens.length > 0 && viewRef.current === view) {
+        dispatchHighlightTokens(view, tokens);
+      }
+    } catch {
+      // Ignore — Rust backend may not have parsed yet
+    }
+  }, []);
+
+  // Initialize CodeMirror
   useEffect(() => {
-    if (scrollToLine !== null && editorContainerRef.current) {
-      const lineHeight = 22;
-      const targetScroll = Math.max(0, scrollToLine * lineHeight - 100);
-      editorContainerRef.current.scrollTop = targetScroll;
-      setHighlightedLine(scrollToLine);
-      clearScrollToLine();
-      // Clear highlight after 2 seconds
-      const timer = setTimeout(() => setHighlightedLine(null), 2000);
-      return () => clearTimeout(timer);
-    }
-  }, [scrollToLine, clearScrollToLine]);
+    if (!containerRef.current) return;
 
-  const lines = source.split("\n");
-
-  const highlightLine = (line: string): React.ReactNode[] => {
-    const trimmed = line.trimStart();
-    const indent = line.length - trimmed.length;
-    const spans: React.ReactNode[] = [];
-
-    spans.push(<span key="indent" style={{ color: "transparent" }}>{" ".repeat(indent)}</span>);
-
-    if (trimmed.startsWith("//") || trimmed.startsWith("doc")) {
-      spans.push(<span key="c" style={{ color: "#4a6741" }}>{trimmed}</span>);
-      return spans;
-    }
-
-    if (trimmed.startsWith("/*")) {
-      spans.push(<span key="c" style={{ color: "#4a6741" }}>{trimmed}</span>);
-      return spans;
-    }
-
-    const tokens = trimmed.split(/(\s+|[{};:\[\]=<>,.|&+\-*/~@#()!?])/);
-    tokens.forEach((tok, j) => {
-      if (!tok) return;
-      if (SYSML_KEYWORDS.includes(tok)) {
-        spans.push(<span key={j} style={{ color: "#c084fc" }}>{tok}</span>);
-      } else if (/^\d+(\.\d+)?$/.test(tok)) {
-        spans.push(<span key={j} style={{ color: "#fbbf24" }}>{tok}</span>);
-      } else if (/^[{};:\[\]=<>,.|&+\-*/~@#()!?]$/.test(tok)) {
-        spans.push(<span key={j} style={{ color: "#475569" }}>{tok}</span>);
-      } else if (/^[A-Z]/.test(tok)) {
-        spans.push(<span key={j} style={{ color: "#38bdf8" }}>{tok}</span>);
-      } else if (/^\s+$/.test(tok)) {
-        spans.push(<span key={j}>{tok}</span>);
-      } else {
-        spans.push(<span key={j} style={{ color: "#94a3b8" }}>{tok}</span>);
+    const updateListener = CMEditorView.updateListener.of((update: import("@codemirror/view").ViewUpdate) => {
+      if (update.docChanged && !externalUpdateRef.current) {
+        const newSource = update.state.doc.toString();
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+          updateSource(newSource).then(() => {
+            // After parse completes, fetch new highlights
+            if (viewRef.current) fetchHighlights(viewRef.current);
+          });
+        }, 400);
       }
     });
 
-    return spans;
-  };
+    const isDark = theme === "dark";
+    const state = EditorState.create({
+      doc: source,
+      extensions: [
+        lineNumbers(),
+        highlightActiveLineGutter(),
+        highlightActiveLine(),
+        history(),
+        foldGutter(),
+        drawSelection(),
+        indentOnInput(),
+        bracketMatching(),
+        closeBrackets(),
+        highlightSelectionMatches(),
+        lintGutter(),
+        keymap.of([
+          ...defaultKeymap,
+          ...historyKeymap,
+          ...closeBracketsKeymap,
+          ...foldKeymap,
+          ...searchKeymap,
+          indentWithTab,
+        ]),
+        highlightExtension,
+        themeCompartment.current.of(isDark ? darkTheme : lightTheme),
+        updateListener,
+        CMEditorView.lineWrapping,
+        EditorState.tabSize.of(2),
+      ],
+    });
+
+    const view = new CMEditorView({ state, parent: containerRef.current });
+    viewRef.current = view;
+
+    // Initial highlight fetch
+    fetchHighlights(view);
+
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+    // Only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Sync theme changes
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const isDark = theme === "dark";
+    view.dispatch({
+      effects: themeCompartment.current.reconfigure(isDark ? darkTheme : lightTheme),
+    });
+  }, [theme]);
+
+  // Sync source from store → editor (when source changes externally, e.g. file open)
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    const currentDoc = view.state.doc.toString();
+    if (currentDoc !== source) {
+      externalUpdateRef.current = true;
+      view.dispatch({
+        changes: { from: 0, to: currentDoc.length, insert: source },
+      });
+      externalUpdateRef.current = false;
+      // Fetch highlights after external source change
+      fetchHighlights(view);
+    }
+  }, [source, fetchHighlights]);
+
+  // Sync parse errors as CodeMirror diagnostics
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || !model) return;
+
+    const diagnostics: Diagnostic[] = [];
+    for (const err of model.errors) {
+      const from = err.span.start_byte;
+      const to = Math.max(err.span.end_byte, from + 1);
+      const docLen = view.state.doc.length;
+      if (from >= docLen) continue;
+      diagnostics.push({
+        from: Math.min(from, docLen),
+        to: Math.min(to, docLen),
+        severity: "error",
+        message: err.message,
+      });
+    }
+
+    view.dispatch(setDiagnostics(view.state, diagnostics));
+  }, [model]);
+
+  // Scroll to line when navigated from browser/diagram
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view && scrollToLine !== null) {
+      const line = Math.min(scrollToLine + 1, view.state.doc.lines);
+      const lineInfo = view.state.doc.line(line);
+
+      view.dispatch({
+        selection: { anchor: lineInfo.from },
+        scrollIntoView: true,
+      });
+
+      view.focus();
+
+      clearScrollToLine();
+    }
+  }, [scrollToLine, clearScrollToLine]);
+
+  // Insert snippet at cursor
+  const insertSnippet = useCallback((text: string) => {
+    const view = viewRef.current;
+    if (!view) return;
+    const cursor = view.state.selection.main.head;
+    // Determine indentation from current line
+    const line = view.state.doc.lineAt(cursor);
+    const indent = line.text.match(/^\s*/)?.[0] ?? "";
+    const indented = text.split("\n").map((l, i) => i === 0 ? l : indent + l).join("\n");
+
+    view.dispatch({
+      changes: { from: cursor, insert: indented },
+      selection: { anchor: cursor + indented.length },
+    });
+    view.focus();
+  }, []);
+
+  const lines = viewRef.current?.state.doc.lines ?? source.split("\n").length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      {/* Editor toolbar */}
+      {/* Snippet toolbar */}
       <div style={{
         display: "flex", gap: 4, padding: "8px 14px",
         background: "var(--bg-secondary)", borderBottom: "1px solid var(--border)",
-        overflowX: "auto",
+        overflowX: "auto", flexShrink: 0,
       }}>
-        {["part def", "attribute", "port", "action", "state", "requirement", "{ }", ": "].map((snippet) => (
+        {SNIPPETS.map((snippet) => (
           <button
-            key={snippet}
+            key={snippet.label}
+            onClick={() => insertSnippet(snippet.text)}
             style={{
               padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
               fontFamily: "var(--font-mono)", border: "1px solid var(--border)",
@@ -92,53 +296,24 @@ export function EditorView() {
               cursor: "pointer", whiteSpace: "nowrap", minHeight: 30,
             }}
           >
-            {snippet}
+            {snippet.label}
           </button>
         ))}
       </div>
 
-      {/* Editor content */}
-      <div ref={editorContainerRef} style={{ flex: 1, overflow: "auto", background: "var(--bg-primary)", padding: "12px 0" }}>
-        <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: "22px" }}>
-          {lines.map((line, i) => {
-            const hasError = model?.errors.some(
-              (e) => e.span.start_line <= i && e.span.end_line >= i
-            );
-            return (
-              <div
-                key={i}
-                style={{
-                  display: "flex", minHeight: 22,
-                  background: highlightedLine === i
-                    ? "rgba(59,130,246,0.15)"
-                    : hasError ? "rgba(239,68,68,0.08)" : "transparent",
-                  transition: "background 0.3s",
-                }}
-              >
-                <span style={{
-                  display: "inline-block", width: 44, textAlign: "right", paddingRight: 12,
-                  color: hasError ? "#ef4444" : "#334155", fontSize: 11,
-                  userSelect: "none", flexShrink: 0,
-                }}>
-                  {i + 1}
-                </span>
-                <div style={{ flex: 1, whiteSpace: "pre" }}>
-                  {highlightLine(line)}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* CodeMirror container */}
+      <div ref={containerRef} style={{ flex: 1, overflow: "hidden" }} />
 
       {/* Status bar */}
       <div style={{
         display: "flex", justifyContent: "space-between", padding: "4px 14px",
         background: "var(--bg-secondary)", borderTop: "1px solid var(--border)",
         fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)",
+        flexShrink: 0,
       }}>
-        <span>{lines.length} lines</span>
+        <span>{lines} lines</span>
         <span>{model?.stats.errors ?? 0} errors</span>
+        <span>{model?.stats.parse_time_ms !== undefined ? `${model.stats.parse_time_ms.toFixed(1)}ms` : ""}</span>
         <span>SysML v2</span>
       </div>
     </div>

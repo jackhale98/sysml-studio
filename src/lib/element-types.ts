@@ -168,3 +168,10 @@ export interface ValidationReport {
   issues: ValidationIssue[];
   summary: { errors: number; warnings: number; infos: number };
 }
+
+// Syntax highlighting token from tree-sitter
+export interface HighlightToken {
+  start: number;
+  end: number;
+  kind: string; // "keyword" | "type" | "comment" | "string" | "number" | "punctuation" | "definition" | "operator" | "literal"
+}

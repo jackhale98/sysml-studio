@@ -27,6 +27,7 @@ pub fn run() {
             commands::parse_commands::get_traceability_matrix,
             commands::parse_commands::get_connected_elements,
             commands::parse_commands::get_validation,
+            commands::parse_commands::get_highlight_ranges,
             commands::diagram_commands::compute_bdd_layout,
             commands::diagram_commands::compute_stm_layout,
             commands::diagram_commands::compute_req_layout,

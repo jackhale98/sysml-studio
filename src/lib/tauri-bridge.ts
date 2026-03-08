@@ -1,7 +1,7 @@
 import type {
   SysmlModel, SysmlElement, ElementId,
   CompletenessReport, TraceabilityEntry,
-  DiagramLayout, ValidationReport
+  DiagramLayout, ValidationReport, HighlightToken
 } from "./element-types";
 import {
   browserParse, browserBddLayout, browserStmLayout,
@@ -196,6 +196,21 @@ export async function reparseSource(
 
 export async function getConnectedElements(elementId: ElementId): Promise<ElementId[]> {
   if (isTauri) return tauriInvoke<ElementId[]>("get_connected_elements", { elementId });
+  return [];
+}
+
+// Syntax Highlighting
+export async function getHighlightRanges(): Promise<HighlightToken[]> {
+  if (isTauri) return tauriInvoke<HighlightToken[]>("get_highlight_ranges");
+  // Browser fallback: use regex-based tokenizer
+  return browserHighlight(cachedModel);
+}
+
+/** Simple regex tokenizer for browser mode (fallback when no Rust backend) */
+function browserHighlight(model: SysmlModel | null): HighlightToken[] {
+  if (!model) return [];
+  // For browser mode we don't have the raw source bytes accessible from the model,
+  // so return empty — the CodeMirror StreamLanguage handles browser-mode highlighting
   return [];
 }
 
