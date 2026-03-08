@@ -79,19 +79,23 @@ const SAMPLE_SOURCE = `package VehicleSystem {
     requirement safetyAirbag;
   }
 
-  part def DriverActor {
+  part def Driver {
+    doc /* Primary vehicle operator */
   }
 
   use case def DriveVehicle {
     doc /* Driver operates the vehicle */
+    actor driver : Driver;
   }
 
   use case def RefuelVehicle {
     doc /* Driver refuels the vehicle */
+    actor driver : Driver;
   }
 
   use case def PerformMaintenance {
     doc /* Maintain vehicle systems */
+    actor mechanic : Driver;
   }
 }
 `;

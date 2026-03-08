@@ -54,6 +54,27 @@ impl ModelBuilder {
             let doc = self.extract_doc(&node);
             let short_name = self.extract_short_name(&node);
 
+            // For transitions, extract source/target from qualified_name children
+            // AST: (transition_statement name: (id) (qualified_name source) (qualified_name target))
+            let (type_ref, specializations) = if kind == ElementKind::TransitionStatement
+                || kind == ElementKind::InlineTransition
+            {
+                let mut qnames = Vec::new();
+                let mut tcursor = node.walk();
+                for child in node.children(&mut tcursor) {
+                    if child.kind() == "qualified_name" {
+                        qnames.push(self.node_text(&child));
+                    }
+                }
+                match qnames.len() {
+                    2 => (Some(qnames[1].clone()), vec![qnames[0].clone()]),
+                    1 => (Some(qnames[0].clone()), specializations),
+                    _ => (type_ref, specializations),
+                }
+            } else {
+                (type_ref, specializations)
+            };
+
             let element = SysmlElement {
                 id,
                 kind,
@@ -618,5 +639,128 @@ part def Sys {
             .iter().filter(|&&x| x).count();
         assert!(new_types_found > 0 || errors.len() <= 2,
             "Expected some new node types or minor parse issues. Found: {:?}, Errors: {:?}", kinds, errors);
+    }
+
+    #[test]
+    fn test_transition_data_extraction() {
+        let source = r#"
+state def EngineStates {
+    state off;
+    state running;
+    state idle;
+
+    transition off_to_running
+        first off
+        then running;
+
+    transition running_to_idle
+        first running
+        then idle;
+}
+"#;
+        let (elements, errors) = parse_and_build(source);
+        eprintln!("Parse errors: {:?}", errors);
+
+        // Dump all elements with full detail
+        for el in &elements {
+            eprintln!(
+                "kind={:?} name={:?} type_ref={:?} specializations={:?} parent_id={:?}",
+                el.kind, el.name, el.type_ref, el.specializations, el.parent_id
+            );
+        }
+
+        let transitions: Vec<_> = elements.iter()
+            .filter(|e| e.kind == ElementKind::TransitionStatement)
+            .collect();
+        eprintln!("Found {} transitions", transitions.len());
+
+        for t in &transitions {
+            eprintln!(
+                "Transition '{}': type_ref={:?}, specializations={:?}",
+                t.name.as_deref().unwrap_or("<anon>"),
+                t.type_ref,
+                t.specializations,
+            );
+        }
+
+        // Also dump the raw tree-sitter AST
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_sysml::language()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        eprintln!("AST:\n{}", tree.root_node().to_sexp());
+    }
+
+    #[test]
+    fn test_inline_transition_syntax() {
+        // Tests the compact "first X then Y;" syntax used in the sample source
+        let source = r#"
+part def Engine {
+    state def EngineStates {
+      state off;
+      state idle;
+      state running;
+
+      transition off_to_idle
+        first off then idle;
+      transition idle_to_running
+        first idle then running;
+    }
+}
+"#;
+        let (elements, errors) = parse_and_build(source);
+        eprintln!("Parse errors: {:?}", errors);
+        for el in &elements {
+            eprintln!("kind={:?} name={:?} type_ref={:?} specs={:?}", el.kind, el.name, el.type_ref, el.specializations);
+        }
+
+        let transitions: Vec<_> = elements.iter()
+            .filter(|e| e.kind == ElementKind::TransitionStatement)
+            .collect();
+
+        assert_eq!(transitions.len(), 2, "Should find 2 transitions");
+
+        // off_to_idle: source=off, target=idle
+        let t1 = transitions.iter().find(|t| t.name.as_deref() == Some("off_to_idle")).unwrap();
+        assert_eq!(t1.specializations.first().map(|s| s.as_str()), Some("off"), "Source should be 'off'");
+        assert_eq!(t1.type_ref.as_deref(), Some("idle"), "Target should be 'idle'");
+
+        // idle_to_running: source=idle, target=running
+        let t2 = transitions.iter().find(|t| t.name.as_deref() == Some("idle_to_running")).unwrap();
+        assert_eq!(t2.specializations.first().map(|s| s.as_str()), Some("idle"), "Source should be 'idle'");
+        assert_eq!(t2.type_ref.as_deref(), Some("running"), "Target should be 'running'");
+    }
+
+    #[test]
+    fn test_actor_and_usecase_parsing() {
+        let source = r#"
+package VehicleSystem {
+    part def Driver { }
+
+    use case def DriveVehicle {
+        actor driver : Driver;
+    }
+
+    use case def RefuelVehicle {
+        actor driver : Driver;
+    }
+}
+"#;
+        let (elements, errors) = parse_and_build(source);
+        assert!(errors.is_empty(), "No parse errors expected: {:?}", errors);
+
+        let actors: Vec<_> = elements.iter()
+            .filter(|e| e.kind == ElementKind::ActorDeclaration)
+            .collect();
+        assert_eq!(actors.len(), 2, "Should find 2 actor declarations");
+
+        // Actor declarations should have type_ref pointing to the type
+        for a in &actors {
+            assert_eq!(a.type_ref.as_deref(), Some("Driver"), "Actor should reference Driver type");
+            assert_eq!(a.name.as_deref(), Some("driver"), "Actor instance named 'driver'");
+        }
+
+        // First actor's parent should be DriveVehicle use case
+        let drive_uc = elements.iter().find(|e| e.name.as_deref() == Some("DriveVehicle")).unwrap();
+        assert_eq!(actors[0].parent_id, Some(drive_uc.id));
     }
 }

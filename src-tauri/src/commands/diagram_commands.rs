@@ -302,45 +302,67 @@ pub fn compute_stm_layout(
         });
     }
 
-    // Create edges from transitions
-    // Transitions typically reference source and target states
+    // Create edges from transitions using parsed source/target data
     let mut edges = Vec::new();
     for trans in &transitions {
-        // Try to match transition source/target from name or context
-        // For now, create edges based on the transition's children in the model
-        if let Some(ref name) = trans.name {
-            // Convention: transition names often encode from_to pattern
-            let parts: Vec<&str> = name.split("_to_").collect();
-            if parts.len() == 2 {
-                let from_state = nodes.iter().find(|n| n.label == parts[0]);
-                let to_state = nodes.iter().find(|n| n.label == parts[1]);
+        let source_name = trans.specializations.first().map(|s| s.as_str());
+        let target_name = trans.type_ref.as_deref();
 
-                if let (Some(from), Some(to)) = (from_state, to_state) {
-                    let from_center = (from.x + from.width / 2.0, from.y + from.height / 2.0);
-                    let to_center = (to.x + to.width / 2.0, to.y + to.height / 2.0);
-
-                    edges.push(DiagramEdge {
-                        from_id: from.element_id,
-                        to_id: to.element_id,
-                        label: Some(name.clone()),
-                        edge_type: "transition".into(),
-                        points: vec![from_center, to_center],
-                    });
+        // Fall back to name splitting if parsed data is missing
+        let (source_name, target_name) = match (source_name, target_name) {
+            (Some(s), Some(t)) => (Some(s), Some(t)),
+            _ => {
+                // Legacy fallback: try splitting name on "_to_"
+                if let Some(ref name) = trans.name {
+                    let parts: Vec<&str> = name.split("_to_").collect();
+                    if parts.len() == 2 {
+                        (Some(parts[0]), Some(parts[1]))
+                    } else {
+                        (None, None)
+                    }
+                } else {
+                    (None, None)
                 }
+            }
+        };
+
+        if let (Some(src), Some(tgt)) = (source_name, target_name) {
+            let from_state = nodes.iter().find(|n| n.label == src);
+            let to_state = nodes.iter().find(|n| n.label == tgt);
+
+            if let (Some(from), Some(to)) = (from_state, to_state) {
+                let from_center = (from.x + from.width / 2.0, from.y + from.height / 2.0);
+                let to_center = (to.x + to.width / 2.0, to.y + to.height / 2.0);
+
+                let label = trans.name.clone()
+                    .unwrap_or_else(|| format!("{} → {}", src, tgt));
+
+                edges.push(DiagramEdge {
+                    from_id: from.element_id,
+                    to_id: to.element_id,
+                    label: Some(label),
+                    edge_type: "transition".into(),
+                    points: vec![from_center, to_center],
+                });
             }
         }
     }
 
-    let min_x = nodes.iter().map(|n| n.x).fold(f64::MAX, f64::min).min(0.0);
-    let min_y = nodes.iter().map(|n| n.y).fold(f64::MAX, f64::min).min(0.0);
-    let max_x = nodes.iter().map(|n| n.x + n.width).fold(f64::MIN, f64::max).max(0.0);
-    let max_y = nodes.iter().map(|n| n.y + n.height).fold(f64::MIN, f64::max).max(0.0);
+    let bounds = if nodes.is_empty() {
+        (0.0, 0.0, 400.0, 300.0)
+    } else {
+        let min_x = nodes.iter().map(|n| n.x).fold(f64::MAX, f64::min).min(0.0);
+        let min_y = nodes.iter().map(|n| n.y).fold(f64::MAX, f64::min).min(0.0);
+        let max_x = nodes.iter().map(|n| n.x + n.width).fold(f64::MIN, f64::max).max(0.0);
+        let max_y = nodes.iter().map(|n| n.y + n.height).fold(f64::MIN, f64::max).max(0.0);
+        (min_x, min_y, max_x, max_y)
+    };
 
     Ok(DiagramLayout {
         diagram_type: "stm".into(),
         nodes,
         edges,
-        bounds: (min_x, min_y, max_x, max_y),
+        bounds,
     })
 }
 
@@ -513,10 +535,39 @@ pub fn compute_ucd_layout(
     };
     let all_use_cases: Vec<&&SysmlElement> = use_cases.iter().chain(actions.iter()).collect();
 
-    let actors: Vec<&SysmlElement> = model.elements.iter()
-        .filter(|e| e.kind == ElementKind::ActorDeclaration ||
-            (e.kind == ElementKind::PartDef && e.name.as_deref().map(|n| n.to_lowercase().contains("actor")).unwrap_or(false)))
+    // Collect unique actor types from actor_declarations inside use cases
+    // Each actor_declaration has type_ref pointing to the actor type (e.g., "Driver")
+    let actor_decls: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| e.kind == ElementKind::ActorDeclaration)
         .collect();
+
+    // Deduplicate actors by type_ref (or name if no type_ref)
+    let mut actor_type_names: Vec<String> = Vec::new();
+    let mut actor_type_ids: Vec<ElementId> = Vec::new();
+    for ad in &actor_decls {
+        let actor_label = ad.type_ref.as_deref()
+            .or(ad.name.as_deref())
+            .unwrap_or("<unnamed>");
+        if !actor_type_names.contains(&actor_label.to_string()) {
+            actor_type_names.push(actor_label.to_string());
+            // Try to find the actual type element for the ID; fall back to the declaration ID
+            let type_el = model.elements.iter()
+                .find(|e| e.name.as_deref() == Some(actor_label));
+            actor_type_ids.push(type_el.map(|e| e.id).unwrap_or(ad.id));
+        }
+    }
+
+    // Also pick up part defs with "actor" in the name that aren't already covered
+    for el in model.elements.iter() {
+        if el.kind == ElementKind::PartDef {
+            if let Some(ref name) = el.name {
+                if name.to_lowercase().contains("actor") && !actor_type_ids.contains(&el.id) {
+                    actor_type_names.push(name.clone());
+                    actor_type_ids.push(el.id);
+                }
+            }
+        }
+    }
 
     let w_actor = 90.0;
     let h_actor = 110.0;
@@ -527,10 +578,10 @@ pub fn compute_ucd_layout(
     let mut edges = Vec::new();
 
     // Place actors on the left
-    for (i, a) in actors.iter().enumerate() {
+    for (i, (label, &id)) in actor_type_names.iter().zip(actor_type_ids.iter()).enumerate() {
         nodes.push(DiagramNode {
-            element_id: a.id,
-            label: a.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+            element_id: id,
+            label: label.clone(),
             kind: "actor".into(),
             x: 30.0,
             y: 30.0 + i as f64 * (h_actor + gap),
@@ -541,7 +592,7 @@ pub fn compute_ucd_layout(
     }
 
     // Place use cases on the right
-    let uc_start_x = if actors.is_empty() { 60.0 } else { 30.0 + w_actor + gap * 2.0 };
+    let uc_start_x = if actor_type_names.is_empty() { 60.0 } else { 30.0 + w_actor + gap * 2.0 };
     for (i, uc) in all_use_cases.iter().enumerate() {
         let label = uc.name.clone().unwrap_or_else(|| "<unnamed>".into());
         let w = (label.len() as f64 * 8.0).max(130.0);
@@ -557,30 +608,52 @@ pub fn compute_ucd_layout(
         });
     }
 
-    // Connect actors to use cases (include relationships)
+    // Connect actors to their use cases based on actor_declarations
+    for ad in &actor_decls {
+        let actor_label = ad.type_ref.as_deref()
+            .or(ad.name.as_deref())
+            .unwrap_or("");
+        let actor_node = nodes.iter().find(|n| n.kind == "actor" && n.label == actor_label);
+        // The actor_declaration's parent is the use case it belongs to
+        let uc_node = ad.parent_id.and_then(|pid| nodes.iter().find(|n| n.element_id == pid));
+
+        if let (Some(from), Some(to)) = (actor_node, uc_node) {
+            edges.push(DiagramEdge {
+                from_id: from.element_id,
+                to_id: to.element_id,
+                label: None,
+                edge_type: "association".into(),
+                points: vec![
+                    (from.x + from.width, from.y + from.height / 2.0),
+                    (to.x, to.y + to.height / 2.0),
+                ],
+            });
+        }
+    }
+
+    // Include relationships
     let includes = model.elements.iter()
         .filter(|e| e.kind == ElementKind::IncludeStatement);
     for inc in includes {
         if let (Some(pid), Some(ref tref)) = (inc.parent_id, &inc.type_ref) {
-            if let Some(target) = nodes.iter().find(|n| {
+            let target = nodes.iter().find(|n| {
                 model.elements.iter().find(|e| e.id == n.element_id)
                     .and_then(|e| e.name.as_deref())
                     .map(|name| name == tref.as_str())
                     .unwrap_or(false)
-            }) {
-                let from_node = nodes.iter().find(|n| n.element_id == pid);
-                if let Some(from) = from_node {
-                    edges.push(DiagramEdge {
-                        from_id: from.element_id,
-                        to_id: target.element_id,
-                        label: Some("include".into()),
-                        edge_type: "include".into(),
-                        points: vec![
-                            (from.x + from.width, from.y + from.height / 2.0),
-                            (target.x, target.y + target.height / 2.0),
-                        ],
-                    });
-                }
+            });
+            let from_node = nodes.iter().find(|n| n.element_id == pid);
+            if let (Some(from), Some(to)) = (from_node, target) {
+                edges.push(DiagramEdge {
+                    from_id: from.element_id,
+                    to_id: to.element_id,
+                    label: Some("include".into()),
+                    edge_type: "include".into(),
+                    points: vec![
+                        (from.x + from.width / 2.0, from.y + from.height),
+                        (to.x + to.width / 2.0, to.y),
+                    ],
+                });
             }
         }
     }

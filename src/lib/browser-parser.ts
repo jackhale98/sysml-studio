@@ -508,10 +508,10 @@ export function browserStmLayout(model: SysmlModel, stateDefName: string): Diagr
     let fromLabel: string | null = null;
     let toLabel: string | null = null;
 
-    // Prefer parsed first/then data
+    // Prefer parsed first/then data: specializations[0] = source, type_ref = target
     if (t.type_ref && t.specializations.length > 0) {
-      fromLabel = t.type_ref;
-      toLabel = t.specializations[0];
+      fromLabel = t.specializations[0];
+      toLabel = t.type_ref;
     } else if (t.name) {
       // Fallback to name convention
       const parts = t.name.split("_to_");
@@ -703,15 +703,34 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
     const k = typeof e.kind === "string" ? e.kind : "";
     return k === "use_case_def" || k === "use_case_usage";
   });
-  const actors = model.elements.filter(e => {
-    const k = typeof e.kind === "string" ? e.kind : "";
-    return (k === "part_def" && e.name && /actor/i.test(e.name));
-  });
   const actions = useCases.length === 0
     ? model.elements.filter(e => typeof e.kind === "string" && e.kind === "action_def")
     : [];
 
   const allUseCases = [...useCases, ...actions];
+
+  // Collect unique actor types from actor_declarations inside use cases
+  const actorDecls = model.elements.filter(e =>
+    typeof e.kind === "string" && e.kind === "actor_declaration"
+  );
+  const actorTypeMap = new Map<string, { label: string; id: ElementId }>();
+  for (const ad of actorDecls) {
+    const label = ad.type_ref ?? ad.name ?? "<unnamed>";
+    if (!actorTypeMap.has(label)) {
+      const typeEl = model.elements.find(e => e.name === label);
+      actorTypeMap.set(label, { label, id: typeEl?.id ?? ad.id });
+    }
+  }
+  // Also pick up part defs with "actor" in name
+  for (const el of model.elements) {
+    const k = typeof el.kind === "string" ? el.kind : "";
+    if (k === "part_def" && el.name && /actor/i.test(el.name)) {
+      if (!actorTypeMap.has(el.name)) {
+        actorTypeMap.set(el.name, { label: el.name, id: el.id });
+      }
+    }
+  }
+  const actorTypes = Array.from(actorTypeMap.values());
 
   const W_ACTOR = 90, H_ACTOR = 110;
   const H_UC = 55, GAP = 30;
@@ -720,13 +739,13 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
   const edges: DiagramEdge[] = [];
 
   // Place actors on the left
-  const totalActorH = actors.length * H_ACTOR + (actors.length - 1) * GAP;
+  const totalActorH = actorTypes.length * H_ACTOR + (actorTypes.length - 1) * GAP;
   const totalUcH = allUseCases.length * (H_UC + GAP);
   const actorStartY = Math.max(30, (totalUcH - totalActorH) / 2 + 30);
-  actors.forEach((a, i) => {
+  actorTypes.forEach((a, i) => {
     nodes.push({
       element_id: a.id,
-      label: a.name ?? "<unnamed>",
+      label: a.label,
       kind: "actor",
       x: 30, y: actorStartY + i * (H_ACTOR + GAP),
       width: W_ACTOR, height: H_ACTOR,
@@ -736,7 +755,7 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
   });
 
   // Place use cases in the center with dynamic width
-  const ucX = actors.length > 0 ? 30 + W_ACTOR + 80 : 80;
+  const ucX = actorTypes.length > 0 ? 30 + W_ACTOR + 80 : 80;
   allUseCases.forEach((uc, i) => {
     const w = Math.max(textWidth(uc.name ?? "<unnamed>", 11), 160);
     nodes.push({
@@ -750,44 +769,20 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
     });
   });
 
-  // Connect actors to use cases
-  for (const actor of actors) {
-    for (const uc of allUseCases) {
-      if (uc.parent_id === actor.parent_id || actors.length === 1) {
-        const actorNode = nodes.find(n => n.element_id === actor.id);
-        const ucNode = nodes.find(n => n.element_id === uc.id);
-        if (actorNode && ucNode) {
-          edges.push({
-            from_id: actor.id, to_id: uc.id,
-            label: null, edge_type: "association",
-            points: [
-              [actorNode.x + W_ACTOR, actorNode.y + H_ACTOR / 2],
-              [ucNode.x, ucNode.y + H_UC / 2],
-            ],
-          });
-        }
-      }
-    }
-  }
-
-  if (actors.length === 0) {
-    for (let i = 0; i < allUseCases.length; i++) {
-      for (let j = i + 1; j < allUseCases.length; j++) {
-        if (allUseCases[j].parent_id === allUseCases[i].id) {
-          const from = nodes.find(n => n.element_id === allUseCases[i].id);
-          const to = nodes.find(n => n.element_id === allUseCases[j].id);
-          if (from && to) {
-            edges.push({
-              from_id: allUseCases[i].id, to_id: allUseCases[j].id,
-              label: "include", edge_type: "include",
-              points: [
-                [from.x + from.width / 2, from.y + H_UC],
-                [to.x + to.width / 2, to.y],
-              ],
-            });
-          }
-        }
-      }
+  // Connect actors to their use cases via actor_declarations
+  for (const ad of actorDecls) {
+    const actorLabel = ad.type_ref ?? ad.name ?? "";
+    const actorNode = nodes.find(n => n.kind === "actor" && n.label === actorLabel);
+    const ucNode = ad.parent_id != null ? nodes.find(n => n.element_id === ad.parent_id) : null;
+    if (actorNode && ucNode) {
+      edges.push({
+        from_id: actorNode.element_id, to_id: ucNode.element_id,
+        label: null, edge_type: "association",
+        points: [
+          [actorNode.x + W_ACTOR, actorNode.y + H_ACTOR / 2],
+          [ucNode.x, ucNode.y + H_UC / 2],
+        ],
+      });
     }
   }
 
@@ -797,7 +792,7 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
   );
   for (const inc of includes) {
     const parentUc = allUseCases.find(uc => uc.id === inc.parent_id);
-    const targetUc = allUseCases.find(uc => uc.name === inc.name);
+    const targetUc = allUseCases.find(uc => uc.name === inc.type_ref);
     if (parentUc && targetUc) {
       const fromNode = nodes.find(n => n.element_id === parentUc.id);
       const toNode = nodes.find(n => n.element_id === targetUc.id);
