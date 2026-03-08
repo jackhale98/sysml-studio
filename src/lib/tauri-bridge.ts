@@ -32,7 +32,11 @@ export async function parseSource(source: string): Promise<SysmlModel> {
 }
 
 export async function openFile(path: string): Promise<[SysmlModel, string]> {
-  if (isTauri) return tauriInvoke<[SysmlModel, string]>("open_file", { path });
+  if (isTauri) {
+    const result = await tauriInvoke<[SysmlModel, string]>("open_file", { path });
+    cachedModel = result[0];
+    return result;
+  }
   throw new Error("File open not available in browser mode");
 }
 
@@ -209,16 +213,19 @@ export async function computeStmLayout(stateDefName: string): Promise<DiagramLay
 }
 
 export async function computeReqLayout(): Promise<DiagramLayout> {
+  if (isTauri) return tauriInvoke<DiagramLayout>("compute_req_layout");
   if (cachedModel) return browserReqLayout(cachedModel);
   return { diagram_type: "req", nodes: [], edges: [], bounds: [0, 0, 400, 300] };
 }
 
 export async function computeUcdLayout(): Promise<DiagramLayout> {
+  if (isTauri) return tauriInvoke<DiagramLayout>("compute_ucd_layout");
   if (cachedModel) return browserUcdLayout(cachedModel);
   return { diagram_type: "ucd", nodes: [], edges: [], bounds: [0, 0, 400, 300] };
 }
 
 export async function computeIbdLayout(blockName?: string): Promise<DiagramLayout> {
+  if (isTauri) return tauriInvoke<DiagramLayout>("compute_ibd_layout", { blockName: blockName ?? null });
   if (cachedModel) return browserIbdLayout(cachedModel, blockName);
   return { diagram_type: "ibd", nodes: [], edges: [], bounds: [0, 0, 400, 300] };
 }

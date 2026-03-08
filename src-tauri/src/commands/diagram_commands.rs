@@ -233,17 +233,22 @@ pub fn compute_bdd_layout(
         }
     }
 
-    // Compute bounds
-    let min_x = nodes.iter().map(|n| n.x).fold(f64::MAX, f64::min);
-    let min_y = nodes.iter().map(|n| n.y).fold(f64::MAX, f64::min);
-    let max_x = nodes.iter().map(|n| n.x + n.width).fold(f64::MIN, f64::max);
-    let max_y = nodes.iter().map(|n| n.y + n.height).fold(f64::MIN, f64::max);
+    // Compute bounds (safe defaults for empty diagrams)
+    let bounds = if nodes.is_empty() {
+        (0.0, 0.0, 400.0, 300.0)
+    } else {
+        let min_x = nodes.iter().map(|n| n.x).fold(f64::MAX, f64::min);
+        let min_y = nodes.iter().map(|n| n.y).fold(f64::MAX, f64::min);
+        let max_x = nodes.iter().map(|n| n.x + n.width).fold(f64::MIN, f64::max);
+        let max_y = nodes.iter().map(|n| n.y + n.height).fold(f64::MIN, f64::max);
+        (min_x, min_y, max_x, max_y)
+    };
 
     Ok(DiagramLayout {
         diagram_type: "bdd".into(),
         nodes,
         edges,
-        bounds: (min_x, min_y, max_x, max_y),
+        bounds,
     })
 }
 
@@ -337,6 +342,387 @@ pub fn compute_stm_layout(
         edges,
         bounds: (min_x, min_y, max_x, max_y),
     })
+}
+
+/// Compute Requirements Diagram layout
+#[tauri::command]
+pub fn compute_req_layout(
+    state: State<'_, AppState>,
+) -> Result<DiagramLayout, String> {
+    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+    let model = model_lock.as_ref().ok_or("No model loaded")?;
+    let graph_lock = state.current_graph.lock().map_err(|e| e.to_string())?;
+    let graph = graph_lock.as_ref().ok_or("No graph built")?;
+
+    let reqs: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| matches!(e.kind, ElementKind::RequirementDef | ElementKind::RequirementUsage))
+        .collect();
+
+    let req_h = 65.0;
+    let gap_x = 50.0;
+    let gap_y = 90.0;
+
+    // Separate top-level vs nested requirements
+    let top_reqs: Vec<&&SysmlElement> = reqs.iter()
+        .filter(|r| {
+            r.parent_id.map(|pid| {
+                model.elements.iter().find(|e| e.id == pid)
+                    .map(|p| !matches!(p.kind, ElementKind::RequirementDef | ElementKind::RequirementUsage))
+                    .unwrap_or(true)
+            }).unwrap_or(true)
+        })
+        .collect();
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    // Place top-level requirements in a column
+    for (i, r) in top_reqs.iter().enumerate() {
+        let label = r.name.clone().unwrap_or_else(|| "<unnamed>".into());
+        let w = (label.len() as f64 * 8.0).max(160.0);
+        nodes.push(DiagramNode {
+            element_id: r.id,
+            label,
+            kind: "requirement".into(),
+            x: 40.0,
+            y: 30.0 + i as f64 * (req_h + gap_y),
+            width: w, height: req_h,
+            color: "#ef4444".into(),
+            children: vec![],
+        });
+    }
+
+    // Place nested requirements to the right
+    for r in &reqs {
+        if top_reqs.iter().any(|t| t.id == r.id) { continue; }
+        if let Some(parent_node) = r.parent_id.and_then(|pid| nodes.iter().find(|n| n.element_id == pid)) {
+            let px = parent_node.x + parent_node.width + gap_x;
+            let py = parent_node.y;
+            let sibling_count = nodes.iter().filter(|n| {
+                let el = model.elements.iter().find(|e| e.id == n.element_id);
+                el.map(|e| e.parent_id == r.parent_id && !top_reqs.iter().any(|t| t.id == e.id))
+                    .unwrap_or(false)
+            }).count();
+            let label = r.name.clone().unwrap_or_else(|| "<unnamed>".into());
+            let w = (label.len() as f64 * 8.0).max(150.0);
+            let ny = py + sibling_count as f64 * (req_h + 20.0);
+
+            edges.push(DiagramEdge {
+                from_id: r.parent_id.unwrap(),
+                to_id: r.id,
+                label: Some("containment".into()),
+                edge_type: "containment".into(),
+                points: vec![
+                    (px - gap_x, py + req_h / 2.0),
+                    (px, ny + req_h / 2.0),
+                ],
+            });
+
+            nodes.push(DiagramNode {
+                element_id: r.id,
+                label,
+                kind: "requirement".into(),
+                x: px, y: ny, width: w, height: req_h,
+                color: "#f87171".into(),
+                children: vec![],
+            });
+        }
+    }
+
+    // Add satisfy/verify edges from the graph
+    // Collect new nodes first to avoid borrow conflicts
+    let satisfies = graph.relationships_of_type(&RelationshipType::Satisfy);
+    let verifies = graph.relationships_of_type(&RelationshipType::Verify);
+
+    let mut new_nodes: Vec<DiagramNode> = Vec::new();
+    let mut new_edges: Vec<DiagramEdge> = Vec::new();
+
+    for rel in satisfies.iter().chain(verifies.iter()) {
+        let req_node = nodes.iter().find(|n| n.element_id == rel.to_id);
+        if req_node.is_none() { continue; }
+        let req_pos = (req_node.unwrap().element_id, req_node.unwrap().x, req_node.unwrap().y, req_node.unwrap().width);
+
+        let impl_el = model.elements.iter().find(|e| e.id == rel.from_id);
+        if impl_el.is_none() { continue; }
+        let impl_el = impl_el.unwrap();
+        let label = impl_el.name.clone().unwrap_or_else(|| "<unnamed>".into());
+
+        let impl_pos = if let Some(existing) = nodes.iter().chain(new_nodes.iter()).find(|n| n.element_id == rel.from_id) {
+            (existing.element_id, existing.x, existing.y, existing.width)
+        } else {
+            let w = (label.len() as f64 * 8.0).max(140.0);
+            let nx = req_pos.1 + req_pos.3 + gap_x * 2.0;
+            let ny = req_pos.2;
+            new_nodes.push(DiagramNode {
+                element_id: impl_el.id,
+                label: label.clone(),
+                kind: "block".into(),
+                x: nx, y: ny, width: w, height: req_h,
+                color: kind_to_color(&impl_el.kind),
+                children: vec![],
+            });
+            (impl_el.id, nx, ny, w)
+        };
+
+        let edge_type = if rel.rel_type == RelationshipType::Satisfy { "satisfy" } else { "verify" };
+        new_edges.push(DiagramEdge {
+            from_id: req_pos.0,
+            to_id: impl_pos.0,
+            label: Some(edge_type.into()),
+            edge_type: edge_type.into(),
+            points: vec![
+                (req_pos.1 + req_pos.3, req_pos.2 + req_h / 2.0),
+                (impl_pos.1, impl_pos.2 + req_h / 2.0),
+            ],
+        });
+    }
+
+    nodes.extend(new_nodes);
+    edges.extend(new_edges);
+
+    let bounds = if nodes.is_empty() {
+        (0.0, 0.0, 400.0, 300.0)
+    } else {
+        (0.0, 0.0,
+         nodes.iter().map(|n| n.x + n.width).fold(0.0_f64, f64::max).max(400.0),
+         nodes.iter().map(|n| n.y + n.height).fold(0.0_f64, f64::max).max(300.0))
+    };
+
+    Ok(DiagramLayout { diagram_type: "req".into(), nodes, edges, bounds })
+}
+
+/// Compute Use Case Diagram layout
+#[tauri::command]
+pub fn compute_ucd_layout(
+    state: State<'_, AppState>,
+) -> Result<DiagramLayout, String> {
+    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+    let model = model_lock.as_ref().ok_or("No model loaded")?;
+
+    let use_cases: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| matches!(e.kind, ElementKind::UseCaseDef | ElementKind::UseCaseUsage))
+        .collect();
+
+    // If no use cases, fall back to action defs
+    let actions: Vec<&SysmlElement> = if use_cases.is_empty() {
+        model.elements.iter()
+            .filter(|e| e.kind == ElementKind::ActionDef)
+            .collect()
+    } else {
+        vec![]
+    };
+    let all_use_cases: Vec<&&SysmlElement> = use_cases.iter().chain(actions.iter()).collect();
+
+    let actors: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| e.kind == ElementKind::ActorDeclaration ||
+            (e.kind == ElementKind::PartDef && e.name.as_deref().map(|n| n.to_lowercase().contains("actor")).unwrap_or(false)))
+        .collect();
+
+    let w_actor = 90.0;
+    let h_actor = 110.0;
+    let h_uc = 55.0;
+    let gap = 30.0;
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    // Place actors on the left
+    for (i, a) in actors.iter().enumerate() {
+        nodes.push(DiagramNode {
+            element_id: a.id,
+            label: a.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+            kind: "actor".into(),
+            x: 30.0,
+            y: 30.0 + i as f64 * (h_actor + gap),
+            width: w_actor, height: h_actor,
+            color: "#94a3b8".into(),
+            children: vec![],
+        });
+    }
+
+    // Place use cases on the right
+    let uc_start_x = if actors.is_empty() { 60.0 } else { 30.0 + w_actor + gap * 2.0 };
+    for (i, uc) in all_use_cases.iter().enumerate() {
+        let label = uc.name.clone().unwrap_or_else(|| "<unnamed>".into());
+        let w = (label.len() as f64 * 8.0).max(130.0);
+        nodes.push(DiagramNode {
+            element_id: uc.id,
+            label,
+            kind: "usecase".into(),
+            x: uc_start_x,
+            y: 30.0 + i as f64 * (h_uc + gap),
+            width: w, height: h_uc,
+            color: "#10b981".into(),
+            children: vec![],
+        });
+    }
+
+    // Connect actors to use cases (include relationships)
+    let includes = model.elements.iter()
+        .filter(|e| e.kind == ElementKind::IncludeStatement);
+    for inc in includes {
+        if let (Some(pid), Some(ref tref)) = (inc.parent_id, &inc.type_ref) {
+            if let Some(target) = nodes.iter().find(|n| {
+                model.elements.iter().find(|e| e.id == n.element_id)
+                    .and_then(|e| e.name.as_deref())
+                    .map(|name| name == tref.as_str())
+                    .unwrap_or(false)
+            }) {
+                let from_node = nodes.iter().find(|n| n.element_id == pid);
+                if let Some(from) = from_node {
+                    edges.push(DiagramEdge {
+                        from_id: from.element_id,
+                        to_id: target.element_id,
+                        label: Some("include".into()),
+                        edge_type: "include".into(),
+                        points: vec![
+                            (from.x + from.width, from.y + from.height / 2.0),
+                            (target.x, target.y + target.height / 2.0),
+                        ],
+                    });
+                }
+            }
+        }
+    }
+
+    let bounds = if nodes.is_empty() {
+        (0.0, 0.0, 400.0, 300.0)
+    } else {
+        (0.0, 0.0,
+         nodes.iter().map(|n| n.x + n.width).fold(0.0_f64, f64::max).max(400.0),
+         nodes.iter().map(|n| n.y + n.height).fold(0.0_f64, f64::max).max(300.0))
+    };
+
+    Ok(DiagramLayout { diagram_type: "ucd".into(), nodes, edges, bounds })
+}
+
+/// Compute Internal Block Diagram layout
+#[tauri::command]
+pub fn compute_ibd_layout(
+    block_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<DiagramLayout, String> {
+    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+    let model = model_lock.as_ref().ok_or("No model loaded")?;
+
+    // Find the block to display internals for
+    let block = if let Some(ref name) = block_name {
+        model.elements.iter().find(|e| e.kind == ElementKind::PartDef && e.name.as_deref() == Some(name.as_str()))
+    } else {
+        model.elements.iter().find(|e| e.kind == ElementKind::PartDef)
+    };
+
+    let block = match block {
+        Some(b) => b,
+        None => return Ok(DiagramLayout {
+            diagram_type: "ibd".into(), nodes: vec![], edges: vec![],
+            bounds: (0.0, 0.0, 400.0, 300.0),
+        }),
+    };
+
+    // Get child parts and ports
+    let children: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| e.parent_id == Some(block.id) && matches!(e.kind,
+            ElementKind::PartUsage | ElementKind::AttributeUsage | ElementKind::ItemUsage))
+        .collect();
+
+    let ports: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| e.parent_id == Some(block.id) && e.kind == ElementKind::PortUsage)
+        .collect();
+
+    let part_w = 140.0;
+    let part_h = 50.0;
+    let port_size = 16.0;
+    let margin = 40.0;
+
+    let cols = ((children.len() as f64).sqrt().ceil()) as usize;
+    let rows = if cols > 0 { children.len().div_ceil(cols) } else { 1 };
+    let container_w = cols.max(1) as f64 * (part_w + margin) + margin;
+    let container_h = rows as f64 * (part_h + margin) + margin + 30.0;
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+
+    // Container block
+    nodes.push(DiagramNode {
+        element_id: block.id,
+        label: block.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+        kind: "block_container".into(),
+        x: 20.0, y: 20.0,
+        width: container_w, height: container_h,
+        color: "#3b82f6".into(),
+        children: vec![],
+    });
+
+    // Child parts
+    for (i, child) in children.iter().enumerate() {
+        let col = i % cols.max(1);
+        let row = i / cols.max(1);
+        let x = 20.0 + margin + col as f64 * (part_w + margin);
+        let y = 20.0 + 30.0 + margin + row as f64 * (part_h + margin);
+
+        nodes.push(DiagramNode {
+            element_id: child.id,
+            label: child.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+            kind: "part".into(),
+            x, y, width: part_w, height: part_h,
+            color: kind_to_color(&child.kind),
+            children: vec![],
+        });
+    }
+
+    // Ports on the container boundary
+    for (i, port) in ports.iter().enumerate() {
+        let x = 20.0 + (i as f64 + 1.0) * container_w / (ports.len() as f64 + 1.0) - port_size / 2.0;
+        let y = 20.0 + container_h - port_size / 2.0;
+
+        nodes.push(DiagramNode {
+            element_id: port.id,
+            label: port.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+            kind: "port".into(),
+            x, y, width: port_size, height: port_size,
+            color: "#8b5cf6".into(),
+            children: vec![],
+        });
+    }
+
+    // Connection edges between parts
+    let connections: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| matches!(e.kind, ElementKind::ConnectionUsage | ElementKind::InterfaceUsage))
+        .filter(|e| e.parent_id == Some(block.id) || {
+            e.parent_id.map(|pid| model.elements.iter().any(|p| p.id == pid && p.parent_id == Some(block.id)))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    for conn in &connections {
+        if let Some(ref type_ref) = conn.type_ref {
+            // Try to find source (parent) and target (type_ref) among placed nodes
+            if let (Some(from_id), Some(to_node)) = (
+                conn.parent_id,
+                nodes.iter().find(|n| n.label == *type_ref)
+            ) {
+                if let Some(from_node) = nodes.iter().find(|n| n.element_id == from_id) {
+                    edges.push(DiagramEdge {
+                        from_id: from_node.element_id,
+                        to_id: to_node.element_id,
+                        label: conn.name.clone(),
+                        edge_type: "connection".into(),
+                        points: vec![
+                            (from_node.x + from_node.width / 2.0, from_node.y + from_node.height),
+                            (to_node.x + to_node.width / 2.0, to_node.y),
+                        ],
+                    });
+                }
+            }
+        }
+    }
+
+    let bounds = (0.0, 0.0,
+        (20.0 + container_w + 20.0).max(400.0),
+        (20.0 + container_h + 20.0).max(300.0));
+
+    Ok(DiagramLayout { diagram_type: "ibd".into(), nodes, edges, bounds })
 }
 
 fn kind_to_color(kind: &ElementKind) -> String {

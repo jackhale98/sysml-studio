@@ -318,7 +318,9 @@ pub fn build_traceability_matrix(elements: &[SysmlElement], graph: &ElementGraph
         .filter(|e| matches!(e.kind, ElementKind::RequirementDef | ElementKind::RequirementUsage))
         .map(|req| {
             let (satisfied_ids, verified_ids) = graph.requirement_traceability(req.id);
-            let allocated_ids = graph.allocations_from(req.id);
+            // Check both directions: allocations FROM req and allocations TO req
+            let mut allocated_ids = graph.allocations_from(req.id);
+            allocated_ids.extend(graph.allocations_to(req.id));
 
             let to_link = |id: ElementId| -> TraceLink {
                 elements.iter()

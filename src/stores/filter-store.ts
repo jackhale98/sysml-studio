@@ -7,6 +7,7 @@ interface FilterState {
   showDefinitions: boolean;
   showUsages: boolean;
   showRelationships: boolean;
+  selectedKinds: string[];
 
   toggleCategory: (category: Category) => void;
   setAllCategories: (active: boolean) => void;
@@ -14,6 +15,8 @@ interface FilterState {
   setShowDefinitions: (show: boolean) => void;
   setShowUsages: (show: boolean) => void;
   setShowRelationships: (show: boolean) => void;
+  toggleKind: (kind: string) => void;
+  clearKindFilter: () => void;
   resetFilters: () => void;
 }
 
@@ -28,6 +31,7 @@ export const useFilterStore = create<FilterState>((set) => ({
   showDefinitions: true,
   showUsages: true,
   showRelationships: true,
+  selectedKinds: [],
 
   toggleCategory: (category) =>
     set((state) => {
@@ -48,6 +52,18 @@ export const useFilterStore = create<FilterState>((set) => ({
   setShowUsages: (show) => set({ showUsages: show }),
   setShowRelationships: (show) => set({ showRelationships: show }),
 
+  toggleKind: (kind) =>
+    set((state) => {
+      const has = state.selectedKinds.includes(kind);
+      return {
+        selectedKinds: has
+          ? state.selectedKinds.filter((k) => k !== kind)
+          : [...state.selectedKinds, kind],
+      };
+    }),
+
+  clearKindFilter: () => set({ selectedKinds: [] }),
+
   resetFilters: () =>
     set({
       activeCategories: [...ALL_CATEGORIES],
@@ -55,5 +71,6 @@ export const useFilterStore = create<FilterState>((set) => ({
       showDefinitions: true,
       showUsages: true,
       showRelationships: true,
+      selectedKinds: [],
     }),
 }));

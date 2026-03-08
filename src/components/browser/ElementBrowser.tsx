@@ -10,7 +10,7 @@ export function ElementBrowser() {
   const model = useModelStore((s) => s.model);
   const selectedId = useUIStore((s) => s.selectedElementId);
   const selectElement = useUIStore((s) => s.selectElement);
-  const { activeCategories, searchTerm, showDefinitions, showUsages, showRelationships } = useFilterStore();
+  const { activeCategories, searchTerm, showDefinitions, showUsages, showRelationships, selectedKinds } = useFilterStore();
 
   const filteredElements = useMemo(() => {
     if (!model) return [];
@@ -20,8 +20,9 @@ export function ElementBrowser() {
       showDefinitions,
       showUsages,
       showRelationships,
+      selectedKinds,
     });
-  }, [model, activeCategories, searchTerm, showDefinitions, showUsages, showRelationships]);
+  }, [model, activeCategories, searchTerm, showDefinitions, showUsages, showRelationships, selectedKinds]);
 
   const getParentName = (parentId: number | null): string | undefined => {
     if (parentId === null || !model) return undefined;

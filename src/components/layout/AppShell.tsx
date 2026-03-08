@@ -41,7 +41,7 @@ export function AppShell() {
 
   return (
     <div style={{
-      width: "100%", maxWidth: 430, margin: "0 auto", height: "100dvh",
+      width: "100%", height: "100dvh",
       display: "flex", flexDirection: "column", background: "var(--bg-primary)",
       position: "relative", overflow: "hidden",
     }}>

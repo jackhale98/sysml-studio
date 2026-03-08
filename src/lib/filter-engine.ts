@@ -6,6 +6,7 @@ export interface ClientFilter {
   showDefinitions: boolean;
   showUsages: boolean;
   showRelationships: boolean;
+  selectedKinds?: string[];
 }
 
 export function createDefaultFilter(): ClientFilter {
@@ -52,6 +53,11 @@ export function filterElements(
     if (!filter.showDefinitions && isDefinition(kindStr)) return false;
     if (!filter.showUsages && isUsage(kindStr)) return false;
     if (!filter.showRelationships && el.category === "relationship") return false;
+
+    // Kind sub-filter
+    if (filter.selectedKinds && filter.selectedKinds.length > 0) {
+      if (!filter.selectedKinds.includes(kindStr)) return false;
+    }
 
     // Search term filter
     if (term) {

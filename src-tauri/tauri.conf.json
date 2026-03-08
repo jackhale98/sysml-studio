@@ -14,8 +14,8 @@
     "windows": [
       {
         "title": "SysML Studio",
-        "width": 430,
-        "height": 900
+        "width": 1280,
+        "height": 800
       }
     ],
     "security": {

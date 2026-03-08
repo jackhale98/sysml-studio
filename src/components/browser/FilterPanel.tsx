@@ -1,13 +1,30 @@
-import React, { useState, useRef, useEffect } from "react";
-import { CATEGORY_META } from "../../lib/constants";
+import React, { useState, useRef, useEffect, useMemo } from "react";
+import { CATEGORY_META, getKindLabel, getTypeColor } from "../../lib/constants";
 import { useFilterStore } from "../../stores/filter-store";
+import { useModelStore } from "../../stores/model-store";
 import { SearchInput } from "../shared/SearchInput";
 import type { Category } from "../../lib/element-types";
 
 export function FilterPanel() {
-  const { activeCategories, searchTerm, toggleCategory, setSearchTerm, setAllCategories } = useFilterStore();
+  const { activeCategories, searchTerm, selectedKinds, toggleCategory, setSearchTerm, setAllCategories, toggleKind, clearKindFilter } = useFilterStore();
+  const model = useModelStore((s) => s.model);
   const [open, setOpen] = useState(false);
+  const [showKinds, setShowKinds] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Compute available kinds from current model, grouped by count
+  const availableKinds = useMemo(() => {
+    if (!model) return [];
+    const counts = new Map<string, number>();
+    for (const el of model.elements) {
+      const k = typeof el.kind === "string" ? el.kind : "";
+      if (!k || k === "comment" || k === "doc_comment" || k === "import") continue;
+      if (!activeCategories.includes(el.category)) continue;
+      counts.set(k, (counts.get(k) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1]);
+  }, [model, activeCategories]);
 
   const allEntries = Object.entries(CATEGORY_META) as [Category, { label: string; color: string }][];
   const totalCount = allEntries.length;
@@ -130,6 +147,75 @@ export function FilterPanel() {
           )}
         </div>
       </div>
+
+      {/* Kind sub-filter chips */}
+      {availableKinds.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            marginBottom: showKinds ? 6 : 0,
+          }}>
+            <button
+              onClick={() => setShowKinds(!showKinds)}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                fontSize: 10, fontWeight: 600, fontFamily: "var(--font-mono)",
+                color: selectedKinds.length > 0 ? "var(--accent-hover)" : "var(--text-muted)",
+                padding: "2px 0", display: "flex", alignItems: "center", gap: 4,
+              }}
+            >
+              <svg
+                width="10" height="10" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2.5"
+                style={{ transform: showKinds ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              Kinds{selectedKinds.length > 0 ? ` (${selectedKinds.length})` : ""}
+            </button>
+            {selectedKinds.length > 0 && (
+              <button
+                onClick={clearKindFilter}
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  fontSize: 10, fontFamily: "var(--font-mono)",
+                  color: "var(--accent)", padding: "2px 4px",
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+          {showKinds && (
+            <div style={{
+              display: "flex", flexWrap: "wrap", gap: 4,
+            }}>
+              {availableKinds.map(([kind, count]) => {
+                const active = selectedKinds.includes(kind);
+                const colors = getTypeColor(kind);
+                return (
+                  <button
+                    key={kind}
+                    onClick={() => toggleKind(kind)}
+                    style={{
+                      padding: "3px 8px", borderRadius: 6, fontSize: 10,
+                      fontFamily: "var(--font-mono)", fontWeight: active ? 600 : 400,
+                      cursor: "pointer", whiteSpace: "nowrap",
+                      border: `1px solid ${active ? colors.border : "var(--border)"}`,
+                      background: active ? colors.bg : "transparent",
+                      color: active ? colors.fg : "var(--text-secondary)",
+                      opacity: active ? 1 : 0.8,
+                      transition: "all 0.1s",
+                    }}
+                  >
+                    {getKindLabel(kind)} <span style={{ opacity: 0.6 }}>{count}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

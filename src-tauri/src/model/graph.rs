@@ -234,12 +234,21 @@ impl ElementGraph {
         (satisfied_by, verified_by)
     }
 
-    /// MBSE: Get all allocations from an element
+    /// MBSE: Get all allocations from an element (outgoing)
     pub fn allocations_from(&self, id: ElementId) -> Vec<ElementId> {
         self.outgoing_from(id)
             .iter()
             .filter(|r| r.rel_type == RelationshipType::Allocation)
             .map(|r| r.to_id)
+            .collect()
+    }
+
+    /// MBSE: Get all allocations to an element (incoming)
+    pub fn allocations_to(&self, id: ElementId) -> Vec<ElementId> {
+        self.incoming_to(id)
+            .iter()
+            .filter(|r| r.rel_type == RelationshipType::Allocation)
+            .map(|r| r.from_id)
             .collect()
     }
 

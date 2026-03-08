@@ -29,6 +29,9 @@ pub fn run() {
             commands::parse_commands::get_validation,
             commands::diagram_commands::compute_bdd_layout,
             commands::diagram_commands::compute_stm_layout,
+            commands::diagram_commands::compute_req_layout,
+            commands::diagram_commands::compute_ucd_layout,
+            commands::diagram_commands::compute_ibd_layout,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
