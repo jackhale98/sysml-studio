@@ -7,6 +7,8 @@ import type { DiagramLayout, DiagramNode } from "../../lib/element-types";
 export function DiagramView() {
   const diagramType = useUIStore((s) => s.diagramType);
   const setDiagramType = useUIStore((s) => s.setDiagramType);
+  const diagramScope = useUIStore((s) => s.diagramScope);
+  const setDiagramScope = useUIStore((s) => s.setDiagramScope);
   const highlightedNodeId = useUIStore((s) => s.highlightedNodeId);
   const setHighlightedNode = useUIStore((s) => s.setHighlightedNode);
   const openDialog = useUIStore((s) => s.openDialog);
@@ -24,20 +26,27 @@ export function DiagramView() {
   const svgRef = useRef<SVGSVGElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
 
-  // Fetch layout when model or diagram type changes
+  // Fetch layout when model, diagram type, or scope changes
   useEffect(() => {
     if (!model) return;
+    const scopeName = diagramScope?.elementName ?? undefined;
+    const scopeKind = diagramScope?.elementKind ?? "";
     const fetchLayout = async () => {
       try {
         switch (diagramType) {
           case "bdd":
-            setLayout(await computeBddLayout());
+            setLayout(await computeBddLayout(scopeKind.endsWith("_def") ? scopeName : undefined));
             break;
           case "stm": {
-            const stateDef = model.elements.find(
-              (e) => typeof e.kind === "string" && e.kind === "state_def"
-            );
-            if (stateDef?.name) setLayout(await computeStmLayout(stateDef.name));
+            // Use scoped state def, or find the first one
+            let stmName = scopeKind === "state_def" ? scopeName : undefined;
+            if (!stmName) {
+              const stateDef = model.elements.find(
+                (e) => typeof e.kind === "string" && e.kind === "state_def"
+              );
+              stmName = stateDef?.name ?? undefined;
+            }
+            if (stmName) setLayout(await computeStmLayout(stmName));
             else setLayout(null);
             break;
           }
@@ -48,7 +57,9 @@ export function DiagramView() {
             setLayout(await computeUcdLayout());
             break;
           case "ibd":
-            setLayout(await computeIbdLayout());
+            setLayout(await computeIbdLayout(
+              scopeKind === "part_def" || scopeKind === "part_usage" ? scopeName : undefined
+            ));
             break;
         }
       } catch {
@@ -56,7 +67,7 @@ export function DiagramView() {
       }
     };
     fetchLayout();
-  }, [model, diagramType]);
+  }, [model, diagramType, diagramScope]);
 
   // Auto-fit when layout changes
   useEffect(() => {
@@ -260,6 +271,31 @@ export function DiagramView() {
           </button>
         ))}
       </div>
+
+      {/* Scope indicator */}
+      {diagramScope && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8,
+          padding: "5px 10px", background: "rgba(59,130,246,0.08)",
+          borderBottom: "1px solid var(--border)",
+          fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-secondary)",
+        }}>
+          <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="var(--accent)" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <span>Scoped to <span style={{ color: "var(--accent-hover)", fontWeight: 600 }}>{diagramScope.elementName}</span></span>
+          <button
+            onClick={() => setDiagramScope(null)}
+            style={{
+              marginLeft: "auto", background: "none", border: "1px solid var(--border)",
+              borderRadius: 6, padding: "2px 8px", fontSize: 10, fontWeight: 600,
+              fontFamily: "var(--font-mono)", color: "var(--text-muted)", cursor: "pointer",
+            }}
+          >
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* Canvas */}
       <div ref={canvasRef} style={{ flex: 1, position: "relative", overflow: "hidden", background: "var(--bg-primary)", touchAction: "none" }}>
@@ -681,8 +717,29 @@ export function DiagramView() {
             </div>
 
             {/* Action buttons */}
-            {hlElement && (
+            {hlElement && (() => {
+              const hlKind = typeof hlElement.kind === "string" ? hlElement.kind : "";
+              const canScope = ["part_def", "part_usage", "state_def", "action_def"].includes(hlKind);
+              return (
               <div style={{ display: "flex", gap: 6 }}>
+                {canScope && hlElement.name && (
+                  <button
+                    onClick={() => setDiagramScope({
+                      elementId: hlElement.id,
+                      elementName: hlElement.name!,
+                      elementKind: hlKind,
+                    })}
+                    style={{
+                      flex: 1, padding: 8, borderRadius: 8,
+                      border: "1.5px solid #a78bfa",
+                      background: "rgba(167,139,250,0.1)", color: "#a78bfa",
+                      fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
+                      cursor: "pointer", minHeight: 38,
+                    }}
+                  >
+                    Scope
+                  </button>
+                )}
                 <button
                   onClick={() => navigateToEditor(hlElement.span.start_line)}
                   style={{
@@ -746,7 +803,8 @@ export function DiagramView() {
                   + Add
                 </button>
               </div>
-            )}
+              );
+            })()}
           </div>
         );
       })()}

@@ -51,21 +51,38 @@ pub fn compute_bdd_layout(
     let graph = graph_lock.as_ref().ok_or("No graph built")?;
 
     // Collect definition elements as nodes
-    let definitions: Vec<&SysmlElement> = model.elements.iter()
+    let all_defs: Vec<&SysmlElement> = model.elements.iter()
         .filter(|e| e.kind.is_definition() && !matches!(e.kind,
             ElementKind::Package | ElementKind::EnumerationDef |
             ElementKind::ActionDef | ElementKind::StateDef |
             ElementKind::ConstraintDef | ElementKind::RequirementDef
         ))
-        .filter(|e| {
-            if let Some(ref root) = root_name {
-                e.name.as_deref() == Some(root.as_str()) ||
-                e.qualified_name.contains(root.as_str())
-            } else {
-                true
-            }
-        })
         .collect();
+
+    // When scoped to a root, include the root + all types it references via part usages
+    let definitions: Vec<&SysmlElement> = if let Some(ref root) = root_name {
+        let root_el = all_defs.iter().find(|e| e.name.as_deref() == Some(root.as_str()));
+        if let Some(root_el) = root_el {
+            // Collect type_refs from child usages of the root
+            let mut related_names: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            related_names.insert(root.as_str());
+            for el in &model.elements {
+                if el.parent_id == Some(root_el.id) {
+                    if let Some(ref tref) = el.type_ref {
+                        related_names.insert(tref.as_str());
+                    }
+                }
+            }
+            all_defs.iter()
+                .filter(|e| e.name.as_deref().map(|n| related_names.contains(n)).unwrap_or(false))
+                .copied()
+                .collect()
+        } else {
+            all_defs
+        }
+    } else {
+        all_defs
+    };
 
     let def_by_name: std::collections::HashMap<&str, ElementId> = definitions.iter()
         .filter_map(|d| d.name.as_deref().map(|n| (n, d.id)))

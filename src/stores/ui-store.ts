@@ -7,11 +7,18 @@ export type ThemeMode = "dark" | "light";
 
 export type DialogType = "create" | "edit" | "delete" | null;
 
+interface DiagramScope {
+  elementId: ElementId;
+  elementName: string;
+  elementKind: string;
+}
+
 interface UIState {
   activeTab: TabId;
   selectedElementId: ElementId | null;
   showDetailSheet: boolean;
   diagramType: DiagramType;
+  diagramScope: DiagramScope | null;
   highlightedNodeId: string | null;
   activeDialog: DialogType;
   editTargetId: ElementId | null;
@@ -22,8 +29,9 @@ interface UIState {
   selectElement: (id: ElementId | null) => void;
   setShowDetail: (show: boolean) => void;
   setDiagramType: (type: DiagramType) => void;
+  setDiagramScope: (scope: DiagramScope | null) => void;
   setHighlightedNode: (id: string | null) => void;
-  navigateToDiagram: (elementName: string, targetDiagramType?: DiagramType) => void;
+  navigateToDiagram: (elementName: string, targetDiagramType?: DiagramType, scope?: DiagramScope | null) => void;
   navigateToEditor: (line?: number) => void;
   createContext: { suggestedKind?: string; suggestedParentId?: number; suggestedCategory?: number } | null;
   openDialog: (type: DialogType, elementId?: ElementId, context?: { suggestedKind?: string; suggestedParentId?: number; suggestedCategory?: number }) => void;
@@ -37,6 +45,7 @@ export const useUIStore = create<UIState>((set) => ({
   selectedElementId: null,
   showDetailSheet: false,
   diagramType: "bdd",
+  diagramScope: null,
   highlightedNodeId: null,
   activeDialog: null,
   editTargetId: null,
@@ -55,17 +64,21 @@ export const useUIStore = create<UIState>((set) => ({
 
   setDiagramType: (type) => set({
     diagramType: type,
-    highlightedNodeId: null
+    highlightedNodeId: null,
+    diagramScope: null,
   }),
+
+  setDiagramScope: (scope) => set({ diagramScope: scope, highlightedNodeId: null }),
 
   setHighlightedNode: (id) => set((state) => ({
     highlightedNodeId: state.highlightedNodeId === id ? null : id
   })),
 
-  navigateToDiagram: (elementName, targetDiagramType) => set((state) => ({
+  navigateToDiagram: (elementName, targetDiagramType, scope) => set((state) => ({
     activeTab: "diagram",
     highlightedNodeId: elementName,
     diagramType: targetDiagramType ?? state.diagramType,
+    diagramScope: scope !== undefined ? scope : state.diagramScope,
     showDetailSheet: false,
   })),
 

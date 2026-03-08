@@ -113,7 +113,16 @@ export function ElementDetail() {
           Source
         </button>
         <button
-          onClick={() => diagramLabel && navigateToDiagram(diagramLabel, getBestDiagramType(kindStr))}
+          onClick={() => {
+            if (!diagramLabel) return;
+            const bestDiagram = getBestDiagramType(kindStr);
+            // Scope diagram to this element for types that support it
+            const scopable = ["part_def", "part_usage", "state_def", "action_def"];
+            const scope = element.name && scopable.includes(kindStr)
+              ? { elementId: element.id, elementName: element.name, elementKind: kindStr }
+              : null;
+            navigateToDiagram(diagramLabel, bestDiagram, scope);
+          }}
           style={{
             flex: 1, padding: 10, borderRadius: 8, border: "1.5px solid #38bdf8",
             background: "rgba(56,189,248,0.1)", color: "#38bdf8", fontSize: 12,
