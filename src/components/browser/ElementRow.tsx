@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef, useCallback } from "react";
 import type { SysmlElement } from "../../lib/element-types";
 import { TypeBadge } from "../shared/TypeBadge";
 
@@ -12,33 +12,141 @@ interface ElementRowProps {
   onAdd?: (el: SysmlElement) => void;
 }
 
-const ACTION_WIDTH = 64;
-const SWIPE_THRESHOLD = 40;
+const ACTION_W = 64;
+const DEAD_ZONE = 12;
+const SNAP_THRESHOLD = 32;
+
+// Shared tracker: only one row swiped open at a time
+let activeResetFn: (() => void) | null = null;
 
 export function ElementRow({ element, parentName, selected, onSelect, onDelete, onEdit, onAdd }: ElementRowProps) {
   const kindStr = typeof element.kind === "string" ? element.kind : "other";
-  const [translateX, setTranslateX] = React.useState(0);
-  const touchStart = React.useRef<{ x: number; y: number } | null>(null);
-  const locked = React.useRef<"left" | "right" | null>(null);
 
-  const maxRight = (onEdit ? ACTION_WIDTH : 0) + (onAdd ? ACTION_WIDTH : 0);
-  const maxLeft = onDelete ? -ACTION_WIDTH : 0;
+  const rowRef = useRef<HTMLButtonElement>(null);
+  const actionsLeftRef = useRef<HTMLDivElement>(null);
+  const actionsRightRef = useRef<HTMLDivElement>(null);
 
-  function resetSwipe() {
-    setTranslateX(0);
-    locked.current = null;
-  }
+  const startX = useRef(0);
+  const startY = useRef(0);
+  const currentX = useRef(0);
+  const direction = useRef<"left" | "right" | null>(null);
+  const isOpen = useRef(false);
+  const openOffset = useRef(0);
+
+  const maxRight = (onAdd ? ACTION_W : 0) + (onEdit ? ACTION_W : 0);
+  const maxLeft = onDelete ? ACTION_W : 0;
+
+  const setOffset = useCallback((x: number, animate: boolean) => {
+    const el = rowRef.current;
+    if (!el) return;
+    if (animate) {
+      el.style.transition = "transform 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)";
+    } else {
+      el.style.transition = "none";
+    }
+    el.style.transform = `translateX(${x}px)`;
+    currentX.current = x;
+
+    // Show/hide action panels
+    if (actionsLeftRef.current) {
+      actionsLeftRef.current.style.display = x > 2 ? "flex" : "none";
+    }
+    if (actionsRightRef.current) {
+      actionsRightRef.current.style.display = x < -2 ? "flex" : "none";
+    }
+  }, []);
+
+  const snapTo = useCallback((target: number) => {
+    setOffset(target, true);
+    isOpen.current = target !== 0;
+    openOffset.current = target;
+    if (target !== 0) {
+      activeResetFn = () => { setOffset(0, true); isOpen.current = false; openOffset.current = 0; };
+    } else {
+      activeResetFn = null;
+    }
+  }, [setOffset]);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    // Close any other open row first
+    if (activeResetFn && !isOpen.current) {
+      activeResetFn();
+      activeResetFn = null;
+    }
+    const t = e.touches[0];
+    startX.current = t.clientX;
+    startY.current = t.clientY;
+    direction.current = null;
+    // If already open, start from current offset
+    if (isOpen.current) {
+      startX.current -= openOffset.current;
+    }
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    const t = e.touches[0];
+    const dx = t.clientX - startX.current;
+    const dy = t.clientY - startY.current;
+
+    // Haven't committed to a direction yet
+    if (!direction.current) {
+      if (Math.abs(dy) > DEAD_ZONE) {
+        // Vertical scroll — completely bail out
+        direction.current = null;
+        startX.current = 0;
+        return;
+      }
+      if (Math.abs(dx) < DEAD_ZONE) return;
+      direction.current = dx > 0 ? "right" : "left";
+    }
+
+    // Rubber-band: allow a little overscroll but with heavy resistance
+    let clamped: number;
+    if (direction.current === "left") {
+      clamped = Math.max(dx, -maxLeft);
+      if (dx < -maxLeft) clamped = -maxLeft + (dx + maxLeft) * 0.15;
+    } else {
+      clamped = Math.min(dx, maxRight);
+      if (dx > maxRight) clamped = maxRight + (dx - maxRight) * 0.15;
+    }
+
+    setOffset(clamped, false);
+  }, [maxLeft, maxRight, setOffset]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (!direction.current) {
+      startX.current = 0;
+      return;
+    }
+    const x = currentX.current;
+    if (direction.current === "left") {
+      snapTo(x < -SNAP_THRESHOLD && maxLeft > 0 ? -maxLeft : 0);
+    } else {
+      snapTo(x > SNAP_THRESHOLD && maxRight > 0 ? maxRight : 0);
+    }
+    direction.current = null;
+  }, [maxLeft, maxRight, snapTo]);
+
+  const handleClick = useCallback(() => {
+    if (isOpen.current) {
+      snapTo(0);
+    } else {
+      onSelect(element);
+    }
+  }, [element, onSelect, snapTo]);
 
   return (
     <div style={{ position: "relative", overflow: "hidden" }}>
-      {/* Right-side actions (revealed on swipe left): Delete */}
-      {onDelete && translateX < -10 && (
+      {/* Right-side action (swipe left): Delete */}
+      {onDelete && (
         <div
-          onClick={() => { onDelete(element); resetSwipe(); }}
+          ref={actionsRightRef}
+          onClick={() => { snapTo(0); onDelete(element); }}
           style={{
+            display: "none",
             position: "absolute", right: 0, top: 0, bottom: 0,
-            width: ACTION_WIDTH, background: "var(--error)",
-            display: "flex", alignItems: "center", justifyContent: "center",
+            width: ACTION_W, background: "var(--error)",
+            alignItems: "center", justifyContent: "center",
             color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
             cursor: "pointer",
           }}
@@ -47,91 +155,57 @@ export function ElementRow({ element, parentName, selected, onSelect, onDelete, 
         </div>
       )}
 
-      {/* Left-side actions (revealed on swipe right): Add + Edit */}
-      {translateX > 10 && (
-        <div style={{
+      {/* Left-side actions (swipe right): Add + Edit */}
+      <div
+        ref={actionsLeftRef}
+        style={{
+          display: "none",
           position: "absolute", left: 0, top: 0, bottom: 0,
-          display: "flex",
-        }}>
-          {onAdd && (
-            <div
-              onClick={() => { onAdd(element); resetSwipe(); }}
-              style={{
-                width: ACTION_WIDTH, background: "var(--accent)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
-                cursor: "pointer",
-              }}
-            >
-              Add
-            </div>
-          )}
-          {onEdit && (
-            <div
-              onClick={() => { onEdit(element); resetSwipe(); }}
-              style={{
-                width: ACTION_WIDTH, background: "var(--warning)",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
-                cursor: "pointer",
-              }}
-            >
-              Edit
-            </div>
-          )}
-        </div>
-      )}
+        }}
+      >
+        {onAdd && (
+          <div
+            onClick={() => { snapTo(0); onAdd(element); }}
+            style={{
+              width: ACTION_W, background: "var(--accent)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
+              cursor: "pointer",
+            }}
+          >
+            Add
+          </div>
+        )}
+        {onEdit && (
+          <div
+            onClick={() => { snapTo(0); onEdit(element); }}
+            style={{
+              width: ACTION_W, background: "var(--warning)",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
+              cursor: "pointer",
+            }}
+          >
+            Edit
+          </div>
+        )}
+      </div>
 
       <button
-        onClick={() => { if (translateX !== 0) { resetSwipe(); } else { onSelect(element); } }}
+        ref={rowRef}
+        onClick={handleClick}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
         style={{
           display: "flex", alignItems: "center", gap: 10, width: "100%",
-          padding: "10px 14px", background: selected ? "var(--bg-elevated)" : "transparent",
+          padding: "10px 14px",
+          background: selected ? "var(--bg-elevated)" : "transparent",
           border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer",
-          textAlign: "left", transition: translateX === 0 ? "transform 0.2s" : "none",
+          textAlign: "left",
           borderLeft: selected ? "3px solid var(--accent)" : "3px solid transparent",
           minHeight: 44,
-          transform: `translateX(${translateX}px)`,
-        }}
-        onTouchStart={(e) => {
-          touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-          locked.current = null;
-        }}
-        onTouchMove={(e) => {
-          if (!touchStart.current) return;
-          const dx = e.touches[0].clientX - touchStart.current.x;
-          const dy = e.touches[0].clientY - touchStart.current.y;
-          // Lock direction on first significant movement
-          if (!locked.current) {
-            if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 5) {
-              touchStart.current = null; // vertical scroll, bail out
-              return;
-            }
-            if (Math.abs(dx) > 5) {
-              locked.current = dx > 0 ? "right" : "left";
-            }
-            return;
-          }
-          // Clamp to action widths
-          if (locked.current === "left") {
-            setTranslateX(Math.max(dx, maxLeft));
-          } else {
-            setTranslateX(Math.min(dx, maxRight));
-          }
-        }}
-        onTouchEnd={() => {
-          if (!locked.current) {
-            touchStart.current = null;
-            return;
-          }
-          // Snap open or closed
-          if (locked.current === "left") {
-            setTranslateX(translateX < -SWIPE_THRESHOLD ? maxLeft : 0);
-          } else {
-            setTranslateX(translateX > SWIPE_THRESHOLD ? maxRight : 0);
-          }
-          touchStart.current = null;
-          locked.current = null;
+          willChange: "transform",
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
