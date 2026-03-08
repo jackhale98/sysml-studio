@@ -17,6 +17,7 @@ export function AppShell() {
   const activeDialog = useUIStore((s) => s.activeDialog);
   const openDialog = useUIStore((s) => s.openDialog);
   const setTab = useUIStore((s) => s.setTab);
+  const highlightedNodeId = useUIStore((s) => s.highlightedNodeId);
 
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const TAB_ORDER: TabId[] = ["browser", "diagram", "editor", "mbse"];
@@ -59,8 +60,8 @@ export function AppShell() {
 
       {showDetailSheet && <ElementDetail />}
 
-      {/* Floating create button */}
-      {!activeDialog && !showDetailSheet && (
+      {/* Floating create button — hidden when diagram element is selected (action bar has its own + Add) */}
+      {!activeDialog && !showDetailSheet && !(activeTab === "diagram" && highlightedNodeId) && (
         <button
           onClick={() => {
             if (activeTab === "diagram") {
