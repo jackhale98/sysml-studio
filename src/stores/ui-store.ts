@@ -65,7 +65,6 @@ export const useUIStore = create<UIState>((set) => ({
   setDiagramType: (type) => set({
     diagramType: type,
     highlightedNodeId: null,
-    diagramScope: null,
   }),
 
   setDiagramScope: (scope) => set({ diagramScope: scope, highlightedNodeId: null }),

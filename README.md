@@ -9,9 +9,10 @@ Built with **Tauri 2.0** + **React 19** + **TypeScript** + **Rust**, powered by 
 ### Model Browser
 - Hierarchical element tree with parent/child nesting
 - Multi-category filtering (Structure, Behavior, Requirements, Interfaces, Attributes, etc.)
+- Kind sub-filtering: filter by specific element kinds (e.g., just Part usages, Attributes, States)
 - Text search across element names, kinds, and qualified names
 - Detail panel with element metadata, source location, and navigation actions
-- Swipe-to-delete on element rows (mobile)
+- Swipe actions on element rows: swipe left to delete, swipe right for add/edit (mobile)
 
 ### Diagram Views
 - **BDD** (Block Definition Diagram) — definitions with composition and specialization edges
@@ -20,7 +21,10 @@ Built with **Tauri 2.0** + **React 19** + **TypeScript** + **Rust**, powered by 
 - **UCD** (Use Case Diagram) — actors (stick figures) and use case ellipses with include/association edges
 - **IBD** (Internal Block Diagram) — block container with internal parts, ports, and connection edges
 
-All diagrams support touch/mouse pan and zoom, node tap highlighting, auto-fit scaling, and context-aware element creation.
+All diagrams support:
+- Touch/mouse pan and zoom, node tap highlighting, auto-fit scaling
+- **Diagram scoping**: select an element in the browser or tap "Scope" on a diagram node to limit the view to that element's context (e.g., scope BDD to a specific block and its parts, scope STM to a specific state definition). Scope persists across diagram type switches.
+- Context-aware element creation via "+ Add" on any highlighted node
 
 ### Source Editor
 - Syntax-highlighted SysML v2 editor with CodeMirror 6
@@ -50,11 +54,10 @@ All diagrams support touch/mouse pan and zoom, node tap highlighting, auto-fit s
 - PNG diagram export
 
 ### Mobile
-- Swipe gestures for tab switching
-- Swipe-to-delete on element rows
-- Touch-optimized pan/zoom on diagrams
+- Swipe actions on browser rows: left for delete, right for add/edit
+- Touch-optimized pan/zoom on diagrams with pinch-to-zoom
 - Floating create button with diagram-type context
-- Mobile-first layout (430px viewport)
+- Responsive layout for both mobile and desktop
 
 ### Theming
 - Dark and light mode with CSS variable system
@@ -134,7 +137,7 @@ src-tauri/src/                # Rust backend
 │   └── query.rs              # Completeness, traceability, validation queries
 ├── commands/
 │   ├── parse_commands.rs     # parse, reparse, open, save, filter, MBSE IPC commands
-│   └── diagram_commands.rs   # BDD + STM layout generation
+│   └── diagram_commands.rs   # BDD, STM, REQ, UCD, IBD layout generation
 ├── lib.rs                    # Tauri plugin registration
 └── main.rs                   # Entry point
 
@@ -192,7 +195,7 @@ npx tauri android build
 # Frontend tests (7 tests)
 npm test
 
-# Rust tests (24 tests)
+# Rust tests (28 tests)
 cd src-tauri && cargo test
 
 # Lint

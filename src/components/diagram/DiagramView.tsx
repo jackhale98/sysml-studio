@@ -717,65 +717,53 @@ export function DiagramView() {
             </div>
 
             {/* Action buttons */}
-            {hlElement && (() => {
-              const hlKind = typeof hlElement.kind === "string" ? hlElement.kind : "";
-              const canScope = ["part_def", "part_usage", "state_def", "action_def"].includes(hlKind);
+            {hlNode && (() => {
+              const hlKind = hlElement ? (typeof hlElement.kind === "string" ? hlElement.kind : "") : hlNode.kind;
+              const canScope = ["part_def", "part_usage", "state_def", "action_def", "block", "state"].includes(hlKind);
+              const actionBtnStyle = (border: string, bg: string, fg: string) => ({
+                flex: 1, padding: 8, borderRadius: 8,
+                border: `1.5px solid ${border}`, background: bg, color: fg,
+                fontSize: 11, fontWeight: 600 as const, fontFamily: "var(--font-mono)",
+                cursor: "pointer" as const, minHeight: 38,
+              });
               return (
               <div style={{ display: "flex", gap: 6 }}>
-                {canScope && hlElement.name && (
+                {canScope && hlNode.label && (
                   <button
                     onClick={() => setDiagramScope({
-                      elementId: hlElement.id,
-                      elementName: hlElement.name!,
-                      elementKind: hlKind,
+                      elementId: hlNode.element_id,
+                      elementName: hlNode.label,
+                      elementKind: hlElement ? (typeof hlElement.kind === "string" ? hlElement.kind : "part_def") : "part_def",
                     })}
-                    style={{
-                      flex: 1, padding: 8, borderRadius: 8,
-                      border: "1.5px solid #a78bfa",
-                      background: "rgba(167,139,250,0.1)", color: "#a78bfa",
-                      fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
-                      cursor: "pointer", minHeight: 38,
-                    }}
+                    style={actionBtnStyle("#a78bfa", "rgba(167,139,250,0.1)", "#a78bfa")}
                   >
                     Scope
                   </button>
                 )}
-                <button
-                  onClick={() => navigateToEditor(hlElement.span.start_line)}
-                  style={{
-                    flex: 1, padding: 8, borderRadius: 8,
-                    border: "1.5px solid var(--accent)",
-                    background: "rgba(59,130,246,0.1)", color: "var(--accent-hover)",
-                    fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
-                    cursor: "pointer", minHeight: 38,
-                  }}
-                >
-                  Source
-                </button>
-                <button
-                  onClick={() => openDialog("edit", hlElement.id)}
-                  style={{
-                    flex: 1, padding: 8, borderRadius: 8,
-                    border: "1.5px solid #f59e0b",
-                    background: "rgba(245,158,11,0.1)", color: "#fbbf24",
-                    fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
-                    cursor: "pointer", minHeight: 38,
-                  }}
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => openDialog("delete", hlElement.id)}
-                  style={{
-                    flex: 1, padding: 8, borderRadius: 8,
-                    border: "1.5px solid var(--error)",
-                    background: "rgba(239,68,68,0.1)", color: "#f87171",
-                    fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
-                    cursor: "pointer", minHeight: 38,
-                  }}
-                >
-                  Delete
-                </button>
+                {hlElement && (
+                  <button
+                    onClick={() => navigateToEditor(hlElement.span.start_line)}
+                    style={actionBtnStyle("var(--accent)", "rgba(59,130,246,0.1)", "var(--accent-hover)")}
+                  >
+                    Source
+                  </button>
+                )}
+                {hlElement && (
+                  <button
+                    onClick={() => openDialog("edit", hlElement.id)}
+                    style={actionBtnStyle("#f59e0b", "rgba(245,158,11,0.1)", "#fbbf24")}
+                  >
+                    Edit
+                  </button>
+                )}
+                {hlElement && (
+                  <button
+                    onClick={() => openDialog("delete", hlElement.id)}
+                    style={actionBtnStyle("var(--error)", "rgba(239,68,68,0.1)", "#f87171")}
+                  >
+                    Delete
+                  </button>
+                )}
                 <button
                   onClick={() => {
                     const kindMap: Record<string, { kind: string; cat: number }> = {
@@ -789,16 +777,10 @@ export function DiagramView() {
                     openDialog("create", undefined, {
                       suggestedKind: ctx.kind,
                       suggestedCategory: ctx.cat,
-                      suggestedParentId: hlElement.id,
+                      suggestedParentId: hlElement?.id ?? hlNode.element_id,
                     });
                   }}
-                  style={{
-                    flex: 1, padding: 8, borderRadius: 8,
-                    border: "1.5px solid var(--success)",
-                    background: "rgba(22,163,74,0.1)", color: "var(--success)",
-                    fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
-                    cursor: "pointer", minHeight: 38,
-                  }}
+                  style={actionBtnStyle("var(--success)", "rgba(22,163,74,0.1)", "var(--success)")}
                 >
                   + Add
                 </button>
