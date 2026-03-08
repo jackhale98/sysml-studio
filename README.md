@@ -11,40 +11,55 @@ Built with **Tauri 2.0** + **React 19** + **TypeScript** + **Rust**, powered by 
 - Multi-category filtering (Structure, Behavior, Requirements, Interfaces, Attributes, etc.)
 - Text search across element names, kinds, and qualified names
 - Detail panel with element metadata, source location, and navigation actions
+- Swipe-to-delete on element rows (mobile)
 
 ### Diagram Views
 - **BDD** (Block Definition Diagram) — definitions with composition and specialization edges
 - **STM** (State Machine Diagram) — states and transitions with smart edge routing
-- **REQ** (Requirements Diagram) — requirement hierarchy with containment edges
-- **UCD** (Use Case Diagram) — actors (stick figures) and use case ellipses with association edges
-- **IBD** (Internal Block Diagram) — block container with internal parts, ports, and inferred connections
+- **REQ** (Requirements Diagram) — requirement hierarchy with satisfy/verify edges
+- **UCD** (Use Case Diagram) — actors (stick figures) and use case ellipses with include/association edges
+- **IBD** (Internal Block Diagram) — block container with internal parts, ports, and connection edges
 
-All diagrams support touch/mouse pan and zoom, node tap highlighting, and auto-fit scaling.
+All diagrams support touch/mouse pan and zoom, node tap highlighting, auto-fit scaling, and context-aware element creation.
 
 ### Source Editor
 - Syntax-highlighted SysML v2 editor with CodeMirror 6
 - Line numbers and scroll-to-line navigation from browser/diagrams
 - Live re-parse on edit with error reporting
+- Incremental reparsing via tree-sitter edit deltas (Tauri mode)
 
 ### CRUD Operations
 - Create elements via dialog with category/kind selection, type search, documentation, and parent targeting
+- SearchSelect popup with full-text search and grouping for type/parent selection
+- Nested insertion: automatically converts `;`-terminated usages to `{ }` blocks when adding children
 - Edit element name, type reference, and documentation
 - Delete elements with confirmation
 - Source text manipulation with live re-parse — no separate backend API needed
 
 ### MBSE Dashboard
-- Completeness scoring per element (name, type, documentation, children)
-- Traceability matrix linking requirements to satisfying/verifying elements
-- Model-wide statistics
+- **Model Completeness**: Requirements satisfaction, verification, port connectivity, usage typing scores
+- **Traceability Matrix**: Requirements linked to satisfying/verifying/allocated elements
+- **Validation Engine**: Missing types, unresolved references, empty definitions, orphaned elements
+- **Export Tables**: Tabular view of traceability, elements, and validation with CSV export
+- Model summary statistics
 
 ### File Management
 - Open/save with native file dialogs (Tauri) or browser fallback
 - Package import resolution from the same directory (`import PackageName::*`)
 - Dirty state tracking with save indicator
+- PNG diagram export
+
+### Mobile
+- Swipe gestures for tab switching
+- Swipe-to-delete on element rows
+- Touch-optimized pan/zoom on diagrams
+- Floating create button with diagram-type context
+- Mobile-first layout (430px viewport)
 
 ### Theming
 - Dark and light mode with CSS variable system
 - Persistent theme selection via localStorage
+- Theme-aware diagram text and colors
 
 ## Architecture
 
@@ -68,7 +83,7 @@ All diagrams support touch/mouse pan and zoom, node tap highlighting, and auto-f
 │  │  ┌──────────────┐ ┌────────────┐ ┌─────────────┐││
 │  │  │ tree-sitter   │ │  Semantic  │ │   File I/O  │││
 │  │  │ SysML Parser  │ │  Model +   │ │   + Dialog  │││
-│  │  │               │ │  Graph     │ │             │││
+│  │  │ (incremental) │ │  Graph     │ │             │││
 │  │  └───────────────┘ └────────────┘ └─────────────┘││
 │  └──────────────────────────────────────────────────┘│
 └──────────────────────────────────────────────────────┘
@@ -78,8 +93,8 @@ All diagrams support touch/mouse pan and zoom, node tap highlighting, and auto-f
 
 The app runs in two modes:
 
-- **Tauri mode**: Rust backend parses SysML with tree-sitter, builds element graph, generates BDD/STM layouts. File I/O uses native filesystem.
-- **Browser mode**: A regex-based browser parser (`browser-parser.ts`) provides full functionality when running via `npm run dev` without Tauri. All 5 diagram types are generated client-side.
+- **Tauri mode**: Rust backend parses SysML with tree-sitter (including incremental reparsing), builds element graph, runs validation, generates diagram layouts. File I/O uses native filesystem. Verified against the official SysML v2 SimpleVehicleModel.sysml (946 elements, 0 errors).
+- **Browser mode**: A regex-based browser parser (`browser-parser.ts`) provides functional parsing when running via `npm run dev` without Tauri. All 5 diagram types, validation, traceability, and completeness are generated client-side.
 
 Both modes share the same React UI, Zustand stores, and component tree.
 
@@ -93,7 +108,7 @@ src/                          # React frontend
 │   ├── dialogs/              # Create, edit, delete element dialogs
 │   ├── editor/               # CodeMirror source editor
 │   ├── layout/               # AppShell, Header, TabBar
-│   ├── mbse/                 # MBSE dashboard (completeness, traceability)
+│   ├── mbse/                 # MBSE dashboard (completeness, traceability, validation, export)
 │   └── shared/               # SearchSelect, TypeBadge, SearchInput, etc.
 ├── lib/
 │   ├── browser-parser.ts     # Browser-side SysML parser + all diagram layouts
@@ -111,17 +126,23 @@ src/                          # React frontend
 
 src-tauri/src/                # Rust backend
 ├── parser/
-│   ├── sysml_parser.rs       # tree-sitter integration
-│   └── node_visitor.rs       # AST visitor for element extraction
+│   ├── sysml_parser.rs       # tree-sitter integration (full + incremental parse)
+│   └── node_visitor.rs       # AST visitor for element extraction (60+ node types)
 ├── model/
 │   ├── elements.rs           # SysmlElement, SysmlModel types
 │   ├── graph.rs              # ElementGraph with relationship tracking
-│   └── query.rs              # Completeness, traceability queries
+│   └── query.rs              # Completeness, traceability, validation queries
 ├── commands/
-│   ├── parse_commands.rs     # parse_source, open_file, save_file IPC
+│   ├── parse_commands.rs     # parse, reparse, open, save, filter, MBSE IPC commands
 │   └── diagram_commands.rs   # BDD + STM layout generation
 ├── lib.rs                    # Tauri plugin registration
 └── main.rs                   # Entry point
+
+.github/workflows/            # CI/CD
+├── ci.yml                    # Tests + clippy on every PR
+├── build-desktop.yml         # macOS (arm64/x64), Windows, Linux builds
+├── build-ios.yml             # iOS debug builds
+└── build-android.yml         # Android APK builds
 ```
 
 ## Getting Started
@@ -153,20 +174,40 @@ Launches the native desktop app with the Rust backend.
 ### Build
 
 ```bash
+# Desktop (produces .dmg, .msi, .deb, .rpm, .AppImage)
 cargo tauri build
-```
 
-Produces platform-specific installers in `src-tauri/target/release/bundle/`.
+# iOS (requires Xcode)
+npx tauri ios init
+npx tauri ios build
+
+# Android (requires Android SDK + NDK)
+npx tauri android init
+npx tauri android build
+```
 
 ### Tests
 
 ```bash
-# Frontend tests
+# Frontend tests (7 tests)
 npm test
 
-# Rust tests
+# Rust tests (24 tests)
 cd src-tauri && cargo test
+
+# Lint
+cd src-tauri && cargo clippy
+npx tsc --noEmit
 ```
+
+## CI/CD
+
+GitHub Actions workflows are configured for:
+
+- **CI**: TypeScript type checking, frontend tests, Rust tests, and clippy on every push/PR
+- **Desktop**: Builds for macOS (arm64 + x64), Windows (x64), Linux (x64) with automatic GitHub Release drafts on tags
+- **iOS**: Debug builds on macOS runners (configure signing secrets for production)
+- **Android**: Debug APK builds with NDK (configure signing for production)
 
 ## Tech Stack
 
@@ -189,7 +230,11 @@ The parser handles the full SysML v2 textual notation grammar including:
 - **41 definition types**: part def, port def, action def, state def, requirement def, use case def, constraint def, etc.
 - **28+ usage types**: part, attribute, port, action, state, connection, flow, requirement, etc.
 - **Relationships**: composition, specialization, satisfy, verify, allocate, connect
-- **Other constructs**: packages, imports, enumerations, transitions, doc comments, metadata
+- **Behavioral**: state machines, transitions, perform/exhibit statements, control flow
+- **MBSE**: requirements traceability, completeness scoring, impact analysis, validation
+- **Other constructs**: packages, imports, enumerations, doc comments, metadata, visibility modifiers
+
+Tested against the official [SysML v2 SimpleVehicleModel.sysml](https://github.com/Systems-Modeling/SysML-v2-Release/blob/main/sysml/src/examples/Vehicle%20Example/) (1580 lines, 946 elements, 0 parse errors).
 
 ## License
 

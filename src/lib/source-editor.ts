@@ -61,23 +61,39 @@ export function insertElement(
   const lines = source.split("\n");
 
   if (parentElement) {
-    // Find the closing brace of the parent element
-    const insertLine = findClosingBrace(lines, parentElement.span.start_line);
-    if (insertLine >= 0) {
-      // Detect indentation of parent's children
-      const indent = getChildIndent(lines, parentElement.span.start_line, insertLine);
+    const startLine = parentElement.span.start_line;
+    const closingBraceLine = findClosingBrace(lines, startLine);
+
+    if (closingBraceLine >= 0) {
+      // Parent has braces — insert before the closing brace
+      const indent = getChildIndent(lines, startLine, closingBraceLine);
       const indented = newElementSource.split("\n").map(l => indent + l).join("\n");
-      lines.splice(insertLine, 0, "", indented);
+      lines.splice(closingBraceLine, 0, indented);
       return lines.join("\n");
+    }
+
+    // Parent has no braces (e.g. `part engine : Engine;`)
+    // Convert it from semicolon-terminated to block with the new child inside
+    const parentLine = lines[startLine];
+    if (parentLine) {
+      const semiIdx = parentLine.lastIndexOf(";");
+      if (semiIdx >= 0) {
+        const baseIndent = getLineIndent(parentLine);
+        const childIndent = baseIndent + "  ";
+        const indented = newElementSource.split("\n").map(l => childIndent + l).join("\n");
+        // Replace `;` with `{` and add child + closing `}`
+        lines[startLine] = parentLine.substring(0, semiIdx) + " {";
+        lines.splice(startLine + 1, 0, indented, baseIndent + "}");
+        return lines.join("\n");
+      }
     }
   }
 
-  // No parent or couldn't find brace — append before the last closing brace of the file,
-  // or at the end
+  // No parent or couldn't find insertion point — append before the last closing brace
   const lastBrace = findLastTopLevelBrace(lines);
   if (lastBrace >= 0) {
     const indented = newElementSource.split("\n").map(l => "  " + l).join("\n");
-    lines.splice(lastBrace, 0, "", indented);
+    lines.splice(lastBrace, 0, indented);
   } else {
     lines.push("", newElementSource);
   }
