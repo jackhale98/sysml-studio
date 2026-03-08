@@ -46,7 +46,6 @@ jobs:
         run: |
           cd src-tauri/gen/apple
           xcodebuild \
-            -project "sysml-studio.xcodeproj" \
             -scheme "sysml-studio_iOS" \
             -sdk iphonesimulator \
             -configuration Debug \
@@ -54,7 +53,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tail -50
 
       - name: Upload simulator artifact
         uses: actions/upload-artifact@v4
@@ -137,7 +136,6 @@ jobs:
         run: |
           cd src-tauri/gen/apple
           xcodebuild \
-            -project "sysml-studio.xcodeproj" \
             -scheme "sysml-studio_iOS" \
             -sdk iphoneos \
             -configuration Release \
@@ -173,12 +171,25 @@ jobs:
             -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
             -exportPath $RUNNER_TEMP/export
 
+      - name: Rename IPA for release
+        run: |
+          IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
+          if [ -n "$IPA" ]; then
+            cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
+          fi
+
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-ipa
           path: ${{ runner.temp }}/export/*.ipa
           retention-days: 90
+
+      - name: Upload IPA to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: ${{ runner.temp }}/export/sysml-studio-ios.ipa
 
       # Clean up keychain
       - name: Clean up keychain
