@@ -59,7 +59,6 @@ pub fn compute_bdd_layout(
         ))
         .filter(|e| {
             if let Some(ref root) = root_name {
-                // Filter to elements within the root's scope
                 e.name.as_deref() == Some(root.as_str()) ||
                 e.qualified_name.contains(root.as_str())
             } else {
@@ -68,14 +67,68 @@ pub fn compute_bdd_layout(
         })
         .collect();
 
-    // Simple layered layout: definitions on layers based on containment depth
+    let def_by_name: std::collections::HashMap<&str, ElementId> = definitions.iter()
+        .filter_map(|d| d.name.as_deref().map(|n| (n, d.id)))
+        .collect();
+
+    // Build composition map: parent_def_id -> [(usage_name, child_def_name)]
+    // Also create virtual nodes for unresolved type refs
+    let mut composition_map: Vec<(ElementId, String, ElementId, String)> = Vec::new(); // (parent_id, usage_name, child_id, child_label)
+    let mut virtual_nodes: Vec<(ElementId, String)> = Vec::new();
+    let mut next_virtual_id: ElementId = u32::MAX;
+
+    for el in &model.elements {
+        if el.kind != ElementKind::PartUsage { continue; }
+        let Some(parent_id) = el.parent_id else { continue; };
+
+        // Find the parent definition
+        let parent_def_id = if definitions.iter().any(|d| d.id == parent_id) {
+            parent_id
+        } else {
+            // Walk up to find a definition parent
+            model.elements.iter()
+                .find(|p| p.id == parent_id)
+                .and_then(|p| p.parent_id)
+                .filter(|&pid| definitions.iter().any(|d| d.id == pid))
+                .unwrap_or(parent_id)
+        };
+
+        if !definitions.iter().any(|d| d.id == parent_def_id) { continue; }
+
+        let usage_name = el.name.clone().unwrap_or_default();
+
+        if let Some(ref type_ref) = el.type_ref {
+            if let Some(&child_id) = def_by_name.get(type_ref.as_str()) {
+                if child_id != parent_def_id {
+                    composition_map.push((parent_def_id, usage_name, child_id, type_ref.clone()));
+                }
+            } else {
+                // Unresolved type ref — create virtual node
+                let vid = next_virtual_id;
+                next_virtual_id = next_virtual_id.wrapping_sub(1);
+                virtual_nodes.push((vid, type_ref.clone()));
+                composition_map.push((parent_def_id, usage_name, vid, type_ref.clone()));
+            }
+        } else if !usage_name.is_empty() {
+            // No type ref — show the usage itself as a node
+            let vid = next_virtual_id;
+            next_virtual_id = next_virtual_id.wrapping_sub(1);
+            virtual_nodes.push((vid, usage_name.clone()));
+            composition_map.push((parent_def_id, usage_name, vid, String::new()));
+        }
+    }
+
     let mut nodes = Vec::new();
     let mut edges = Vec::new();
 
-    // Find root definitions (no parent that's a definition, or parent is package)
+    // Determine which defs are children
+    let child_ids: std::collections::HashSet<ElementId> =
+        composition_map.iter().map(|c| c.2).collect();
+
+    // Root definitions: not referenced as a child
     let root_defs: Vec<&&SysmlElement> = definitions.iter()
         .filter(|e| {
-            e.parent_id.map(|pid| {
+            !child_ids.contains(&e.id) && e.parent_id.map(|pid| {
                 model.elements.iter().find(|p| p.id == pid)
                     .map(|p| matches!(p.kind, ElementKind::Package) || p.parent_id.is_none())
                     .unwrap_or(true)
@@ -87,26 +140,17 @@ pub fn compute_bdd_layout(
     for (i, def) in root_defs.iter().enumerate() {
         let x = i as f64 * (NODE_WIDTH + H_SPACING) + 20.0;
         let y = 30.0;
-
-        let color = kind_to_color(&def.kind);
         nodes.push(DiagramNode {
             element_id: def.id,
             label: def.name.clone().unwrap_or_else(|| "<unnamed>".into()),
             kind: "block".into(),
-            x,
-            y,
-            width: NODE_WIDTH,
-            height: NODE_HEIGHT,
-            color,
+            x, y, width: NODE_WIDTH, height: NODE_HEIGHT,
+            color: kind_to_color(&def.kind),
             children: vec![],
         });
     }
 
-    // Find composition relationships and lay out child definitions
-    let compositions = graph.relationships_of_type(&RelationshipType::Composition);
-    let specializations = graph.relationships_of_type(&RelationshipType::Specialization);
-
-    // Place referenced definitions below their parents
+    // Iteratively place children below their parents
     let mut placed_ids: std::collections::HashSet<ElementId> =
         nodes.iter().map(|n| n.element_id).collect();
 
@@ -117,48 +161,49 @@ pub fn compute_bdd_layout(
         new_nodes_in_layer = false;
         let mut col = 0;
 
-        for comp in &compositions {
-            // Find the target definition (the type being referenced)
-            if placed_ids.contains(&comp.from_id) && !placed_ids.contains(&comp.to_id) {
-                if let Some(target) = definitions.iter().find(|d| d.id == comp.to_id) {
-                    let x = col as f64 * (NODE_WIDTH + H_SPACING) + 20.0;
-                    let y = layer as f64 * (NODE_HEIGHT + V_SPACING) + 30.0;
+        for (parent_id, _usage_name, child_id, child_label) in &composition_map {
+            if placed_ids.contains(parent_id) && !placed_ids.contains(child_id) {
+                let x = col as f64 * (NODE_WIDTH + H_SPACING) + 20.0;
+                let y = layer as f64 * (NODE_HEIGHT + V_SPACING) + 30.0;
 
-                    nodes.push(DiagramNode {
-                        element_id: target.id,
-                        label: target.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-                        kind: "block".into(),
-                        x,
-                        y,
-                        width: NODE_WIDTH,
-                        height: NODE_HEIGHT,
-                        color: kind_to_color(&target.kind),
-                        children: vec![],
-                    });
-                    placed_ids.insert(target.id);
-                    col += 1;
-                    new_nodes_in_layer = true;
-                }
+                let (label, color) = if let Some(def) = definitions.iter().find(|d| d.id == *child_id) {
+                    (def.name.clone().unwrap_or_else(|| "<unnamed>".into()), kind_to_color(&def.kind))
+                } else {
+                    // Virtual node
+                    (child_label.clone(), "#94a3b8".into())
+                };
+
+                nodes.push(DiagramNode {
+                    element_id: *child_id,
+                    label,
+                    kind: "block".into(),
+                    x, y, width: NODE_WIDTH, height: NODE_HEIGHT,
+                    color,
+                    children: vec![],
+                });
+                placed_ids.insert(*child_id);
+                col += 1;
+                new_nodes_in_layer = true;
             }
         }
         layer += 1;
-        if layer > 10 { break; } // Safety limit
+        if layer > 10 { break; }
     }
 
-    // Create edges for compositions
-    for comp in compositions {
-        if placed_ids.contains(&comp.from_id) && placed_ids.contains(&comp.to_id) {
-            let from_node = nodes.iter().find(|n| n.element_id == comp.from_id);
-            let to_node = nodes.iter().find(|n| n.element_id == comp.to_id);
+    // Create composition edges
+    for (parent_id, usage_name, child_id, _) in &composition_map {
+        if placed_ids.contains(parent_id) && placed_ids.contains(child_id) {
+            let from_node = nodes.iter().find(|n| n.element_id == *parent_id);
+            let to_node = nodes.iter().find(|n| n.element_id == *child_id);
 
             if let (Some(from), Some(to)) = (from_node, to_node) {
                 let from_center = (from.x + from.width / 2.0, from.y + from.height);
                 let to_center = (to.x + to.width / 2.0, to.y);
 
                 edges.push(DiagramEdge {
-                    from_id: comp.from_id,
-                    to_id: comp.to_id,
-                    label: comp.label.clone(),
+                    from_id: *parent_id,
+                    to_id: *child_id,
+                    label: if usage_name.is_empty() { None } else { Some(usage_name.clone()) },
                     edge_type: "composition".into(),
                     points: vec![from_center, to_center],
                 });
@@ -167,6 +212,7 @@ pub fn compute_bdd_layout(
     }
 
     // Create edges for specializations
+    let specializations = graph.relationships_of_type(&RelationshipType::Specialization);
     for spec in specializations {
         if placed_ids.contains(&spec.from_id) && placed_ids.contains(&spec.to_id) {
             let from_node = nodes.iter().find(|n| n.element_id == spec.from_id);

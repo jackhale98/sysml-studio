@@ -276,9 +276,12 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
   const childrenOf = new Map<number, { usageName: string; childDef: SysmlElement }[]>();
   const hasParent = new Set<number>();
 
+  // Track placeholder defs created for unresolved type refs
+  let nextPlaceholderId = -1;
+
   for (const el of model.elements) {
     const k = typeof el.kind === "string" ? el.kind : "";
-    if (k === "part_usage" && el.type_ref && el.parent_id !== null) {
+    if (k === "part_usage" && el.parent_id !== null) {
       let parentDefId = el.parent_id;
       let parentDef = defById.get(parentDefId);
       if (!parentDef) {
@@ -288,11 +291,47 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
           if (parentDef) parentDefId = parentDef.id;
         }
       }
-      const childDef = defByName.get(el.type_ref);
-      if (parentDef && childDef && parentDef.id !== childDef.id) {
+
+      if (!parentDef) continue;
+
+      if (el.type_ref) {
+        // Has a type ref — find or create the target definition
+        let childDef = defByName.get(el.type_ref);
+        if (!childDef) {
+          // Create a placeholder node for the unresolved type
+          const placeholderDef: SysmlElement = {
+            id: nextPlaceholderId--, kind: "part_def" as any,
+            name: el.type_ref, qualified_name: el.type_ref,
+            category: "structure", parent_id: null, children_ids: [],
+            span: { start_line: 0, start_col: 0, end_line: 0, end_col: 0, start_byte: 0, end_byte: 0 },
+            type_ref: null, specializations: [], modifiers: [],
+            multiplicity: null, doc: null, short_name: null,
+          };
+          defs.push(placeholderDef);
+          defById.set(placeholderDef.id, placeholderDef);
+          defByName.set(el.type_ref, placeholderDef);
+          childDef = placeholderDef;
+        }
+        if (parentDef.id !== childDef.id) {
+          if (!childrenOf.has(parentDef.id)) childrenOf.set(parentDef.id, []);
+          childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? el.type_ref, childDef });
+          hasParent.add(childDef.id);
+        }
+      } else {
+        // No type ref — show the usage itself as a node under the parent
+        const usageNode: SysmlElement = {
+          id: el.id, kind: el.kind, name: el.name,
+          qualified_name: el.qualified_name, category: el.category,
+          parent_id: el.parent_id, children_ids: el.children_ids,
+          span: el.span, type_ref: el.type_ref, specializations: el.specializations,
+          modifiers: el.modifiers, multiplicity: el.multiplicity,
+          doc: el.doc, short_name: el.short_name,
+        };
+        defs.push(usageNode);
+        defById.set(usageNode.id, usageNode);
         if (!childrenOf.has(parentDef.id)) childrenOf.set(parentDef.id, []);
-        childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? el.type_ref, childDef });
-        hasParent.add(childDef.id);
+        childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? "<unnamed>", childDef: usageNode });
+        hasParent.add(usageNode.id);
       }
     }
   }
