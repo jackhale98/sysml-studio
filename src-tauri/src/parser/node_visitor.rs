@@ -71,6 +71,17 @@ impl ModelBuilder {
                     1 => (Some(qnames[0].clone()), specializations),
                     _ => (type_ref, specializations),
                 }
+            }
+            // For satisfy/verify statements, the requirement name is a qualified_name child
+            // AST: (satisfy_statement (qualified_name (identifier)))
+            else if kind == ElementKind::SatisfyStatement
+                || kind == ElementKind::VerifyStatement
+            {
+                let mut tcursor = node.walk();
+                let qname = node.children(&mut tcursor)
+                    .find(|child| child.kind() == "qualified_name")
+                    .map(|child| self.node_text(&child));
+                (qname.or(type_ref), specializations)
             } else {
                 (type_ref, specializations)
             };
@@ -728,6 +739,84 @@ part def Engine {
         let t2 = transitions.iter().find(|t| t.name.as_deref() == Some("idle_to_running")).unwrap();
         assert_eq!(t2.specializations.first().map(|s| s.as_str()), Some("idle"), "Source should be 'idle'");
         assert_eq!(t2.type_ref.as_deref(), Some("running"), "Target should be 'running'");
+    }
+
+    #[test]
+    fn test_satisfy_verify_parsing() {
+        let source = r#"
+package VehicleSystem {
+    requirement def MaxSpeed {
+        doc /* The vehicle shall achieve a top speed of 200 km/h */
+    }
+
+    requirement def Efficiency {
+        doc /* The vehicle shall achieve 15 km/L fuel efficiency */
+    }
+
+    part def VehicleVerification {
+        verify MaxSpeed;
+        verify Efficiency;
+    }
+
+    part def VehicleDesign {
+        satisfy MaxSpeed;
+        satisfy Efficiency;
+    }
+}
+"#;
+        let (elements, errors) = parse_and_build(source);
+        eprintln!("Parse errors: {:?}", errors);
+        for el in &elements {
+            eprintln!(
+                "kind={:?} name={:?} type_ref={:?} specs={:?} parent={:?}",
+                el.kind, el.name, el.type_ref, el.specializations, el.parent_id
+            );
+        }
+
+        // Dump AST
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_sysml::language()).unwrap();
+        let tree = parser.parse(source, None).unwrap();
+        eprintln!("AST:\n{}", tree.root_node().to_sexp());
+
+        // Should find satisfy and verify statements
+        let satisfies: Vec<_> = elements.iter()
+            .filter(|e| e.kind == ElementKind::SatisfyStatement)
+            .collect();
+        let verifies: Vec<_> = elements.iter()
+            .filter(|e| e.kind == ElementKind::VerifyStatement)
+            .collect();
+
+        eprintln!("Found {} satisfy statements, {} verify statements", satisfies.len(), verifies.len());
+
+        assert_eq!(satisfies.len(), 2, "Should find 2 satisfy statements");
+        assert_eq!(verifies.len(), 2, "Should find 2 verify statements");
+
+        // Check that type_ref points to the requirement name
+        let satisfy_refs: Vec<_> = satisfies.iter().filter_map(|s| s.type_ref.as_deref()).collect();
+        let verify_refs: Vec<_> = verifies.iter().filter_map(|v| v.type_ref.as_deref()).collect();
+        assert!(satisfy_refs.contains(&"MaxSpeed"), "Satisfy should reference MaxSpeed, got: {:?}", satisfy_refs);
+        assert!(satisfy_refs.contains(&"Efficiency"), "Satisfy should reference Efficiency, got: {:?}", satisfy_refs);
+        assert!(verify_refs.contains(&"MaxSpeed"), "Verify should reference MaxSpeed, got: {:?}", verify_refs);
+        assert!(verify_refs.contains(&"Efficiency"), "Verify should reference Efficiency, got: {:?}", verify_refs);
+
+        // Verify parent relationships
+        let design = elements.iter().find(|e| e.name.as_deref() == Some("VehicleDesign")).unwrap();
+        let verification = elements.iter().find(|e| e.name.as_deref() == Some("VehicleVerification")).unwrap();
+
+        for s in &satisfies {
+            assert_eq!(s.parent_id, Some(design.id), "Satisfy should be child of VehicleDesign");
+        }
+        for v in &verifies {
+            assert_eq!(v.parent_id, Some(verification.id), "Verify should be child of VehicleVerification");
+        }
+
+        // Verify that graph builds correct traceability edges
+        let graph = crate::model::graph::ElementGraph::build_from_model(&elements);
+        let max_speed = elements.iter().find(|e| e.name.as_deref() == Some("MaxSpeed")).unwrap();
+        let (satisfied_by, verified_by) = graph.requirement_traceability(max_speed.id);
+        assert!(satisfied_by.contains(&design.id), "MaxSpeed should be satisfied by VehicleDesign");
+        assert!(verified_by.contains(&verification.id), "MaxSpeed should be verified by VehicleVerification");
     }
 
     #[test]

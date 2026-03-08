@@ -19,6 +19,7 @@ export function DiagramView() {
   const [zoom, setZoom] = useState(0.85);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [dragging, setDragging] = useState(false);
+  const draggingRef = useRef(false);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
   const lastPinchDist = useRef<number | null>(null);
   const touchStartPos = useRef<{ x: number; y: number } | null>(null);
@@ -210,9 +211,10 @@ export function DiagramView() {
     };
   }, []);
 
-  // Mouse/pointer pan (desktop)
+  // Mouse/pointer pan (desktop) — use ref to avoid stale closure
   const handlePointerDown = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return; // handled by native touch listeners
+    draggingRef.current = true;
     setDragging(true);
     lastPos.current = { x: e.clientX, y: e.clientY };
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -220,16 +222,17 @@ export function DiagramView() {
 
   const handlePointerMove = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
-    if (dragging && lastPos.current) {
+    if (draggingRef.current && lastPos.current) {
       const dx = e.clientX - lastPos.current.x;
       const dy = e.clientY - lastPos.current.y;
       setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
       lastPos.current = { x: e.clientX, y: e.clientY };
     }
-  }, [dragging]);
+  }, []);
 
   const handlePointerUp = useCallback((e: React.PointerEvent) => {
     if (e.pointerType === "touch") return;
+    draggingRef.current = false;
     setDragging(false);
     lastPos.current = null;
   }, []);
@@ -415,6 +418,17 @@ export function DiagramView() {
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onWheel={(e) => {
+            e.preventDefault();
+            const delta = e.deltaY > 0 ? -0.08 : 0.08;
+            setZoom((z) => Math.min(Math.max(z + delta, 0.2), 2.5));
+          }}
+          onClick={(e) => {
+            // Click on empty SVG area clears highlight (desktop)
+            if (e.target === svgRef.current || (e.target as Element).tagName === "svg") {
+              setHighlightedNode(null);
+            }
+          }}
           style={{ cursor: dragging ? "grabbing" : "grab", touchAction: "none" }}
         >
           <g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
@@ -683,10 +697,45 @@ export function DiagramView() {
           )
         ).length ?? 0;
 
+        // Resolve element: by ID, by name, or by type_ref (for virtual/placeholder nodes)
+        const resolvedElement = hlElement
+          ?? (hlNode ? model?.elements.find(e => e.name === hlNode.label) : null)
+          ?? (hlNode ? model?.elements.find(e => e.type_ref === hlNode.label) : null);
+        // For definitions, find the def element itself (resolved might be a usage)
+        const resolvedKind = resolvedElement
+          ? (typeof resolvedElement.kind === "string" ? resolvedElement.kind : "")
+          : "";
+        // Find the definition element to show its children
+        const defElement = (() => {
+          if (!model || !hlNode) return null;
+          // Direct match by name as a definition
+          const byName = model.elements.find(e => e.name === hlNode.label && typeof e.kind === "string" && e.kind.endsWith("_def"));
+          if (byName) return byName;
+          // If resolved is a definition, use it
+          if (resolvedElement && resolvedKind.endsWith("_def")) return resolvedElement;
+          return null;
+        })();
+        // Gather children of the definition (attributes, ports, parts, states, etc.)
+        const childDetails = defElement && model
+          ? model.elements.filter(e => e.parent_id === defElement.id).map(e => {
+              const k = typeof e.kind === "string" ? e.kind : "";
+              const kindShort = k.replace(/_usage$/, "").replace(/_def$/, " def").replace(/_statement$/, "");
+              return { name: e.name ?? "<unnamed>", kind: kindShort, typeRef: e.type_ref };
+            })
+          : [];
+
+        const actionBtnStyle = (border: string, bg: string, fg: string) => ({
+          flex: 1, padding: 8, borderRadius: 8,
+          border: `1.5px solid ${border}`, background: bg, color: fg,
+          fontSize: 11, fontWeight: 600 as const, fontFamily: "var(--font-mono)",
+          cursor: "pointer" as const, minHeight: 38,
+        });
+
         return (
           <div style={{
             padding: "10px 12px", background: "var(--bg-tertiary)",
             borderTop: "1.5px solid var(--accent)",
+            maxHeight: "40%", overflow: "auto",
           }}>
             {/* Name + connections count + clear */}
             <div style={{
@@ -716,49 +765,61 @@ export function DiagramView() {
               </button>
             </div>
 
+            {/* Child details for definitions */}
+            {childDetails.length > 0 && (
+              <div style={{
+                marginBottom: 8, padding: "6px 8px", background: "var(--bg-primary)",
+                borderRadius: 6, border: "1px solid var(--border)",
+              }}>
+                {childDetails.map((child, i) => (
+                  <div key={i} style={{
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "3px 0", fontSize: 10, fontFamily: "var(--font-mono)",
+                    borderBottom: i < childDetails.length - 1 ? "1px solid var(--border)" : undefined,
+                  }}>
+                    <span style={{ color: "var(--text-secondary)", fontWeight: 500 }}>
+                      {child.name}
+                    </span>
+                    <span style={{ color: "var(--text-muted)", fontSize: 9 }}>
+                      {child.typeRef ? `${child.kind} : ${child.typeRef}` : child.kind}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {/* Action buttons */}
-            {hlNode && (() => {
-              const hlKind = hlElement ? (typeof hlElement.kind === "string" ? hlElement.kind : "") : hlNode.kind;
-              const canScope = ["part_def", "part_usage", "state_def", "action_def", "block", "state"].includes(hlKind);
-              const actionBtnStyle = (border: string, bg: string, fg: string) => ({
-                flex: 1, padding: 8, borderRadius: 8,
-                border: `1.5px solid ${border}`, background: bg, color: fg,
-                fontSize: 11, fontWeight: 600 as const, fontFamily: "var(--font-mono)",
-                cursor: "pointer" as const, minHeight: 38,
-              });
-              return (
+            {hlNode && (
               <div style={{ display: "flex", gap: 6 }}>
-                {canScope && hlNode.label && (
+                <button
+                  onClick={() => setDiagramScope({
+                    elementId: resolvedElement?.id ?? hlNode.element_id,
+                    elementName: hlNode.label,
+                    elementKind: resolvedKind || hlNode.kind,
+                  })}
+                  style={actionBtnStyle("#a78bfa", "rgba(167,139,250,0.1)", "#a78bfa")}
+                >
+                  Scope
+                </button>
+                {resolvedElement && (
                   <button
-                    onClick={() => setDiagramScope({
-                      elementId: hlNode.element_id,
-                      elementName: hlNode.label,
-                      elementKind: hlElement ? (typeof hlElement.kind === "string" ? hlElement.kind : "part_def") : "part_def",
-                    })}
-                    style={actionBtnStyle("#a78bfa", "rgba(167,139,250,0.1)", "#a78bfa")}
-                  >
-                    Scope
-                  </button>
-                )}
-                {hlElement && (
-                  <button
-                    onClick={() => navigateToEditor(hlElement.span.start_line)}
+                    onClick={() => navigateToEditor(resolvedElement.span.start_line)}
                     style={actionBtnStyle("var(--accent)", "rgba(59,130,246,0.1)", "var(--accent-hover)")}
                   >
                     Source
                   </button>
                 )}
-                {hlElement && (
+                {resolvedElement && (
                   <button
-                    onClick={() => openDialog("edit", hlElement.id)}
+                    onClick={() => openDialog("edit", resolvedElement.id)}
                     style={actionBtnStyle("#f59e0b", "rgba(245,158,11,0.1)", "#fbbf24")}
                   >
                     Edit
                   </button>
                 )}
-                {hlElement && (
+                {resolvedElement && (
                   <button
-                    onClick={() => openDialog("delete", hlElement.id)}
+                    onClick={() => openDialog("delete", resolvedElement.id)}
                     style={actionBtnStyle("var(--error)", "rgba(239,68,68,0.1)", "#f87171")}
                   >
                     Delete
@@ -777,7 +838,7 @@ export function DiagramView() {
                     openDialog("create", undefined, {
                       suggestedKind: ctx.kind,
                       suggestedCategory: ctx.cat,
-                      suggestedParentId: hlElement?.id ?? hlNode.element_id,
+                      suggestedParentId: resolvedElement?.id ?? hlNode.element_id,
                     });
                   }}
                   style={actionBtnStyle("var(--success)", "rgba(22,163,74,0.1)", "var(--success)")}
@@ -785,8 +846,7 @@ export function DiagramView() {
                   + Add
                 </button>
               </div>
-              );
-            })()}
+            )}
           </div>
         );
       })()}

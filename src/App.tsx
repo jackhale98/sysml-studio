@@ -97,6 +97,19 @@ const SAMPLE_SOURCE = `package VehicleSystem {
     doc /* Maintain vehicle systems */
     actor mechanic : Driver;
   }
+
+  part def VehicleVerification {
+    doc /* Verification activities for the vehicle */
+    verify MaxSpeed;
+    verify Efficiency;
+    verify SafetyReq;
+  }
+
+  part def VehicleDesign {
+    doc /* Vehicle design satisfying requirements */
+    satisfy MaxSpeed;
+    satisfy Efficiency;
+  }
 }
 `;
 

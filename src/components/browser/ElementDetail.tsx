@@ -58,6 +58,29 @@ export function ElementDetail() {
     { label: "Line", value: String(element.span.start_line + 1) },
   ];
 
+  // Gather child elements (attributes, ports, parts, states, etc.)
+  // For usages with a type_ref, resolve to the definition and show its members
+  const membersSource = (() => {
+    if (!model) return null;
+    const directChildren = model.elements.filter(e => e.parent_id === element.id);
+    if (directChildren.length > 0) return { el: element, children: directChildren, inherited: false };
+    if (element.type_ref) {
+      const def = model.elements.find(e => e.name === element.type_ref && typeof e.kind === "string" && e.kind.endsWith("_def"));
+      if (def) {
+        const defChildren = model.elements.filter(e => e.parent_id === def.id);
+        if (defChildren.length > 0) return { el: def, children: defChildren, inherited: true };
+      }
+    }
+    return null;
+  })();
+  const children = membersSource
+    ? membersSource.children.map(e => {
+        const k = typeof e.kind === "string" ? e.kind : "";
+        const kindShort = k.replace(/_usage$/, "").replace(/_def$/, " def").replace(/_statement$/, "");
+        return { name: e.name ?? "<unnamed>", kind: kindShort, typeRef: e.type_ref };
+      })
+    : [];
+
   return (
     <div style={{
       position: "absolute", bottom: 64, left: 0, right: 0,
@@ -95,6 +118,37 @@ export function ElementDetail() {
           marginBottom: 10, borderLeft: "3px solid var(--accent)",
         }}>
           {element.doc}
+        </div>
+      )}
+
+      {children.length > 0 && (
+        <div style={{
+          marginBottom: 10, padding: "8px 10px", background: "var(--bg-primary)",
+          borderRadius: 6, border: "1px solid var(--border)",
+        }}>
+          <div style={{
+            fontSize: 10, fontWeight: 700, color: "var(--text-muted)",
+            fontFamily: "var(--font-mono)", marginBottom: 6,
+            letterSpacing: "0.05em", textTransform: "uppercase",
+          }}>
+            {membersSource?.inherited ? `Members via ${element.type_ref}` : "Members"} ({children.length})
+          </div>
+          <div style={{ maxHeight: 140, overflow: "auto" }}>
+            {children.map((child, i) => (
+              <div key={i} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "4px 0", fontSize: 11, fontFamily: "var(--font-mono)",
+                borderBottom: i < children.length - 1 ? "1px solid var(--border)" : undefined,
+              }}>
+                <span style={{ color: "var(--text-secondary)", fontWeight: 500 }}>
+                  {child.name}
+                </span>
+                <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                  {child.typeRef ? `${child.kind} : ${child.typeRef}` : child.kind}
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

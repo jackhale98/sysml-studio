@@ -64,7 +64,7 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
 ];
 
 const OTHER_PATTERNS: [RegExp, string, Category][] = [
-  [/^transition\s+(?:(\w+)\s+)?(?:first\s+(\w+)\s+then\s+(\w+))?/, "transition_statement", "behavior"],
+  [/^transition\s+(?:(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s+then\s+(\w+))?/, "transition_statement", "behavior"],
   [/^satisfy\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "satisfy_statement", "requirement"],
   [/^verify\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "verify_statement", "analysis"],
   [/^(?:public\s+)?import\s+/, "import", "auxiliary"],
@@ -176,8 +176,9 @@ export function browserParse(source: string): SysmlModel {
             typeRef = m[2];
           } else if (kind === "transition_statement") {
             name = m[1] ?? null;
-            typeRef = m[2] ?? null;
-            specializations = m[3] ? [m[3]] : [];
+            // Convention: specializations[0] = source ("first"), type_ref = target ("then")
+            specializations = m[2] ? [m[2]] : [];
+            typeRef = m[3] ?? null;
           }
 
           const qname = ctx.stack.map(s => s.name).concat(name ?? "<unnamed>").join("::");
@@ -214,11 +215,13 @@ export function browserParse(source: string): SysmlModel {
         const firstMatch = lookAhead.match(/first\s+(\w+)/);
         const thenMatch = lookAhead.match(/then\s+(\w+)/);
         if (firstMatch) {
-          el.type_ref = firstMatch[1];
+          el.specializations = [firstMatch[1]];  // source state
         }
         if (thenMatch) {
-          el.specializations = [thenMatch[1]];
+          el.type_ref = thenMatch[1];  // target state
         }
+        // Stop once we've found the first/then data
+        if (el.specializations.length > 0 && el.type_ref !== null) break;
       }
     }
   }
@@ -1055,8 +1058,11 @@ export function browserTraceability(model: SysmlModel): TraceabilityEntry[] {
 
     for (const el of model.elements) {
       const k = typeof el.kind === "string" ? el.kind : "";
-      if (k === "satisfy_statement" && el.type_ref === r.name && el.name) {
-        const impl = model.elements.find(e => e.name === el.name);
+      if (k === "satisfy_statement" && el.type_ref === r.name) {
+        // "by" clause names the implementing element; otherwise use parent
+        const impl = el.name
+          ? model.elements.find(e => e.name === el.name)
+          : (el.parent_id !== null ? model.elements.find(e => e.id === el.parent_id) : null);
         if (impl) {
           satisfied.push({
             element_id: impl.id,
@@ -1065,8 +1071,10 @@ export function browserTraceability(model: SysmlModel): TraceabilityEntry[] {
           });
         }
       }
-      if (k === "verify_statement" && el.type_ref === r.name && el.name) {
-        const impl = model.elements.find(e => e.name === el.name);
+      if (k === "verify_statement" && el.type_ref === r.name) {
+        const impl = el.name
+          ? model.elements.find(e => e.name === el.name)
+          : (el.parent_id !== null ? model.elements.find(e => e.id === el.parent_id) : null);
         if (impl) {
           verified.push({
             element_id: impl.id,
