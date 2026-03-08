@@ -11,7 +11,7 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    name: Android (arm64 + x86_64)
+    name: Android (arm64)
 
     steps:
       - uses: actions/checkout@v4
@@ -19,7 +19,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,x86_64-linux-android
+          targets: aarch64-linux-android
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -55,29 +55,34 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build Android APK (debug)
-        run: npx tauri android build --debug
+      - name: Build Android APK (release, arm64 only)
+        run: npx tauri android build --target aarch64
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
       - name: Prepare APK for release
         id: apk
         run: |
-          APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
+          # Find the release APK (prefer release, fall back to debug)
+          APK=$(find src-tauri/gen/android -path "*/release/*.apk" -type f | head -1)
+          if [ -z "$APK" ]; then
+            APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
+          fi
           if [ -n "$APK" ]; then
-            cp "$APK" sysml-studio-android.apk
+            SIZE=$(du -h "$APK" | cut -f1)
+            echo "Found APK: $APK ($SIZE)"
+            cp "$APK" sysml-studio-android-arm64.apk
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
+            echo "No APK found"
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-debug
-          path: |
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          name: android-release
+          path: sysml-studio-android-arm64.apk
           retention-days: 14
 
       - name: Upload APK to GitHub Release
@@ -85,4 +90,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: sysml-studio-android.apk
+          files: sysml-studio-android-arm64.apk
