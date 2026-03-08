@@ -97,24 +97,25 @@ The GitHub Actions workflow will:
 
 ## Step 9: Upload to TestFlight
 
-Currently the workflow exports the `.ipa` but doesn't auto-upload to TestFlight.
+The workflow automatically uploads to TestFlight using your App Store Connect API key.
 
-**Manual upload option:**
-- Download the `.ipa` from the GitHub Actions artifacts
-- Use Apple's Transporter CLI (available on Linux via `xcrun altool` won't work without macOS)
-- Or use the Transporter app on any Mac
+**Required secrets** (add to the `ios-release` environment alongside the signing secrets):
 
-**Auto-upload option (recommended):**
-To automate uploads, create an App Store Connect API Key:
+| Secret Name | Value |
+|------------|-------|
+| `APP_STORE_CONNECT_API_KEY` | base64-encoded `.p8` file |
+| `APP_STORE_CONNECT_KEY_ID` | the Key ID shown in App Store Connect |
+| `APP_STORE_CONNECT_ISSUER_ID` | the Issuer ID shown at the top of the API Keys page |
+
+To create the API key:
 1. Go to https://appstoreconnect.apple.com → Users and Access → Integrations → App Store Connect API
-2. Generate a new key with "App Manager" role
+2. Generate a new key with **App Manager** role
 3. Download the `.p8` file and note the Key ID and Issuer ID
-4. Add these GitHub secrets:
-   - `APP_STORE_CONNECT_API_KEY`: base64-encoded `.p8` file
-   - `APP_STORE_CONNECT_KEY_ID`: the Key ID
-   - `APP_STORE_CONNECT_ISSUER_ID`: the Issuer ID
+4. Base64-encode the key: `base64 -w 0 AuthKey_XXXXXXXX.p8`
 
-Then the workflow can be updated to use `xcrun altool --upload-app` to push directly to TestFlight.
+If the API key secrets are not configured, the workflow still builds the `.ipa` and uploads it as a GitHub artifact — you can then upload manually using the Transporter app.
+
+You can also trigger the build manually from the Actions tab using **workflow_dispatch** (no tag required).
 
 ## Step 10: Test via TestFlight
 

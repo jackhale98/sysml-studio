@@ -96,11 +96,20 @@ export function browserParse(source: string): SysmlModel {
       continue;
     }
 
+    // Extract short name <alias> if present, and strip it for pattern matching
+    let shortName: string | null = null;
+    let matchLine = trimmed;
+    const snMatch = trimmed.match(/(\w)\s+<([\w\-]+)>/);
+    if (snMatch) {
+      shortName = snMatch[2];
+      matchLine = trimmed.replace(/\s*<[\w\-]+>/, "");
+    }
+
     let matched = false;
 
     // Try definition patterns
     for (const [pat, kind, category] of DEF_PATTERNS) {
-      const m = trimmed.match(pat);
+      const m = matchLine.match(pat);
       if (m) {
         const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
         const qname = ctx.stack.map(s => s.name).concat(m[1]).join("::");
@@ -111,7 +120,7 @@ export function browserParse(source: string): SysmlModel {
           id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
           category: category as Category, parent_id: parentId, children_ids: [],
           span: makeSpan(i, 0, lines[i].length), type_ref: null, specializations,
-          modifiers: [], multiplicity: null, doc: null, short_name: null,
+          modifiers: [], multiplicity: null, doc: null, short_name: shortName,
         };
         ctx.elements.push(el);
         if (parentId !== null) {
@@ -129,7 +138,7 @@ export function browserParse(source: string): SysmlModel {
     if (!matched) {
       // Try usage patterns
       for (const [pat, kind, category] of USAGE_PATTERNS) {
-        const m = trimmed.match(pat);
+        const m = matchLine.match(pat);
         if (m) {
           const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
           const qname = ctx.stack.map(s => s.name).concat(m[1]).join("::");
@@ -145,7 +154,7 @@ export function browserParse(source: string): SysmlModel {
             id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
-            modifiers: [], multiplicity: null, doc: null, short_name: null,
+            modifiers: [], multiplicity: null, doc: null, short_name: shortName,
           };
           ctx.elements.push(el);
           if (parentId !== null) {
@@ -161,7 +170,7 @@ export function browserParse(source: string): SysmlModel {
     if (!matched) {
       // Try other patterns
       for (const [pat, kind, category] of OTHER_PATTERNS) {
-        const m = trimmed.match(pat);
+        const m = matchLine.match(pat);
         if (m) {
           const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
           let name = m[1] ?? null;
@@ -187,7 +196,7 @@ export function browserParse(source: string): SysmlModel {
             id: ctx.nextId++, kind: kind as any, name, qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
-            modifiers: [], multiplicity: null, doc: null, short_name: null,
+            modifiers: [], multiplicity: null, doc: null, short_name: shortName,
           };
           ctx.elements.push(el);
           if (parentId !== null) {

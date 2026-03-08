@@ -82,7 +82,7 @@ export function EditElementDialog() {
     if (name.trim() && name !== element.name) changes.name = name.trim();
     if (typeRef !== (element.type_ref ?? "")) changes.typeRef = typeRef.trim() || undefined;
     if (doc !== (element.doc ?? "")) changes.doc = doc.trim() || undefined;
-    if (shortName !== (element.short_name ?? "")) changes.shortName = shortName.trim() || undefined;
+    if (shortName !== (element.short_name ?? "")) changes.shortName = shortName.trim();
 
     if (Object.keys(changes).length === 0) {
       closeDialog();

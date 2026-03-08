@@ -460,6 +460,47 @@ describe("insertElement", () => {
     expect(lines[3]).toBe("}");
   });
 
+  it("editElement adds short name without corrupting the line", () => {
+    const source = "part def Vehicle {\n}";
+    const el = makeElement({
+      id: 0,
+      kind: "part_def",
+      name: "Vehicle",
+      span: makeSpan(0, 1),
+    });
+
+    const result = editElement(source, el, { shortName: "V001" });
+    expect(result).toBe("part def Vehicle <V001> {\n}");
+  });
+
+  it("editElement modifies existing short name", () => {
+    const source = "part def Vehicle <V001> {\n}";
+    const el = makeElement({
+      id: 0,
+      kind: "part_def",
+      name: "Vehicle",
+      span: makeSpan(0, 1),
+      short_name: "V001",
+    });
+
+    const result = editElement(source, el, { shortName: "V002" });
+    expect(result).toBe("part def Vehicle <V002> {\n}");
+  });
+
+  it("editElement removes short name when given empty string", () => {
+    const source = "part def Vehicle <V001> {\n}";
+    const el = makeElement({
+      id: 0,
+      kind: "part_def",
+      name: "Vehicle",
+      span: makeSpan(0, 1),
+      short_name: "V001",
+    });
+
+    const result = editElement(source, el, { shortName: "" });
+    expect(result).toBe("part def Vehicle {\n}");
+  });
+
   it("inserts multi-line element source into parent", () => {
     const source = [
       "package Model {",
@@ -484,6 +525,42 @@ describe("insertElement", () => {
     expect(lines[2]).toBe("    part engine : Engine;");
     expect(lines[3]).toBe("  }");
     expect(lines[4]).toBe("}");
+  });
+});
+
+// ─── Browser Parser Short Name Tests ───
+
+describe("browserParse short name handling", () => {
+  // Dynamic import since browserParse is in a separate module
+  let browserParse: typeof import("../browser-parser").browserParse;
+
+  beforeAll(async () => {
+    const mod = await import("../browser-parser");
+    browserParse = mod.browserParse;
+  });
+
+  it("parses definition with short name", () => {
+    const model = browserParse("part def Vehicle <V001> {\n}");
+    const el = model.elements.find(e => e.name === "Vehicle");
+    expect(el).toBeDefined();
+    expect(el!.short_name).toBe("V001");
+    expect(el!.kind).toBe("part_def");
+  });
+
+  it("parses usage with short name and type ref", () => {
+    const source = "package P {\n  part engine <E001> : Engine;\n}";
+    const model = browserParse(source);
+    const el = model.elements.find(e => e.name === "engine");
+    expect(el).toBeDefined();
+    expect(el!.short_name).toBe("E001");
+    expect(el!.type_ref).toBe("Engine");
+  });
+
+  it("parses elements without short name (short_name is null)", () => {
+    const model = browserParse("part def Vehicle {\n}");
+    const el = model.elements.find(e => e.name === "Vehicle");
+    expect(el).toBeDefined();
+    expect(el!.short_name).toBeNull();
   });
 });
 

@@ -63,11 +63,13 @@ jobs:
           path: src-tauri/gen/apple/build/
           retention-days: 14
 
-  # Only runs on tags when signing secrets are configured — produces App Store .ipa
+  # Runs on tags or manual dispatch when signing secrets are configured
   build-release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      github.event_name == 'workflow_dispatch'
     runs-on: macos-14
-    name: iOS Release (.ipa)
+    name: iOS Release → TestFlight
     environment: ios-release
 
     steps:
@@ -76,47 +78,39 @@ jobs:
           HAS_CERT: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           if [ -z "$HAS_CERT" ]; then
-            echo "::warning::Apple signing secrets not configured — skipping iOS release build"
-            echo "SKIP_BUILD=true" >> $GITHUB_ENV
+            echo "::error::Apple signing secrets not configured — cannot build iOS release"
+            exit 1
           fi
 
       - uses: actions/checkout@v4
-        if: env.SKIP_BUILD != 'true'
 
       - name: Install Rust stable
-        if: env.SKIP_BUILD != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
       - name: Rust cache
-        if: env.SKIP_BUILD != 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
 
       - name: Setup Node.js
-        if: env.SKIP_BUILD != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
       - name: Install frontend dependencies
-        if: env.SKIP_BUILD != 'true'
         run: npm ci
 
       - name: Initialize iOS project
-        if: env.SKIP_BUILD != 'true'
         run: npx tauri ios init
 
       - name: Build frontend
-        if: env.SKIP_BUILD != 'true'
         run: npm run build
 
       # Install the Apple certificate and provisioning profile
       - name: Install Apple certificate
-        if: env.SKIP_BUILD != 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -138,7 +132,6 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Install provisioning profile
-        if: env.SKIP_BUILD != 'true'
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
@@ -149,7 +142,6 @@ jobs:
 
       # Archive and export .ipa
       - name: Archive iOS app
-        if: env.SKIP_BUILD != 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -164,7 +156,6 @@ jobs:
             archive
 
       - name: Create ExportOptions.plist
-        if: env.SKIP_BUILD != 'true'
         run: |
           cat > $RUNNER_TEMP/ExportOptions.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -174,8 +165,6 @@ jobs:
           <dict>
             <key>method</key>
             <string>app-store-connect</string>
-            <key>destination</key>
-            <string>upload</string>
             <key>signingStyle</key>
             <string>automatic</string>
             <key>teamID</key>
@@ -185,7 +174,6 @@ jobs:
           PLIST
 
       - name: Export .ipa
-        if: env.SKIP_BUILD != 'true'
         run: |
           xcodebuild -exportArchive \
             -archivePath $RUNNER_TEMP/SysMLStudio.xcarchive \
@@ -193,15 +181,41 @@ jobs:
             -exportPath $RUNNER_TEMP/export
 
       - name: Rename IPA for release
-        if: env.SKIP_BUILD != 'true'
         run: |
           IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
           if [ -n "$IPA" ]; then
             cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
           fi
 
+      # Upload to TestFlight via App Store Connect API
+      - name: Upload to TestFlight
+        env:
+          API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
+          if [ -z "$API_KEY" ]; then
+            echo "::warning::App Store Connect API key not configured — skipping TestFlight upload"
+            echo "Download the .ipa from the artifacts and upload manually via Transporter"
+            exit 0
+          fi
+
+          # Write the API key to the expected location
+          mkdir -p ~/.private_keys
+          echo -n "$API_KEY" | base64 --decode > ~/.private_keys/AuthKey_${API_KEY_ID}.p8
+
+          IPA_PATH=$RUNNER_TEMP/export/sysml-studio-ios.ipa
+
+          echo "Uploading to App Store Connect / TestFlight..."
+          xcrun altool --upload-app \
+            -f "$IPA_PATH" \
+            --type ios \
+            --apiKey "$API_KEY_ID" \
+            --apiIssuer "$API_ISSUER_ID"
+
+          echo "Upload complete — build will appear in TestFlight after Apple processing (15-30 min)"
+
       - name: Upload .ipa artifact
-        if: env.SKIP_BUILD != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-ipa
@@ -209,7 +223,7 @@ jobs:
           retention-days: 90
 
       - name: Upload IPA to GitHub Release
-        if: env.SKIP_BUILD != 'true'
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           draft: true
@@ -217,5 +231,5 @@ jobs:
 
       # Clean up keychain
       - name: Clean up keychain
-        if: always() && env.SKIP_BUILD != 'true'
+        if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
