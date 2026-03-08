@@ -350,8 +350,11 @@ fn kind_to_color(kind: &ElementKind) -> String {
         ElementKind::ConnectionDef | ElementKind::ConnectionUsage => "#f472b6".into(),
         ElementKind::InterfaceDef | ElementKind::InterfaceUsage => "#a78bfa".into(),
         ElementKind::ItemDef | ElementKind::ItemUsage => "#6366f1".into(),
-        ElementKind::ConstraintDef | ElementKind::ConstraintUsage => "#fb923c".into(),
+        ElementKind::ConstraintDef | ElementKind::ConstraintUsage |
+            ElementKind::BooleanExpressionUsage | ElementKind::InvariantUsage => "#fb923c".into(),
         ElementKind::EnumerationDef => "#facc15".into(),
+        ElementKind::BindingUsage | ElementKind::SuccessionUsage |
+            ElementKind::SuccessionFlowUsage => "#f472b6".into(),
         _ => "#94a3b8".into(),
     }
 }

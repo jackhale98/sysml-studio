@@ -96,6 +96,12 @@ pub enum ElementKind {
     IncludeStatement,
     SatisfyStatement,
     VerifyStatement,
+    // --- State Actions ---
+    DoAction,
+    EntryAction,
+    ExitAction,
+    ElseAction,
+    InlineTransition,
     // --- Control Flow ---
     ForkNode,
     JoinNode,
@@ -106,6 +112,13 @@ pub enum ElementKind {
     ForAction,
     SendAction,
     AssignAction,
+    TerminateStatement,
+    SuccessionUsage,
+    SuccessionFlowUsage,
+    BindingUsage,
+    BooleanExpressionUsage,
+    InvariantUsage,
+    ResultExpression,
     // --- Relationships ---
     Specialization,
     Redefinition,
@@ -117,6 +130,7 @@ pub enum ElementKind {
     // --- Comments ---
     Comment,
     DocComment,
+    TextualRepresentation,
     // --- Statements ---
     DependencyStatement,
     ConnectStatement,
@@ -221,7 +235,10 @@ impl ElementKind {
             ElementKind::OccurrenceUsage | ElementKind::FlowUsage | ElementKind::MetadataUsage |
             ElementKind::CalcUsage | ElementKind::FeatureUsage | ElementKind::EndFeature |
             ElementKind::EnumMember | ElementKind::RefUsage | ElementKind::EventUsage |
-            ElementKind::SnapshotUsage | ElementKind::TimesliceUsage | ElementKind::TransitionStatement
+            ElementKind::SnapshotUsage | ElementKind::TimesliceUsage | ElementKind::TransitionStatement |
+            ElementKind::BindingUsage | ElementKind::BooleanExpressionUsage |
+            ElementKind::InvariantUsage | ElementKind::SuccessionUsage |
+            ElementKind::SuccessionFlowUsage
         )
     }
 
@@ -314,6 +331,19 @@ impl ElementKind {
             ElementKind::ForAction => "For",
             ElementKind::SendAction => "Send",
             ElementKind::AssignAction => "Assign",
+            ElementKind::TerminateStatement => "Terminate",
+            ElementKind::SuccessionUsage => "Succession",
+            ElementKind::SuccessionFlowUsage => "Succession Flow",
+            ElementKind::BindingUsage => "Binding Usage",
+            ElementKind::BooleanExpressionUsage => "Boolean Expr",
+            ElementKind::InvariantUsage => "Invariant",
+            ElementKind::ResultExpression => "Result",
+            ElementKind::DoAction => "Do Action",
+            ElementKind::EntryAction => "Entry Action",
+            ElementKind::ExitAction => "Exit Action",
+            ElementKind::ElseAction => "Else Action",
+            ElementKind::InlineTransition => "Transition",
+            ElementKind::TextualRepresentation => "Textual Rep",
             ElementKind::Specialization => "Specialization",
             ElementKind::Redefinition => "Redefinition",
             ElementKind::TypedBy => "Typed By",

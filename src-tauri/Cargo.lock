@@ -3740,7 +3740,7 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 [[package]]
 name = "tree-sitter-sysml"
 version = "0.0.1"
-source = "git+https://github.com/jackhale98/tree-sitter-sysml?branch=main#10747963d9154a6d9f4a64038f660027007374db"
+source = "git+https://github.com/jackhale98/tree-sitter-sysml?branch=main#b0135bbc0be6cc76c65d8850d296112af2ebab9e"
 dependencies = [
  "cc",
  "tree-sitter",
