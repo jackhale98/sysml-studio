@@ -22,6 +22,11 @@ export function Header() {
 
   const fileName = filePath?.split("/").pop() ?? (model ? "untitled.sysml" : "No file");
 
+  function handleNew() {
+    if (dirty && !confirm("You have unsaved changes. Create a new file anyway?")) return;
+    loadSource("package NewModel {\n  \n}\n");
+  }
+
   async function handleOpen() {
     if (isTauri && !isMobile) {
       const path = await pickFile();
@@ -109,6 +114,13 @@ export function Header() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {/* New file */}
+          <button onClick={handleNew} style={iconBtnStyle} title="New file">
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+          </button>
+
           {/* Open file */}
           <button onClick={handleOpen} style={iconBtnStyle} title="Open file">
             <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">

@@ -1044,9 +1044,9 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
 **FilterPanel.tsx** — Render category chips from the model’s distinct categories. Chips are toggle buttons. A search input at top does instant client-side filtering (name, qualified_name, type_ref). The Rust `filter_elements` command can be used for heavy queries, but client-side filtering on the already-loaded `model.elements` array is faster for <5000 elements.
 
-**ElementBrowser.tsx** — Virtualized list (use `react-window` or similar) for performance with large models. Each row shows: element name in monospace, parent path in muted text, and a colored TypeBadge. Tap opens ElementDetail bottom sheet.
+**ElementBrowser.tsx** — Collapsible tree outline built from `parent_id`/`children_ids` relationships. Renders a flat list of visible rows with depth-based indentation (16px per level). Each row shows: expand/collapse chevron, element name (with short name `<alias>` if present), type reference, and a colored TypeBadge. Satisfy/verify statements without a “by” clause display `type_ref` as their name. Collapse state tracked with `Set<ElementId>`. Tap opens ElementDetail bottom sheet.
 
-**ElementDetail.tsx** — Bottom sheet showing: name, kind, category, parent chain, type reference, modifiers, multiplicity, doc comment, children list. Action buttons: “View in Diagram” (switches to diagram tab and highlights), “Go to Source” (switches to editor and scrolls to line).
+**ElementDetail.tsx** — Bottom sheet showing: name (with short name alias), kind, category, parent chain, type reference, modifiers, multiplicity, specializations, doc comment, children list. For satisfy/verify children, the requirement name (from `type_ref`) is shown instead of `<unnamed>`. Action buttons: “View in Diagram” (switches to diagram tab and highlights), “Go to Source” (switches to editor and scrolls to line), “Edit”, “Delete”.
 
 #### Mobile UX Patterns
 
@@ -1314,6 +1314,38 @@ Store recent file paths using Tauri’s `tauri-plugin-store` for persistence acr
 - Export diagram as SVG (serialize the diagram SVG element)
 - Export diagram as PNG (use html2canvas or svg-to-png conversion)
 - Share file via system share sheet (use `tauri-plugin-sharesheet` on mobile)
+
+-----
+
+### Phase 6: Create/Edit Dialogs + SysML v2 Compliance
+
+**Goal**: Specialized form fields in the Create Element dialog to generate standards-compliant SysML v2 source.
+
+#### Specialized Forms (CreateElementDialog.tsx)
+
+The dialog adapts its form fields based on the selected element kind:
+
+1. **Connect Statement** — Source/target endpoint pickers (SearchSelect) populated with parts and their ports from the parent context. Generates `connect engine.torqueOut to transmission.torqueIn;`
+2. **Satisfy/Verify** — Requirement picker showing existing `requirement_def` and `requirement_usage` elements. Generates `satisfy MaxSpeed;`
+3. **Transition** — Source/target state pickers showing `state_usage`/`state_def` elements. Generates `transition first idle then running;`
+4. **Flow Usage** — Name + item type + source/target endpoint pickers. Generates `flow fuelFlow of Fuel from tank.fuelOut to engine.fuelIn;`
+5. **Default (definitions)** — Name, short name (alias), specialization picker, doc. Generates `part def SportsCar <SC-100> :> Car { }`
+6. **Default (usages)** — Name, short name, type reference, multiplicity. Generates `part wheels <WHL> : Wheel[4];`
+7. **Enumeration** — Child buttons show "+ Enum Value" instead of structural members. Generates `enum red;`
+
+#### Short Name / Alias Support
+
+SysML v2 uses `<shortName>` syntax for aliases (e.g., part numbers): `part def Vehicle <V001> { }`.
+
+- **Rust parser**: Extracts `short_name` node, strips angle brackets
+- **Browser parser**: Does not extract short names (regex limitation)
+- **Create dialog**: Optional "Short Name" field for definitions and usages
+- **Edit dialog**: Short name field, supports add/change/remove
+- **Display**: Shown in ElementRow, ElementDetail header, and diagram detail panel
+
+#### Satisfy/Verify Display Convention
+
+Satisfy/verify statements without a "by" clause have `name === null` and `type_ref === requirementName`. Display logic throughout the app uses `element.name ?? element.type_ref ?? "<anonymous>"` to show the requirement name. The `name` field is reserved for the "by" target, `type_ref` for the requirement being satisfied/verified.
 
 -----
 

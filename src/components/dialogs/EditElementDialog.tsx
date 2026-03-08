@@ -36,6 +36,7 @@ export function EditElementDialog() {
   const [name, setName] = useState(element?.name ?? "");
   const [typeRef, setTypeRef] = useState(element?.type_ref ?? "");
   const [doc, setDoc] = useState(element?.doc ?? "");
+  const [shortName, setShortName] = useState(element?.short_name ?? "");
 
   const typeItems: SearchSelectItem[] = useMemo(() => {
     const modelDefs = model
@@ -71,15 +72,17 @@ export function EditElementDialog() {
   const kindStr = typeof element.kind === "string" ? element.kind : "other";
   const hasChanged = name !== (element.name ?? "") ||
     typeRef !== (element.type_ref ?? "") ||
-    doc !== (element.doc ?? "");
+    doc !== (element.doc ?? "") ||
+    shortName !== (element.short_name ?? "");
 
   function handleSave() {
     if (!element) return;
 
-    const changes: { name?: string; typeRef?: string; doc?: string } = {};
+    const changes: { name?: string; typeRef?: string; doc?: string; shortName?: string } = {};
     if (name.trim() && name !== element.name) changes.name = name.trim();
     if (typeRef !== (element.type_ref ?? "")) changes.typeRef = typeRef.trim() || undefined;
     if (doc !== (element.doc ?? "")) changes.doc = doc.trim() || undefined;
+    if (shortName !== (element.short_name ?? "")) changes.shortName = shortName.trim() || undefined;
 
     if (Object.keys(changes).length === 0) {
       closeDialog();
@@ -157,6 +160,18 @@ export function EditElementDialog() {
           style={inputStyle}
           value={name}
           onChange={(e) => setName(e.target.value)}
+          autoCapitalize="none"
+          autoCorrect="off"
+        />
+        <div style={{ height: 12 }} />
+
+        {/* Short Name */}
+        <label style={labelStyle}>Short Name (e.g. part number)</label>
+        <input
+          style={inputStyle}
+          placeholder="e.g. V001, PN-1234"
+          value={shortName}
+          onChange={(e) => setShortName(e.target.value)}
           autoCapitalize="none"
           autoCorrect="off"
         />

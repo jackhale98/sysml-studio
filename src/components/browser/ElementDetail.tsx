@@ -77,7 +77,7 @@ export function ElementDetail() {
     ? membersSource.children.map(e => {
         const k = typeof e.kind === "string" ? e.kind : "";
         const kindShort = k.replace(/_usage$/, "").replace(/_def$/, " def").replace(/_statement$/, "");
-        return { name: e.name ?? "<unnamed>", kind: kindShort, typeRef: e.type_ref };
+        return { name: e.name ?? e.type_ref ?? "<unnamed>", kind: kindShort, typeRef: e.name ? e.type_ref : null };
       })
     : [];
 
@@ -95,7 +95,12 @@ export function ElementDetail() {
           <div style={{
             fontFamily: "var(--font-mono)", fontSize: 16, fontWeight: 700, color: "var(--text-primary)",
           }}>
-            {element.name ?? "<anonymous>"}
+            {element.name ?? element.type_ref ?? "<anonymous>"}
+            {element.short_name && (
+              <span style={{ color: "var(--text-muted)", fontWeight: 500, fontSize: 13, marginLeft: 6 }}>
+                &lt;{element.short_name}&gt;
+              </span>
+            )}
           </div>
           <div style={{ marginTop: 6 }}><TypeBadge kind={kindStr} /></div>
         </div>

@@ -181,6 +181,163 @@ describe("generateElementSource", () => {
     });
     expect(result).toBe("some unknown kind Foo : Bar;");
   });
+
+  // ─── Specialization (:>) ───
+
+  it("generates a definition with specialization", () => {
+    const result = generateElementSource({
+      kind: "part_def",
+      name: "SportsCar",
+      specializes: "Car",
+    });
+    expect(result).toBe("part def SportsCar :> Car {\n}");
+  });
+
+  it("generates a definition with specialization, doc, and children", () => {
+    const result = generateElementSource({
+      kind: "part_def",
+      name: "SportsCar",
+      specializes: "Car",
+      doc: "A fast car",
+      children: ["attribute topSpeed : Real;"],
+    });
+    expect(result).toBe(
+      "part def SportsCar :> Car {\n  doc /* A fast car */\n  attribute topSpeed : Real;\n}"
+    );
+  });
+
+  // ─── Multiplicity ───
+
+  it("generates a usage with type ref and multiplicity", () => {
+    const result = generateElementSource({
+      kind: "part_usage",
+      name: "wheels",
+      typeRef: "Wheel",
+      multiplicity: "4",
+    });
+    expect(result).toBe("part wheels : Wheel[4];");
+  });
+
+  it("generates a usage with multiplicity but no type ref", () => {
+    const result = generateElementSource({
+      kind: "attribute_usage",
+      name: "values",
+      multiplicity: "0..*",
+    });
+    expect(result).toBe("attribute values [0..*];");
+  });
+
+  it("generates a usage with type ref and range multiplicity", () => {
+    const result = generateElementSource({
+      kind: "part_usage",
+      name: "passengers",
+      typeRef: "Person",
+      multiplicity: "1..5",
+    });
+    expect(result).toBe("part passengers : Person[1..5];");
+  });
+
+  // ─── Transition ───
+
+  it("generates a transition statement with source and target", () => {
+    const result = generateElementSource({
+      kind: "transition_statement",
+      name: "idle",
+      typeRef: "running",
+    });
+    expect(result).toBe("transition first idle then running;");
+  });
+
+  it("generates a transition statement with source only", () => {
+    const result = generateElementSource({
+      kind: "transition_statement",
+      name: "idle",
+    });
+    expect(result).toBe("transition idle;");
+  });
+
+  // ─── Flow usage ───
+
+  it("generates a flow usage with all fields", () => {
+    const result = generateElementSource({
+      kind: "flow_usage",
+      name: "fuelFlow",
+      flowItemType: "Fuel",
+      flowSource: "tank.fuelOut",
+      flowTarget: "engine.fuelIn",
+    });
+    expect(result).toBe("flow fuelFlow of Fuel from tank.fuelOut to engine.fuelIn;");
+  });
+
+  it("generates a flow usage with item type only", () => {
+    const result = generateElementSource({
+      kind: "flow_usage",
+      name: "dataFlow",
+      flowItemType: "Signal",
+    });
+    expect(result).toBe("flow dataFlow of Signal;");
+  });
+
+  it("generates a flow usage with name only", () => {
+    const result = generateElementSource({
+      kind: "flow_usage",
+      name: "myFlow",
+    });
+    expect(result).toBe("flow myFlow;");
+  });
+
+  // ─── Connect statement ───
+
+  it("generates a connect statement with source and target", () => {
+    const result = generateElementSource({
+      kind: "connect_statement",
+      name: "engine.torqueOut",
+      typeRef: "transmission.torqueIn",
+    });
+    expect(result).toBe("connect engine.torqueOut to transmission.torqueIn;");
+  });
+
+  // ─── Short Name / Alias ───
+
+  it("generates a definition with short name", () => {
+    const result = generateElementSource({
+      kind: "part_def",
+      name: "Vehicle",
+      shortName: "V001",
+    });
+    expect(result).toBe("part def Vehicle <V001> {\n}");
+  });
+
+  it("generates a definition with short name and specialization", () => {
+    const result = generateElementSource({
+      kind: "part_def",
+      name: "SportsCar",
+      shortName: "SC-100",
+      specializes: "Car",
+    });
+    expect(result).toBe("part def SportsCar <SC-100> :> Car {\n}");
+  });
+
+  it("generates a usage with short name and type ref", () => {
+    const result = generateElementSource({
+      kind: "part_usage",
+      name: "engine",
+      shortName: "ENG-01",
+      typeRef: "Engine",
+    });
+    expect(result).toBe("part engine <ENG-01> : Engine;");
+  });
+
+  it("generates a usage with short name and multiplicity", () => {
+    const result = generateElementSource({
+      kind: "part_usage",
+      name: "wheels",
+      shortName: "WHL",
+      typeRef: "Wheel",
+      multiplicity: "4",
+    });
+    expect(result).toBe("part wheels <WHL> : Wheel[4];");
+  });
 });
 
 // ─── insertElement ───

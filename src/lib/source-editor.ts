@@ -11,15 +11,24 @@ export function generateElementSource(opts: {
   typeRef?: string;
   doc?: string;
   children?: string[];
+  specializes?: string;
+  multiplicity?: string;
+  shortName?: string;
+  flowItemType?: string;
+  flowSource?: string;
+  flowTarget?: string;
 }): string {
-  const { kind, name, typeRef, doc, children } = opts;
+  const { kind, name, typeRef, doc, children, specializes, multiplicity,
+          shortName, flowItemType, flowSource, flowTarget } = opts;
+  const alias = shortName ? ` <${shortName}>` : "";
   const lines: string[] = [];
 
   // Map kind to SysML keyword syntax
   const keyword = kindToKeyword(kind);
 
   if (isDefinition(kind)) {
-    lines.push(`${keyword} ${name} {`);
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
     if (doc) {
       lines.push(`  doc /* ${doc} */`);
     }
@@ -29,11 +38,36 @@ export function generateElementSource(opts: {
       }
     }
     lines.push(`}`);
+  } else if (kind === "flow_usage") {
+    // flow <name> of <itemType> from <source> to <target>;
+    const parts = [`flow ${name}${alias}`];
+    if (flowItemType) parts.push(`of ${flowItemType}`);
+    if (flowSource && flowTarget) {
+      parts.push(`from ${flowSource} to ${flowTarget}`);
+    }
+    lines.push(parts.join(" ") + ";");
   } else if (isUsage(kind)) {
+    const mult = multiplicity ? `[${multiplicity}]` : "";
     if (typeRef) {
-      lines.push(`${keyword} ${name} : ${typeRef};`);
+      lines.push(`${keyword} ${name}${alias} : ${typeRef}${mult};`);
+    } else if (mult) {
+      lines.push(`${keyword} ${name}${alias} ${mult};`);
     } else {
-      lines.push(`${keyword} ${name};`);
+      lines.push(`${keyword} ${name}${alias};`);
+    }
+  } else if (kind === "connect_statement") {
+    // name = source endpoint, typeRef = target endpoint
+    if (typeRef) {
+      lines.push(`connect ${name} to ${typeRef};`);
+    } else {
+      lines.push(`connect ${name};`);
+    }
+  } else if (kind === "transition_statement") {
+    // name = source state, typeRef = target state
+    if (typeRef) {
+      lines.push(`transition first ${name} then ${typeRef};`);
+    } else {
+      lines.push(`transition ${name};`);
     }
   } else if (kind === "satisfy_statement") {
     lines.push(`satisfy ${name};`);
@@ -104,7 +138,7 @@ export function insertElement(
 export function editElement(
   source: string,
   element: SysmlElement,
-  changes: { name?: string; typeRef?: string; doc?: string },
+  changes: { name?: string; typeRef?: string; doc?: string; shortName?: string },
 ): string {
   const lines = source.split("\n");
   const lineIdx = element.span.start_line;
@@ -128,6 +162,28 @@ export function editElement(
     } else if (!element.type_ref && changes.typeRef) {
       // Add type ref before semicolon or brace
       line = line.replace(/(\s*)(;|{)/, ` : ${changes.typeRef}$1$2`);
+    }
+  }
+
+  // Handle short name changes
+  if (changes.shortName !== undefined && element.short_name !== changes.shortName) {
+    if (element.short_name && changes.shortName) {
+      // Replace existing short name
+      line = line.replace(`<${element.short_name}>`, `<${changes.shortName}>`);
+    } else if (!element.short_name && changes.shortName) {
+      // Add short name after the element name
+      const nameToFind = changes.name ?? element.name;
+      if (nameToFind) {
+        const nameIdx = line.indexOf(nameToFind);
+        if (nameIdx >= 0) {
+          const afterName = nameIdx + nameToFind.length;
+          line = line.slice(0, afterName) + ` <${changes.shortName}>` + line.slice(afterName);
+        }
+      }
+    } else if (element.short_name && !changes.shortName) {
+      // Remove short name
+      line = line.replace(` <${element.short_name}>`, "");
+      line = line.replace(`<${element.short_name}>`, "");
     }
   }
 
@@ -223,6 +279,7 @@ function kindToKeyword(kind: string): string {
     metadata_def: "metadata def", metadata_usage: "metadata",
     concern_def: "concern def", concern_usage: "concern",
     rendering_def: "rendering def", rendering_usage: "rendering",
+    transition_statement: "transition",
     satisfy_statement: "satisfy",
     verify_statement: "verify",
   };
@@ -301,6 +358,7 @@ export const CREATE_OPTIONS = [
       { kind: "action_usage", label: "Action Usage" },
       { kind: "state_def", label: "State Definition" },
       { kind: "state_usage", label: "State Usage" },
+      { kind: "transition_statement", label: "Transition" },
       { kind: "use_case_def", label: "Use Case Definition" },
     ],
   },
@@ -320,6 +378,7 @@ export const CREATE_OPTIONS = [
       { kind: "connection_def", label: "Connection Definition" },
       { kind: "interface_def", label: "Interface Definition" },
       { kind: "flow_def", label: "Flow Definition" },
+      { kind: "flow_usage", label: "Flow Usage" },
     ],
   },
   {
@@ -343,6 +402,7 @@ export const CREATE_OPTIONS = [
     category: "Relationship",
     items: [
       { kind: "allocation_def", label: "Allocation Definition" },
+      { kind: "connect_statement", label: "Connect (port-to-port)" },
       { kind: "satisfy_statement", label: "Satisfy" },
       { kind: "verify_statement", label: "Verify" },
     ],

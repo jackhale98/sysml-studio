@@ -720,7 +720,7 @@ export function DiagramView() {
           ? model.elements.filter(e => e.parent_id === defElement.id).map(e => {
               const k = typeof e.kind === "string" ? e.kind : "";
               const kindShort = k.replace(/_usage$/, "").replace(/_def$/, " def").replace(/_statement$/, "");
-              return { name: e.name ?? "<unnamed>", kind: kindShort, typeRef: e.type_ref };
+              return { name: e.name ?? e.type_ref ?? "<unnamed>", kind: kindShort, typeRef: e.name ? e.type_ref : null };
             })
           : [];
 
@@ -764,6 +764,28 @@ export function DiagramView() {
                 Clear
               </button>
             </div>
+
+            {/* Doc comment */}
+            {resolvedElement?.doc && (
+              <div style={{
+                marginBottom: 8, padding: "6px 8px", background: "var(--bg-primary)",
+                borderRadius: 6, border: "1px solid var(--border)",
+                fontSize: 11, fontStyle: "italic", color: "var(--text-secondary)",
+                fontFamily: "var(--font-mono)", lineHeight: 1.4,
+              }}>
+                {resolvedElement.doc}
+              </div>
+            )}
+
+            {/* Short name */}
+            {resolvedElement?.short_name && (
+              <div style={{
+                marginBottom: 8, fontSize: 10, fontFamily: "var(--font-mono)",
+                color: "var(--text-muted)",
+              }}>
+                Short name: &lt;{resolvedElement.short_name}&gt;
+              </div>
+            )}
 
             {/* Child details for definitions */}
             {childDetails.length > 0 && (

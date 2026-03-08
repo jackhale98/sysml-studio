@@ -169,8 +169,9 @@ export function browserParse(source: string): SysmlModel {
           let specializations: string[] = [];
 
           if (kind === "satisfy_statement" || kind === "verify_statement") {
-            name = m[2] ?? null;
+            // m[1] = requirement name, m[2] = optional "by" target
             typeRef = m[1] ?? null;
+            name = m[2] ?? null; // name is only the "by" target, null if none
           } else if (kind === "connect_statement") {
             name = m[1];
             typeRef = m[2];
