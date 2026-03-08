@@ -55,19 +55,21 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build Android APK (release, arm64 only)
-        run: npx tauri android build --target aarch64
+      # Use --debug for Android signing (auto-signs with debug keystore)
+      # but override Cargo to build Rust in release mode for smaller binaries
+      - name: Build Android APK (arm64)
+        run: npx tauri android build --target aarch64 --debug
         env:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          CARGO_PROFILE_DEV_OPT_LEVEL: s
+          CARGO_PROFILE_DEV_LTO: "true"
+          CARGO_PROFILE_DEV_CODEGEN_UNITS: "1"
+          CARGO_PROFILE_DEV_STRIP: "true"
 
       - name: Prepare APK for release
         id: apk
         run: |
-          # Find the release APK (prefer release, fall back to debug)
-          APK=$(find src-tauri/gen/android -path "*/release/*.apk" -type f | head -1)
-          if [ -z "$APK" ]; then
-            APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
-          fi
+          APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
           if [ -n "$APK" ]; then
             SIZE=$(du -h "$APK" | cut -f1)
             echo "Found APK: $APK ($SIZE)"
@@ -81,7 +83,7 @@ jobs:
       - name: Upload Android artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-release
+          name: android-apk
           path: sysml-studio-android-arm64.apk
           retention-days: 14
 
