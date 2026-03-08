@@ -10,6 +10,7 @@ export function ElementBrowser() {
   const model = useModelStore((s) => s.model);
   const selectedId = useUIStore((s) => s.selectedElementId);
   const selectElement = useUIStore((s) => s.selectElement);
+  const openDialog = useUIStore((s) => s.openDialog);
   const { activeCategories, searchTerm, showDefinitions, showUsages, showRelationships, selectedKinds } = useFilterStore();
 
   const filteredElements = useMemo(() => {
@@ -47,6 +48,9 @@ export function ElementBrowser() {
               parentName={getParentName(el.parent_id)}
               selected={selectedId === el.id}
               onSelect={(e) => selectElement(e.id)}
+              onAdd={(e) => openDialog("create", undefined, { suggestedParentId: e.id, suggestedKind: typeof e.kind === "string" ? e.kind : undefined })}
+              onEdit={(e) => openDialog("edit", e.id)}
+              onDelete={(e) => openDialog("delete", e.id)}
             />
           ))
         )}

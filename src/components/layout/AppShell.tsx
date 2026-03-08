@@ -1,4 +1,4 @@
-import React, { useRef } from "react";
+import React from "react";
 import { Header } from "./Header";
 import { TabBar } from "./TabBar";
 import { ElementBrowser } from "../browser/ElementBrowser";
@@ -9,35 +9,14 @@ import { ElementDetail } from "../browser/ElementDetail";
 import { CreateElementDialog } from "../dialogs/CreateElementDialog";
 import { EditElementDialog } from "../dialogs/EditElementDialog";
 import { DeleteConfirmDialog } from "../dialogs/DeleteConfirmDialog";
-import { useUIStore, type TabId } from "../../stores/ui-store";
+import { useUIStore } from "../../stores/ui-store";
 
 export function AppShell() {
   const activeTab = useUIStore((s) => s.activeTab);
   const showDetailSheet = useUIStore((s) => s.showDetailSheet);
   const activeDialog = useUIStore((s) => s.activeDialog);
   const openDialog = useUIStore((s) => s.openDialog);
-  const setTab = useUIStore((s) => s.setTab);
   const highlightedNodeId = useUIStore((s) => s.highlightedNodeId);
-
-  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
-  const TAB_ORDER: TabId[] = ["browser", "diagram", "editor", "mbse"];
-
-  function handleContentTouchStart(e: React.TouchEvent) {
-    if (activeTab === "diagram") return;
-    touchStartRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }
-
-  function handleContentTouchEnd(e: React.TouchEvent) {
-    if (!touchStartRef.current || activeTab === "diagram") return;
-    const dx = e.changedTouches[0].clientX - touchStartRef.current.x;
-    const dy = e.changedTouches[0].clientY - touchStartRef.current.y;
-    touchStartRef.current = null;
-    if (Math.abs(dx) > 80 && Math.abs(dy) < 50) {
-      const idx = TAB_ORDER.indexOf(activeTab);
-      if (dx < 0 && idx < TAB_ORDER.length - 1) setTab(TAB_ORDER[idx + 1]);
-      if (dx > 0 && idx > 0) setTab(TAB_ORDER[idx - 1]);
-    }
-  }
 
   return (
     <div style={{
@@ -47,11 +26,7 @@ export function AppShell() {
     }}>
       <Header />
 
-      <div
-        style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}
-        onTouchStart={handleContentTouchStart}
-        onTouchEnd={handleContentTouchEnd}
-      >
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {activeTab === "browser" && <ElementBrowser />}
         {activeTab === "diagram" && <DiagramView />}
         {activeTab === "editor" && <EditorView />}
