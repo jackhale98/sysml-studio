@@ -166,6 +166,30 @@ export async function getValidation(): Promise<ValidationReport> {
   return { issues: [], summary: { errors: 0, warnings: 0, infos: 0 } };
 }
 
+/** Reparse source incrementally (Tauri only; browser falls back to full parse) */
+export async function reparseSource(
+  source: string,
+  startByte: number,
+  oldEndByte: number,
+  newEndByte: number,
+  startLine: number,
+  startCol: number,
+  oldEndLine: number,
+  oldEndCol: number,
+  newEndLine: number,
+  newEndCol: number,
+): Promise<SysmlModel> {
+  if (isTauri) {
+    const model = await tauriInvoke<SysmlModel>("reparse_source", {
+      source, startByte, oldEndByte, newEndByte,
+      startLine, startCol, oldEndLine, oldEndCol, newEndLine, newEndCol,
+    });
+    cachedModel = model;
+    return model;
+  }
+  return parseSource(source);
+}
+
 export async function getConnectedElements(elementId: ElementId): Promise<ElementId[]> {
   if (isTauri) return tauriInvoke<ElementId[]>("get_connected_elements", { elementId });
   return [];

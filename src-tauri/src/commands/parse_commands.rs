@@ -1,11 +1,12 @@
 use std::sync::Mutex;
 use tauri::State;
+use tree_sitter::InputEdit;
 use crate::parser::sysml_parser::SysmlParser;
 use crate::parser::node_visitor::ModelBuilder;
 use crate::model::elements::*;
 use crate::model::graph::ElementGraph;
 use crate::model::query::{
-    self, FilterCriteria, CompletenessReport, TraceabilityEntry,
+    self, FilterCriteria, CompletenessReport, TraceabilityEntry, ValidationReport,
 };
 
 pub struct AppState {
@@ -34,6 +35,66 @@ pub fn parse_source(source: String, state: State<'_, AppState>) -> Result<SysmlM
     };
 
     // Build relationship graph for MBSE features
+    let graph = ElementGraph::build_from_model(&elements);
+    *state.current_graph.lock().map_err(|e| e.to_string())? = Some(graph);
+
+    let model = SysmlModel {
+        file_path: None,
+        elements,
+        errors,
+        stats,
+    };
+
+    *state.current_model.lock().map_err(|e| e.to_string())? = Some(model.clone());
+    Ok(model)
+}
+
+/// Incremental reparse after an editor edit — faster than full parse for large files
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn reparse_source(
+    source: String,
+    start_byte: u32,
+    old_end_byte: u32,
+    new_end_byte: u32,
+    start_line: u32,
+    start_col: u32,
+    old_end_line: u32,
+    old_end_col: u32,
+    new_end_line: u32,
+    new_end_col: u32,
+    state: State<'_, AppState>,
+) -> Result<SysmlModel, String> {
+    let mut parser = state.parser.lock().map_err(|e| e.to_string())?;
+
+    // Only use incremental reparse if we have a previous tree
+    let start = std::time::Instant::now();
+    let tree = if parser.tree().is_some() {
+        let edit = InputEdit {
+            start_byte: start_byte as usize,
+            old_end_byte: old_end_byte as usize,
+            new_end_byte: new_end_byte as usize,
+            start_position: tree_sitter::Point { row: start_line as usize, column: start_col as usize },
+            old_end_position: tree_sitter::Point { row: old_end_line as usize, column: old_end_col as usize },
+            new_end_position: tree_sitter::Point { row: new_end_line as usize, column: new_end_col as usize },
+        };
+        parser.reparse(&source, &edit).ok_or("Incremental reparse failed")?
+    } else {
+        parser.parse(&source).ok_or("Parse failed")?
+    };
+
+    let builder = ModelBuilder::new(&source);
+    let (elements, errors) = builder.build(tree);
+
+    let stats = ModelStats {
+        total_elements: elements.len() as u32,
+        definitions: elements.iter().filter(|e| e.kind.is_definition()).count() as u32,
+        usages: elements.iter().filter(|e| e.kind.is_usage()).count() as u32,
+        relationships: elements.iter().filter(|e| e.kind.is_relationship()).count() as u32,
+        errors: errors.len() as u32,
+        parse_time_ms: start.elapsed().as_secs_f64() * 1000.0,
+    };
+
     let graph = ElementGraph::build_from_model(&elements);
     *state.current_graph.lock().map_err(|e| e.to_string())? = Some(graph);
 
@@ -131,6 +192,20 @@ pub fn get_traceability_matrix(
     let graph = graph_lock.as_ref().ok_or("No graph built")?;
 
     Ok(query::build_traceability_matrix(&model.elements, graph))
+}
+
+/// MBSE: Run model validation
+#[tauri::command]
+pub fn get_validation(
+    state: State<'_, AppState>,
+) -> Result<ValidationReport, String> {
+    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+    let model = model_lock.as_ref().ok_or("No model loaded")?;
+
+    let graph_lock = state.current_graph.lock().map_err(|e| e.to_string())?;
+    let graph = graph_lock.as_ref().ok_or("No graph built")?;
+
+    Ok(query::validate_model(&model.elements, graph))
 }
 
 /// Get connected elements for a given element (for diagram highlighting)

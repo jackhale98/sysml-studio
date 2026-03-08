@@ -215,6 +215,103 @@ pub fn check_completeness(elements: &[SysmlElement], graph: &ElementGraph) -> Co
     }
 }
 
+/// Validation issue
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationIssue {
+    pub element_id: ElementId,
+    pub severity: String,
+    pub message: String,
+    pub category: String,
+}
+
+/// Validation report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationReport {
+    pub issues: Vec<ValidationIssue>,
+    pub summary: ValidationSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationSummary {
+    pub errors: u32,
+    pub warnings: u32,
+    pub infos: u32,
+}
+
+/// Run validation checks on the model
+pub fn validate_model(elements: &[SysmlElement], graph: &ElementGraph) -> ValidationReport {
+    let mut issues = Vec::new();
+
+    for el in elements {
+        // Check usages missing type references
+        if el.kind.is_usage() && el.type_ref.is_none() && !matches!(el.kind,
+            ElementKind::FeatureUsage | ElementKind::EnumMember |
+            ElementKind::TransitionStatement | ElementKind::StateUsage |
+            ElementKind::EventUsage | ElementKind::PerformStatement |
+            ElementKind::ExhibitStatement | ElementKind::IncludeStatement
+        ) {
+            issues.push(ValidationIssue {
+                element_id: el.id,
+                severity: "warning".into(),
+                message: format!("Usage '{}' has no type reference", el.name.as_deref().unwrap_or("<unnamed>")),
+                category: "missing_type".into(),
+            });
+        }
+
+        // Check definitions with no children (empty definitions)
+        if el.kind.is_definition() && el.children_ids.is_empty() && !matches!(el.kind, ElementKind::EnumerationDef) {
+            issues.push(ValidationIssue {
+                element_id: el.id,
+                severity: "info".into(),
+                message: format!("Definition '{}' has no contents", el.name.as_deref().unwrap_or("<unnamed>")),
+                category: "incomplete".into(),
+            });
+        }
+
+        // Check unresolved type references
+        if let Some(ref type_ref) = el.type_ref {
+            let simple_name = type_ref.split("::").last().unwrap_or(type_ref);
+            let resolved = elements.iter().any(|e| e.name.as_deref() == Some(simple_name));
+            if !resolved {
+                // Only warn for non-stdlib types
+                let stdlib = ["Real", "Integer", "Boolean", "String", "Natural",
+                    "Positive", "ScalarValues", "Time", "DateTime"];
+                if !stdlib.iter().any(|s| type_ref.contains(s)) {
+                    issues.push(ValidationIssue {
+                        element_id: el.id,
+                        severity: "warning".into(),
+                        message: format!("Type '{}' not found in model", type_ref),
+                        category: "unresolved_ref".into(),
+                    });
+                }
+            }
+        }
+
+        // Check orphaned elements (not packages, imports, or top-level)
+        if el.parent_id.is_none() && !matches!(el.kind, ElementKind::Package | ElementKind::Import | ElementKind::Comment | ElementKind::DocComment) {
+            let has_outgoing = !graph.outgoing_from(el.id).is_empty();
+            let has_incoming = !graph.incoming_to(el.id).is_empty();
+            if !has_outgoing && !has_incoming && el.children_ids.is_empty() {
+                issues.push(ValidationIssue {
+                    element_id: el.id,
+                    severity: "info".into(),
+                    message: format!("Element '{}' is disconnected from the model", el.name.as_deref().unwrap_or("<unnamed>")),
+                    category: "orphan".into(),
+                });
+            }
+        }
+    }
+
+    let errors = issues.iter().filter(|i| i.severity == "error").count() as u32;
+    let warnings = issues.iter().filter(|i| i.severity == "warning").count() as u32;
+    let infos = issues.iter().filter(|i| i.severity == "info").count() as u32;
+
+    ValidationReport {
+        issues,
+        summary: ValidationSummary { errors, warnings, infos },
+    }
+}
+
 /// MBSE: Generate traceability matrix
 pub fn build_traceability_matrix(elements: &[SysmlElement], graph: &ElementGraph) -> Vec<TraceabilityEntry> {
     elements.iter()

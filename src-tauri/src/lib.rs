@@ -18,6 +18,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::parse_commands::parse_source,
+            commands::parse_commands::reparse_source,
             commands::parse_commands::open_file,
             commands::parse_commands::save_file,
             commands::parse_commands::filter_elements,
@@ -25,6 +26,7 @@ pub fn run() {
             commands::parse_commands::check_completeness,
             commands::parse_commands::get_traceability_matrix,
             commands::parse_commands::get_connected_elements,
+            commands::parse_commands::get_validation,
             commands::diagram_commands::compute_bdd_layout,
             commands::diagram_commands::compute_stm_layout,
         ])

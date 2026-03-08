@@ -146,10 +146,8 @@ impl ModelBuilder {
 
         if let Some(parent) = node.parent() {
             let mut cursor = parent.walk();
-            let mut found_self = false;
             for child in parent.children(&mut cursor) {
                 if child.id() == node.id() {
-                    found_self = true;
                     break;
                 }
                 // Anonymous keyword nodes before our element

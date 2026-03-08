@@ -43,6 +43,7 @@ impl SysmlParser {
         self.current_tree.as_ref()
     }
 
+    #[cfg(test)]
     pub fn source(&self) -> &str {
         &self.current_source
     }

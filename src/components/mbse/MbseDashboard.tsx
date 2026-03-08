@@ -1,6 +1,54 @@
-import React from "react";
+import React, { useState } from "react";
 import { useModelStore } from "../../stores/model-store";
 import { useUIStore } from "../../stores/ui-store";
+import type { SysmlModel, TraceabilityEntry, ValidationReport } from "../../lib/element-types";
+
+type ExportTab = "analysis" | "table";
+
+function downloadCsv(filename: string, csv: string) {
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function buildTraceabilityCsv(traceability: TraceabilityEntry[]): string {
+  const rows = [["Requirement", "Satisfied By", "Verified By", "Allocated To"]];
+  for (const entry of traceability) {
+    rows.push([
+      entry.requirement_name,
+      entry.satisfied_by.map(l => l.element_name).join("; ") || "—",
+      entry.verified_by.map(l => l.element_name).join("; ") || "—",
+      entry.allocated_to.map(l => l.element_name).join("; ") || "—",
+    ]);
+  }
+  return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+}
+
+function buildElementsCsv(model: SysmlModel): string {
+  const rows = [["ID", "Kind", "Name", "Qualified Name", "Category", "Type Ref", "Parent ID", "Line"]];
+  for (const el of model.elements) {
+    const k = typeof el.kind === "string" ? el.kind : (el.kind as any).other ?? "";
+    rows.push([
+      String(el.id), k, el.name ?? "", el.qualified_name, el.category,
+      el.type_ref ?? "", el.parent_id !== null ? String(el.parent_id) : "",
+      String(el.span.start_line + 1),
+    ]);
+  }
+  return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+}
+
+function buildValidationCsv(model: SysmlModel, validation: ValidationReport): string {
+  const rows = [["Severity", "Element", "Category", "Message"]];
+  for (const issue of validation.issues) {
+    const el = model.elements.find(e => e.id === issue.element_id);
+    rows.push([issue.severity, el?.name ?? `#${issue.element_id}`, issue.category, issue.message]);
+  }
+  return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
+}
 
 export function MbseDashboard() {
   const completeness = useModelStore((s) => s.completeness);
@@ -9,6 +57,7 @@ export function MbseDashboard() {
   const model = useModelStore((s) => s.model);
   const selectElement = useUIStore((s) => s.selectElement);
   const navigateToEditor = useUIStore((s) => s.navigateToEditor);
+  const [exportTab, setExportTab] = useState<ExportTab>("analysis");
 
   if (!model) {
     return (
@@ -22,6 +71,33 @@ export function MbseDashboard() {
 
   return (
     <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
+      {/* Tab Switcher */}
+      <div style={{
+        display: "flex", gap: 0, marginBottom: 14,
+        borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)",
+      }}>
+        {(["analysis", "table"] as ExportTab[]).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setExportTab(tab)}
+            style={{
+              flex: 1, padding: "8px 0", border: "none", cursor: "pointer",
+              fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
+              textTransform: "uppercase", letterSpacing: "0.06em",
+              background: exportTab === tab ? "var(--accent)" : "var(--bg-tertiary)",
+              color: exportTab === tab ? "#fff" : "var(--text-muted)",
+            }}
+          >
+            {tab === "analysis" ? "Analysis" : "Export Tables"}
+          </button>
+        ))}
+      </div>
+
+      {exportTab === "table" && (
+        <ExportTablesView model={model} traceability={traceability} validation={validation} />
+      )}
+
+      {exportTab === "analysis" && <>
       {/* Completeness Score */}
       {completeness && (
         <div style={{ marginBottom: 16 }}>
@@ -359,7 +435,196 @@ export function MbseDashboard() {
           )}
         </div>
       )}
+      </>}
     </div>
+  );
+}
+
+function ExportTablesView({ model, traceability, validation }: {
+  model: SysmlModel;
+  traceability: TraceabilityEntry[];
+  validation: ValidationReport | null;
+}) {
+  const cellStyle: React.CSSProperties = {
+    padding: "6px 8px", fontSize: 11, fontFamily: "var(--font-mono)",
+    borderBottom: "1px solid var(--border)", color: "var(--text-primary)",
+    whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 160,
+  };
+  const headerStyle: React.CSSProperties = {
+    ...cellStyle, fontWeight: 700, color: "var(--text-secondary)",
+    background: "var(--bg-secondary)", position: "sticky" as const, top: 0,
+    fontSize: 10, textTransform: "uppercase", letterSpacing: "0.04em",
+  };
+
+  return (
+    <div>
+      {/* Export Actions */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+        <ExportButton label="Elements CSV" onClick={() => downloadCsv("elements.csv", buildElementsCsv(model))} />
+        {traceability.length > 0 && (
+          <ExportButton label="Traceability CSV" onClick={() => downloadCsv("traceability.csv", buildTraceabilityCsv(traceability))} />
+        )}
+        {validation && validation.issues.length > 0 && (
+          <ExportButton label="Validation CSV" onClick={() => downloadCsv("validation.csv", buildValidationCsv(model, validation))} />
+        )}
+      </div>
+
+      {/* Traceability Table */}
+      {traceability.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: "var(--text-secondary)",
+            fontFamily: "var(--font-mono)", textTransform: "uppercase",
+            letterSpacing: "0.08em", marginBottom: 8,
+          }}>
+            Traceability Matrix
+          </div>
+          <div style={{
+            border: "1px solid var(--border)", borderRadius: 8, overflow: "auto",
+            maxHeight: 300,
+          }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={headerStyle}>Requirement</th>
+                  <th style={headerStyle}>Satisfied By</th>
+                  <th style={headerStyle}>Verified By</th>
+                  <th style={headerStyle}>Allocated To</th>
+                </tr>
+              </thead>
+              <tbody>
+                {traceability.map(entry => (
+                  <tr key={entry.requirement_id}>
+                    <td style={{ ...cellStyle, color: "#fb7185", fontWeight: 600 }}>
+                      {entry.requirement_name}
+                    </td>
+                    <td style={cellStyle}>
+                      {entry.satisfied_by.length > 0
+                        ? entry.satisfied_by.map(l => l.element_name).join(", ")
+                        : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                    </td>
+                    <td style={cellStyle}>
+                      {entry.verified_by.length > 0
+                        ? entry.verified_by.map(l => l.element_name).join(", ")
+                        : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                    </td>
+                    <td style={cellStyle}>
+                      {entry.allocated_to.length > 0
+                        ? entry.allocated_to.map(l => l.element_name).join(", ")
+                        : <span style={{ color: "var(--text-muted)" }}>—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Elements Table */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{
+          fontSize: 12, fontWeight: 700, color: "var(--text-secondary)",
+          fontFamily: "var(--font-mono)", textTransform: "uppercase",
+          letterSpacing: "0.08em", marginBottom: 8,
+        }}>
+          All Elements ({model.elements.length})
+        </div>
+        <div style={{
+          border: "1px solid var(--border)", borderRadius: 8, overflow: "auto",
+          maxHeight: 400,
+        }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={headerStyle}>Name</th>
+                <th style={headerStyle}>Kind</th>
+                <th style={headerStyle}>Category</th>
+                <th style={headerStyle}>Type</th>
+                <th style={headerStyle}>Line</th>
+              </tr>
+            </thead>
+            <tbody>
+              {model.elements.filter(e => e.name).map(el => {
+                const k = typeof el.kind === "string" ? el.kind : (el.kind as any).other ?? "";
+                return (
+                  <tr key={el.id}>
+                    <td style={{ ...cellStyle, fontWeight: 600 }}>{el.name}</td>
+                    <td style={cellStyle}>{k.replace(/_/g, " ")}</td>
+                    <td style={cellStyle}>{el.category}</td>
+                    <td style={cellStyle}>
+                      {el.type_ref ?? <span style={{ color: "var(--text-muted)" }}>—</span>}
+                    </td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{el.span.start_line + 1}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Validation Table */}
+      {validation && validation.issues.length > 0 && (
+        <div style={{ marginBottom: 16 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: "var(--text-secondary)",
+            fontFamily: "var(--font-mono)", textTransform: "uppercase",
+            letterSpacing: "0.08em", marginBottom: 8,
+          }}>
+            Validation Issues ({validation.issues.length})
+          </div>
+          <div style={{
+            border: "1px solid var(--border)", borderRadius: 8, overflow: "auto",
+            maxHeight: 300,
+          }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={headerStyle}>Severity</th>
+                  <th style={headerStyle}>Element</th>
+                  <th style={headerStyle}>Category</th>
+                  <th style={headerStyle}>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {validation.issues.map((issue, idx) => {
+                  const el = model.elements.find(e => e.id === issue.element_id);
+                  const sevColor = issue.severity === "error" ? "#ef4444" :
+                                   issue.severity === "warning" ? "#f59e0b" : "#60a5fa";
+                  return (
+                    <tr key={idx}>
+                      <td style={{ ...cellStyle, color: sevColor, fontWeight: 700 }}>
+                        {issue.severity}
+                      </td>
+                      <td style={{ ...cellStyle, fontWeight: 600 }}>{el?.name ?? `#${issue.element_id}`}</td>
+                      <td style={cellStyle}>{issue.category}</td>
+                      <td style={{ ...cellStyle, maxWidth: 220 }}>{issue.message}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ExportButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)",
+        background: "var(--bg-tertiary)", color: "var(--text-primary)",
+        fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
+        cursor: "pointer",
+      }}
+    >
+      {label}
+    </button>
   );
 }
 
