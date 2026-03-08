@@ -311,6 +311,53 @@ export function DiagramView() {
               {btn.label}
             </button>
           ))}
+          <button
+            onClick={() => {
+              if (!svgRef.current || !layout) return;
+              const [bMinX, bMinY, bMaxX, bMaxY] = layout.bounds;
+              const w = bMaxX - bMinX + 40;
+              const h = bMaxY - bMinY + 40;
+              const svgClone = svgRef.current.cloneNode(true) as SVGSVGElement;
+              svgClone.setAttribute("width", String(w * 2));
+              svgClone.setAttribute("height", String(h * 2));
+              svgClone.setAttribute("viewBox", `${bMinX - 20} ${bMinY - 20} ${w} ${h}`);
+              // Remove the transform group's transform
+              const g = svgClone.querySelector("g");
+              if (g) g.setAttribute("transform", "");
+              const serializer = new XMLSerializer();
+              const svgString = serializer.serializeToString(svgClone);
+              const canvas = document.createElement("canvas");
+              canvas.width = w * 2;
+              canvas.height = h * 2;
+              const ctx = canvas.getContext("2d");
+              const img = new Image();
+              img.onload = () => {
+                ctx?.drawImage(img, 0, 0);
+                canvas.toBlob((blob) => {
+                  if (!blob) return;
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `sysml-${diagramType}-diagram.png`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                });
+              };
+              img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgString)));
+            }}
+            style={{
+              width: 34, height: 34, borderRadius: 8, border: "1px solid var(--border)",
+              background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+              cursor: "pointer", display: "flex", alignItems: "center",
+              justifyContent: "center", fontSize: 11,
+              fontWeight: 700, fontFamily: "var(--font-mono)", minHeight: 34,
+            }}
+            title="Export PNG"
+          >
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+          </button>
         </div>
 
         {/* Diagram type label */}
@@ -671,6 +718,32 @@ export function DiagramView() {
                   }}
                 >
                   Delete
+                </button>
+                <button
+                  onClick={() => {
+                    const kindMap: Record<string, { kind: string; cat: number }> = {
+                      bdd: { kind: "part_def", cat: 0 },
+                      stm: { kind: "state_usage", cat: 1 },
+                      req: { kind: "requirement_usage", cat: 2 },
+                      ucd: { kind: "use_case_def", cat: 1 },
+                      ibd: { kind: "part_usage", cat: 0 },
+                    };
+                    const ctx = kindMap[diagramType] ?? { kind: "part_def", cat: 0 };
+                    openDialog("create", undefined, {
+                      suggestedKind: ctx.kind,
+                      suggestedCategory: ctx.cat,
+                      suggestedParentId: hlElement.id,
+                    });
+                  }}
+                  style={{
+                    flex: 1, padding: 8, borderRadius: 8,
+                    border: "1.5px solid var(--success)",
+                    background: "rgba(22,163,74,0.1)", color: "var(--success)",
+                    fontSize: 11, fontWeight: 600, fontFamily: "var(--font-mono)",
+                    cursor: "pointer", minHeight: 38,
+                  }}
+                >
+                  + Add
                 </button>
               </div>
             )}

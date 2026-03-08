@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import type { SysmlModel, SysmlElement, CompletenessReport, TraceabilityEntry } from "../lib/element-types";
+import type { SysmlModel, SysmlElement, CompletenessReport, TraceabilityEntry, ValidationReport } from "../lib/element-types";
 import {
   parseSource, openFile, saveFile, resolveImports,
-  getCompletenessReport, getTraceabilityMatrix,
+  getCompletenessReport, getTraceabilityMatrix, getValidation,
 } from "../lib/tauri-bridge";
 
 interface ModelState {
@@ -14,6 +14,7 @@ interface ModelState {
   error: string | null;
   completeness: CompletenessReport | null;
   traceability: TraceabilityEntry[];
+  validation: ValidationReport | null;
 
   loadSource: (source: string, filePath?: string) => Promise<void>;
   loadFile: (path: string) => Promise<void>;
@@ -34,6 +35,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   error: null,
   completeness: null,
   traceability: [],
+  validation: null,
 
   loadSource: async (source, filePath) => {
     set({ loading: true, error: null, source, filePath: filePath ?? null, dirty: false });
@@ -103,11 +105,12 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
   refreshMbseData: async () => {
     try {
-      const [completeness, traceability] = await Promise.all([
+      const [completeness, traceability, validation] = await Promise.all([
         getCompletenessReport(),
         getTraceabilityMatrix(),
+        getValidation(),
       ]);
-      set({ completeness, traceability });
+      set({ completeness, traceability, validation });
     } catch {
       // MBSE data is optional, don't fail the main flow
     }

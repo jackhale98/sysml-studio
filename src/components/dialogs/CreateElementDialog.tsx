@@ -45,16 +45,19 @@ function kindBadgeColor(kind: string): string {
 
 export function CreateElementDialog() {
   const closeDialog = useUIStore((s) => s.closeDialog);
+  const createContext = useUIStore((s) => s.createContext);
   const source = useModelStore((s) => s.source);
   const model = useModelStore((s) => s.model);
   const updateSource = useModelStore((s) => s.updateSource);
 
-  const [selectedCategory, setSelectedCategory] = useState(0);
-  const [selectedKind, setSelectedKind] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState(createContext?.suggestedCategory ?? 0);
+  const [selectedKind, setSelectedKind] = useState(createContext?.suggestedKind ?? "");
   const [name, setName] = useState("");
   const [typeRef, setTypeRef] = useState("");
   const [doc, setDoc] = useState("");
-  const [parentId, setParentId] = useState<string>("root");
+  const [parentId, setParentId] = useState<string>(
+    createContext?.suggestedParentId != null ? String(createContext.suggestedParentId) : "root"
+  );
 
   // Child entries (attributes, ports, parts, connections)
   const [children, setChildren] = useState<ChildEntry[]>([]);

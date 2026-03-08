@@ -1,12 +1,12 @@
 import type {
   SysmlModel, SysmlElement, ElementId,
   CompletenessReport, TraceabilityEntry,
-  DiagramLayout
+  DiagramLayout, ValidationReport
 } from "./element-types";
 import {
   browserParse, browserBddLayout, browserStmLayout,
   browserReqLayout, browserUcdLayout, browserIbdLayout,
-  browserCompleteness, browserTraceability,
+  browserCompleteness, browserTraceability, browserValidation,
 } from "./browser-parser";
 
 // Detect if we're running inside Tauri or in a plain browser
@@ -158,6 +158,12 @@ export async function getTraceabilityMatrix(): Promise<TraceabilityEntry[]> {
   if (isTauri) return tauriInvoke<TraceabilityEntry[]>("get_traceability_matrix");
   if (cachedModel) return browserTraceability(cachedModel);
   return [];
+}
+
+export async function getValidation(): Promise<ValidationReport> {
+  if (isTauri) return tauriInvoke<ValidationReport>("get_validation");
+  if (cachedModel) return browserValidation(cachedModel);
+  return { issues: [], summary: { errors: 0, warnings: 0, infos: 0 } };
 }
 
 export async function getConnectedElements(elementId: ElementId): Promise<ElementId[]> {

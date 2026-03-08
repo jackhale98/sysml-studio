@@ -25,7 +25,8 @@ interface UIState {
   setHighlightedNode: (id: string | null) => void;
   navigateToDiagram: (elementName: string, targetDiagramType?: DiagramType) => void;
   navigateToEditor: (line?: number) => void;
-  openDialog: (type: DialogType, elementId?: ElementId) => void;
+  createContext: { suggestedKind?: string; suggestedParentId?: number; suggestedCategory?: number } | null;
+  openDialog: (type: DialogType, elementId?: ElementId, context?: { suggestedKind?: string; suggestedParentId?: number; suggestedCategory?: number }) => void;
   closeDialog: () => void;
   clearScrollToLine: () => void;
   toggleTheme: () => void;
@@ -39,6 +40,7 @@ export const useUIStore = create<UIState>((set) => ({
   highlightedNodeId: null,
   activeDialog: null,
   editTargetId: null,
+  createContext: null,
   scrollToLine: null,
   theme: (localStorage.getItem("sysml-theme") as ThemeMode) ?? "dark",
 
@@ -75,15 +77,17 @@ export const useUIStore = create<UIState>((set) => ({
 
   clearScrollToLine: () => set({ scrollToLine: null }),
 
-  openDialog: (type, elementId) => set({
+  openDialog: (type, elementId, context) => set({
     activeDialog: type,
     editTargetId: elementId ?? null,
     showDetailSheet: false,
+    createContext: context ?? null,
   }),
 
   closeDialog: () => set({
     activeDialog: null,
     editTargetId: null,
+    createContext: null,
   }),
 
   toggleTheme: () => set((state) => {

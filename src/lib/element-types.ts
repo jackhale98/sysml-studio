@@ -152,3 +152,15 @@ export interface DiagramLayout {
   edges: DiagramEdge[];
   bounds: [number, number, number, number];
 }
+
+export interface ValidationIssue {
+  element_id: ElementId;
+  severity: "error" | "warning" | "info";
+  message: string;
+  category: "incomplete" | "missing_type" | "unresolved_ref" | "circular_dep" | "orphan";
+}
+
+export interface ValidationReport {
+  issues: ValidationIssue[];
+  summary: { errors: number; warnings: number; infos: number };
+}

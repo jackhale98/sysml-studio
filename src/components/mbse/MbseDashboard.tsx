@@ -5,8 +5,10 @@ import { useUIStore } from "../../stores/ui-store";
 export function MbseDashboard() {
   const completeness = useModelStore((s) => s.completeness);
   const traceability = useModelStore((s) => s.traceability);
+  const validation = useModelStore((s) => s.validation);
   const model = useModelStore((s) => s.model);
   const selectElement = useUIStore((s) => s.selectElement);
+  const navigateToEditor = useUIStore((s) => s.navigateToEditor);
 
   if (!model) {
     return (
@@ -199,6 +201,164 @@ export function MbseDashboard() {
           </div>
         ))}
       </div>
+
+      {/* Validation Issues */}
+      {validation && validation.issues.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{
+            fontSize: 12, fontWeight: 700, color: "var(--text-secondary)",
+            fontFamily: "var(--font-mono)", textTransform: "uppercase",
+            letterSpacing: "0.08em", marginBottom: 8,
+          }}>
+            Validation Issues
+          </div>
+
+          {/* Summary badges */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {validation.summary.errors > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)",
+                padding: "3px 10px", borderRadius: 4,
+                background: "rgba(239,68,68,0.15)", color: "#ef4444",
+                border: "1px solid rgba(239,68,68,0.3)",
+              }}>
+                {validation.summary.errors} error{validation.summary.errors !== 1 ? "s" : ""}
+              </span>
+            )}
+            {validation.summary.warnings > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)",
+                padding: "3px 10px", borderRadius: 4,
+                background: "rgba(245,158,11,0.15)", color: "#f59e0b",
+                border: "1px solid rgba(245,158,11,0.3)",
+              }}>
+                {validation.summary.warnings} warning{validation.summary.warnings !== 1 ? "s" : ""}
+              </span>
+            )}
+            {validation.summary.infos > 0 && (
+              <span style={{
+                fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)",
+                padding: "3px 10px", borderRadius: 4,
+                background: "rgba(59,130,246,0.15)", color: "#60a5fa",
+                border: "1px solid rgba(59,130,246,0.3)",
+              }}>
+                {validation.summary.infos} info{validation.summary.infos !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+
+          {/* Errors */}
+          {validation.issues.filter(i => i.severity === "error").length > 0 && (
+            <div style={{
+              background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.3)",
+              borderRadius: 8, padding: 10, marginBottom: 8,
+            }}>
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: "#ef4444",
+                fontFamily: "var(--font-mono)", marginBottom: 6,
+                textTransform: "uppercase", letterSpacing: "0.05em",
+              }}>
+                Errors
+              </div>
+              {validation.issues.filter(i => i.severity === "error").map((issue, idx) => {
+                const el = model.elements.find(e => e.id === issue.element_id);
+                return (
+                  <div
+                    key={`err-${idx}`}
+                    onClick={() => {
+                      if (el) navigateToEditor(el.span.start_line);
+                    }}
+                    style={{
+                      fontSize: 11, fontFamily: "var(--font-mono)", color: "#fca5a5",
+                      cursor: "pointer", padding: "3px 0",
+                      borderBottom: "1px solid rgba(239,68,68,0.1)",
+                    }}
+                  >
+                    <span style={{ color: "#ef4444", fontWeight: 600 }}>
+                      {el?.name ?? `#${issue.element_id}`}
+                    </span>
+                    {" "}{issue.message}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Warnings */}
+          {validation.issues.filter(i => i.severity === "warning").length > 0 && (
+            <div style={{
+              background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
+              borderRadius: 8, padding: 10, marginBottom: 8,
+            }}>
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: "#f59e0b",
+                fontFamily: "var(--font-mono)", marginBottom: 6,
+                textTransform: "uppercase", letterSpacing: "0.05em",
+              }}>
+                Warnings
+              </div>
+              {validation.issues.filter(i => i.severity === "warning").map((issue, idx) => {
+                const el = model.elements.find(e => e.id === issue.element_id);
+                return (
+                  <div
+                    key={`warn-${idx}`}
+                    onClick={() => {
+                      if (el) navigateToEditor(el.span.start_line);
+                    }}
+                    style={{
+                      fontSize: 11, fontFamily: "var(--font-mono)", color: "#fbbf24",
+                      cursor: "pointer", padding: "3px 0",
+                      borderBottom: "1px solid rgba(245,158,11,0.1)",
+                    }}
+                  >
+                    <span style={{ color: "#f59e0b", fontWeight: 600 }}>
+                      {el?.name ?? `#${issue.element_id}`}
+                    </span>
+                    {" "}{issue.message}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Info */}
+          {validation.issues.filter(i => i.severity === "info").length > 0 && (
+            <div style={{
+              background: "rgba(59,130,246,0.08)", border: "1px solid rgba(59,130,246,0.3)",
+              borderRadius: 8, padding: 10, marginBottom: 8,
+            }}>
+              <div style={{
+                fontSize: 10, fontWeight: 700, color: "#60a5fa",
+                fontFamily: "var(--font-mono)", marginBottom: 6,
+                textTransform: "uppercase", letterSpacing: "0.05em",
+              }}>
+                Info
+              </div>
+              {validation.issues.filter(i => i.severity === "info").map((issue, idx) => {
+                const el = model.elements.find(e => e.id === issue.element_id);
+                return (
+                  <div
+                    key={`info-${idx}`}
+                    onClick={() => {
+                      if (el) navigateToEditor(el.span.start_line);
+                    }}
+                    style={{
+                      fontSize: 11, fontFamily: "var(--font-mono)", color: "#93c5fd",
+                      cursor: "pointer", padding: "3px 0",
+                      borderBottom: "1px solid rgba(59,130,246,0.1)",
+                    }}
+                  >
+                    <span style={{ color: "#60a5fa", fontWeight: 600 }}>
+                      {el?.name ?? `#${issue.element_id}`}
+                    </span>
+                    {" "}{issue.message}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -6,7 +6,8 @@
 import type {
   SysmlModel, SysmlElement, ElementId, SourceSpan,
   Category, ParseError, DiagramLayout, DiagramNode, DiagramEdge,
-  CompletenessReport, TraceabilityEntry,
+  CompletenessReport, TraceabilityEntry, TraceLink,
+  ValidationIssue, ValidationReport,
 } from "./element-types";
 
 interface ParseContext {
@@ -52,7 +53,7 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
   [/^action\s+(\w+)/, "action_usage", "behavior"],
   [/^state\s+(\w+)\s*;/, "state_usage", "behavior"],
   [/^item\s+(\w+)\s*:\s*(\w+)/, "item_usage", "structure"],
-  [/^flow\s+(\w+)/, "flow_usage", "interface"],
+  [/^flow\s+(\w+)(?:\s+of\s+(\w+))?(?:\s+from\s+([\w.]+)\s+to\s+([\w.]+))?/, "flow_usage", "interface"],
   [/^ref\s+(\w+)\s*:\s*(\w+)/, "ref_usage", "structure"],
   [/^enum\s+(\w+)\s*;/, "enum_member", "property"],
   [/^allocation\s+(\w+)/, "allocation_usage", "relationship"],
@@ -61,11 +62,12 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
 ];
 
 const OTHER_PATTERNS: [RegExp, string, Category][] = [
-  [/^transition\s+(\w+)/, "transition_statement", "behavior"],
-  [/^satisfy\s+/, "satisfy_statement", "requirement"],
-  [/^verify\s+/, "verify_statement", "analysis"],
+  [/^transition\s+(?:(\w+)\s+)?(?:first\s+(\w+)\s+then\s+(\w+))?/, "transition_statement", "behavior"],
+  [/^satisfy\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "satisfy_statement", "requirement"],
+  [/^verify\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "verify_statement", "analysis"],
   [/^import\s+/, "import", "auxiliary"],
-  [/^connect\s+/, "connect_statement", "relationship"],
+  [/^connect\s+([\w.:]+)\s+to\s+([\w.:]+)/, "connect_statement", "relationship"],
+  [/^include\s+(?:use\s+case\s+)?(\w+)/, "include_statement", "behavior"],
 ];
 
 function makeSpan(line: number, col: number, endCol: number): SourceSpan {
@@ -100,10 +102,13 @@ export function browserParse(source: string): SysmlModel {
       if (m) {
         const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
         const qname = ctx.stack.map(s => s.name).concat(m[1]).join("::");
+        const specializations: string[] = [];
+        const specMatch = trimmed.match(/:>\s*(\w+)/) || trimmed.match(/specializes\s+(\w+)/);
+        if (specMatch) specializations.push(specMatch[1]);
         const el: SysmlElement = {
           id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
           category: category as Category, parent_id: parentId, children_ids: [],
-          span: makeSpan(i, 0, lines[i].length), type_ref: null, specializations: [],
+          span: makeSpan(i, 0, lines[i].length), type_ref: null, specializations,
           modifiers: [], multiplicity: null, doc: null, short_name: null,
         };
         ctx.elements.push(el);
@@ -126,10 +131,18 @@ export function browserParse(source: string): SysmlModel {
         if (m) {
           const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
           const qname = ctx.stack.map(s => s.name).concat(m[1]).join("::");
+          let typeRef = m[2] ?? null;
+          let specializations: string[] = [];
+          if (kind === "flow_usage") {
+            typeRef = m[2] ?? null;
+            if (m[3] && m[4]) {
+              specializations = [m[3], m[4]];
+            }
+          }
           const el: SysmlElement = {
             id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
-            span: makeSpan(i, 0, lines[i].length), type_ref: m[2] ?? null, specializations: [],
+            span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
             modifiers: [], multiplicity: null, doc: null, short_name: null,
           };
           ctx.elements.push(el);
@@ -149,12 +162,27 @@ export function browserParse(source: string): SysmlModel {
         const m = trimmed.match(pat);
         if (m) {
           const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
-          const name = m[1] ?? null;
+          let name = m[1] ?? null;
+          let typeRef: string | null = null;
+          let specializations: string[] = [];
+
+          if (kind === "satisfy_statement" || kind === "verify_statement") {
+            name = m[2] ?? null;
+            typeRef = m[1] ?? null;
+          } else if (kind === "connect_statement") {
+            name = m[1];
+            typeRef = m[2];
+          } else if (kind === "transition_statement") {
+            name = m[1] ?? null;
+            typeRef = m[2] ?? null;
+            specializations = m[3] ? [m[3]] : [];
+          }
+
           const qname = ctx.stack.map(s => s.name).concat(name ?? "<unnamed>").join("::");
           const el: SysmlElement = {
             id: ctx.nextId++, kind: kind as any, name, qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
-            span: makeSpan(i, 0, lines[i].length), type_ref: null, specializations: [],
+            span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
             modifiers: [], multiplicity: null, doc: null, short_name: null,
           };
           ctx.elements.push(el);
@@ -172,6 +200,24 @@ export function browserParse(source: string): SysmlModel {
     const closeBraces = (trimmed.match(/}/g) || []).length;
     for (let b = 0; b < closeBraces; b++) {
       if (ctx.stack.length > 0) ctx.stack.pop();
+    }
+  }
+
+  // Post-processing: resolve multi-line transitions
+  for (const el of ctx.elements) {
+    if (typeof el.kind === "string" && el.kind === "transition_statement" && el.type_ref === null) {
+      const startLine = el.span.start_line;
+      for (let j = startLine + 1; j < Math.min(startLine + 4, lines.length); j++) {
+        const lookAhead = lines[j].trim();
+        const firstMatch = lookAhead.match(/first\s+(\w+)/);
+        const thenMatch = lookAhead.match(/then\s+(\w+)/);
+        if (firstMatch) {
+          el.type_ref = firstMatch[1];
+        }
+        if (thenMatch) {
+          el.specializations = [thenMatch[1]];
+        }
+      }
     }
   }
 
@@ -354,6 +400,31 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
     }
   }
 
+  // Add specialization edges
+  for (const d of defs) {
+    if (d.specializations.length > 0) {
+      const fromNode = nodes.find(n => n.element_id === d.id);
+      for (const specName of d.specializations) {
+        const targetDef = defs.find(t => t.name === specName);
+        if (targetDef && fromNode) {
+          const toNode = nodes.find(n => n.element_id === targetDef.id);
+          if (toNode) {
+            edges.push({
+              from_id: d.id, to_id: targetDef.id,
+              label: null, edge_type: "specialization",
+              points: [
+                [fromNode.x + fromNode.width / 2, fromNode.y],
+                [fromNode.x + fromNode.width / 2, fromNode.y - 20],
+                [toNode.x + toNode.width / 2, toNode.y + toNode.height + 20],
+                [toNode.x + toNode.width / 2, toNode.y + toNode.height],
+              ],
+            });
+          }
+        }
+      }
+    }
+  }
+
   const minX = nodes.length > 0 ? Math.min(...nodes.map(n => n.x)) : 0;
   const minY = nodes.length > 0 ? Math.min(...nodes.map(n => n.y)) : 0;
   const maxX = nodes.length > 0 ? Math.max(...nodes.map(n => n.x + n.width)) : 400;
@@ -393,53 +464,65 @@ export function browserStmLayout(model: SysmlModel, stateDefName: string): Diagr
 
   const edges: DiagramEdge[] = [];
   for (const t of transitions) {
-    if (t.name) {
-      const tParts = t.name.split("_to_");
-      if (tParts.length === 2) {
-        const from = nodes.find(n => n.label === tParts[0]);
-        const to = nodes.find(n => n.label === tParts[1]);
-        if (from && to) {
-          // Route edges: exit from right/bottom of source, enter left/top of target
-          const fromCx = from.x + from.width / 2;
-          const fromCy = from.y + from.height / 2;
-          const toCx = to.x + to.width / 2;
-          const toCy = to.y + to.height / 2;
-          const dx = toCx - fromCx;
-          const dy = toCy - fromCy;
+    let fromLabel: string | null = null;
+    let toLabel: string | null = null;
 
-          let points: [number, number][];
-          if (Math.abs(dx) > Math.abs(dy)) {
-            // Horizontal routing
-            const exitX = dx > 0 ? from.x + from.width : from.x;
-            const enterX = dx > 0 ? to.x : to.x + to.width;
-            const midX = (exitX + enterX) / 2;
-            points = [
-              [exitX, fromCy],
-              [midX, fromCy],
-              [midX, toCy],
-              [enterX, toCy],
-            ];
-          } else {
-            // Vertical routing
-            const exitY = dy > 0 ? from.y + from.height : from.y;
-            const enterY = dy > 0 ? to.y : to.y + to.height;
-            const midY = (exitY + enterY) / 2;
-            points = [
-              [fromCx, exitY],
-              [fromCx, midY],
-              [toCx, midY],
-              [toCx, enterY],
-            ];
-          }
-
-          edges.push({
-            from_id: from.element_id, to_id: to.element_id,
-            label: t.name, edge_type: "transition",
-            points,
-          });
-        }
+    // Prefer parsed first/then data
+    if (t.type_ref && t.specializations.length > 0) {
+      fromLabel = t.type_ref;
+      toLabel = t.specializations[0];
+    } else if (t.name) {
+      // Fallback to name convention
+      const parts = t.name.split("_to_");
+      if (parts.length === 2) {
+        fromLabel = parts[0];
+        toLabel = parts[1];
       }
     }
+
+    if (!fromLabel || !toLabel) continue;
+    const from = nodes.find(n => n.label === fromLabel);
+    const to = nodes.find(n => n.label === toLabel);
+    if (!from || !to) continue;
+
+    // Route edges: exit from right/bottom of source, enter left/top of target
+    const fromCx = from.x + from.width / 2;
+    const fromCy = from.y + from.height / 2;
+    const toCx = to.x + to.width / 2;
+    const toCy = to.y + to.height / 2;
+    const dx = toCx - fromCx;
+    const dy = toCy - fromCy;
+
+    let points: [number, number][];
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal routing
+      const exitX = dx > 0 ? from.x + from.width : from.x;
+      const enterX = dx > 0 ? to.x : to.x + to.width;
+      const midX = (exitX + enterX) / 2;
+      points = [
+        [exitX, fromCy],
+        [midX, fromCy],
+        [midX, toCy],
+        [enterX, toCy],
+      ];
+    } else {
+      // Vertical routing
+      const exitY = dy > 0 ? from.y + from.height : from.y;
+      const enterY = dy > 0 ? to.y : to.y + to.height;
+      const midY = (exitY + enterY) / 2;
+      points = [
+        [fromCx, exitY],
+        [fromCx, midY],
+        [toCx, midY],
+        [toCx, enterY],
+      ];
+    }
+
+    edges.push({
+      from_id: from.element_id, to_id: to.element_id,
+      label: t.name, edge_type: "transition",
+      points,
+    });
   }
 
   return {
@@ -512,6 +595,54 @@ export function browserReqLayout(model: SysmlModel): DiagramLayout {
           [parentNode.x + parentNode.width + GAP_X * 0.4, parentNode.y + H / 2],
           [nx - GAP_X * 0.4, ny + H / 2],
           [nx, ny + H / 2],
+        ],
+      });
+    }
+  }
+
+  // Add satisfy/verify edges
+  const satisfyVerify = model.elements.filter(e => {
+    const k = typeof e.kind === "string" ? e.kind : "";
+    return k === "satisfy_statement" || k === "verify_statement";
+  });
+
+  for (const sv of satisfyVerify) {
+    const k = typeof sv.kind === "string" ? sv.kind : "";
+    const reqName = sv.type_ref; // the requirement being satisfied/verified
+    const implName = sv.name; // the satisfying/verifying element
+    if (!reqName) continue;
+
+    const reqNode = nodes.find(n => n.label === reqName);
+    if (!reqNode) continue;
+
+    // Find or create a node for the implementing element
+    let implNode = nodes.find(n => n.label === implName);
+    if (!implNode && implName) {
+      const implEl = model.elements.find(e => e.name === implName);
+      if (implEl) {
+        const w = Math.max(textWidth(implName, 12), 140);
+        const maxY = nodes.length > 0 ? Math.max(...nodes.map(n => n.y + n.height)) : 0;
+        const implX = reqNode.x + reqNode.width + GAP_X * 2;
+        const implY = reqNode.y;
+        nodes.push({
+          element_id: implEl.id, label: implName,
+          kind: "block", x: implX, y: implY, width: w, height: H,
+          color: "#3b82f6", children: [],
+        });
+        implNode = nodes[nodes.length - 1];
+      }
+    }
+
+    if (implNode) {
+      const edgeType = k === "satisfy_statement" ? "satisfy" : "verify";
+      edges.push({
+        from_id: reqNode.element_id, to_id: implNode.element_id,
+        label: edgeType, edge_type: edgeType,
+        points: [
+          [reqNode.x + reqNode.width, reqNode.y + H / 2],
+          [reqNode.x + reqNode.width + GAP_X * 0.4, reqNode.y + H / 2],
+          [implNode.x - GAP_X * 0.4, implNode.y + H / 2],
+          [implNode.x, implNode.y + H / 2],
         ],
       });
     }
@@ -619,6 +750,29 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
     }
   }
 
+  // Add include relationship edges
+  const includes = model.elements.filter(e =>
+    typeof e.kind === "string" && e.kind === "include_statement"
+  );
+  for (const inc of includes) {
+    const parentUc = allUseCases.find(uc => uc.id === inc.parent_id);
+    const targetUc = allUseCases.find(uc => uc.name === inc.name);
+    if (parentUc && targetUc) {
+      const fromNode = nodes.find(n => n.element_id === parentUc.id);
+      const toNode = nodes.find(n => n.element_id === targetUc.id);
+      if (fromNode && toNode) {
+        edges.push({
+          from_id: parentUc.id, to_id: targetUc.id,
+          label: "include", edge_type: "include",
+          points: [
+            [fromNode.x + fromNode.width / 2, fromNode.y + H_UC],
+            [toNode.x + toNode.width / 2, toNode.y],
+          ],
+        });
+      }
+    }
+  }
+
   const allX = nodes.length > 0 ? nodes.map(n => n.x + n.width) : [400];
   const allY = nodes.length > 0 ? nodes.map(n => n.y + n.height) : [300];
   return {
@@ -708,6 +862,37 @@ export function browserIbdLayout(model: SysmlModel, blockName?: string): Diagram
     });
   });
 
+  // First try explicit connect statements
+  const connectedPairs = new Set<string>();
+  for (const conn of connections) {
+    if (conn.name && conn.type_ref) {
+      // Parse "partName.portName" endpoints
+      const fromParts = conn.name.split(".");
+      const toParts = conn.type_ref.split(".");
+      if (fromParts.length >= 1 && toParts.length >= 1) {
+        const fromPartName = fromParts[0];
+        const toPartName = toParts[0];
+        const fromNode = nodes.find(n => n.kind === "part" && n.label.startsWith(fromPartName));
+        const toNode = nodes.find(n => n.kind === "part" && n.label.startsWith(toPartName));
+        if (fromNode && toNode) {
+          const pairKey = [fromNode.element_id, toNode.element_id].sort().join("-");
+          connectedPairs.add(pairKey);
+          const label = fromParts[1] && toParts[1] ? `${fromParts[1]} - ${toParts[1]}` : null;
+          edges.push({
+            from_id: fromNode.element_id, to_id: toNode.element_id,
+            label, edge_type: "connection",
+            points: [
+              [fromNode.x + PART_W, fromNode.y + PART_H / 2],
+              [fromNode.x + PART_W + GAP * 0.3, fromNode.y + PART_H / 2],
+              [toNode.x - GAP * 0.3, toNode.y + PART_H / 2],
+              [toNode.x, toNode.y + PART_H / 2],
+            ],
+          });
+        }
+      }
+    }
+  }
+
   // Connect parts to each other based on matching port types
   // Simple heuristic: if two parts have ports of the same type, connect them
   for (let i = 0; i < parts.length; i++) {
@@ -735,6 +920,9 @@ export function browserIbdLayout(model: SysmlModel, blockName?: string): Diagram
             const nodeI = nodes.find(n => n.element_id === parts[i].id);
             const nodeJ = nodes.find(n => n.element_id === parts[j].id);
             if (nodeI && nodeJ) {
+              const pairKey = [parts[i].id, parts[j].id].sort().join("-");
+              if (connectedPairs.has(pairKey)) continue;
+              connectedPairs.add(pairKey);
               edges.push({
                 from_id: parts[i].id, to_id: parts[j].id,
                 label: pi.type_ref, edge_type: "connection",
@@ -768,34 +956,178 @@ export function browserCompleteness(model: SysmlModel): CompletenessReport {
     const k = typeof e.kind === "string" ? e.kind : "";
     return k === "port_def" || k === "port_usage";
   });
+  const usages = model.elements.filter(e => {
+    const k = typeof e.kind === "string" ? e.kind : "";
+    return k.endsWith("_usage") && !k.startsWith("port") && !k.startsWith("enum");
+  });
 
-  // In browser mode, no satisfy/verify relationships are extracted yet
+  // Check satisfy/verify relationships
+  const satisfiedReqs = new Set<string>();
+  const verifiedReqs = new Set<string>();
+  for (const el of model.elements) {
+    const k = typeof el.kind === "string" ? el.kind : "";
+    if (k === "satisfy_statement" && el.type_ref) satisfiedReqs.add(el.type_ref);
+    if (k === "verify_statement" && el.type_ref) verifiedReqs.add(el.type_ref);
+  }
+
+  const unsatisfied = reqs.filter(r => !satisfiedReqs.has(r.name ?? "")).map(r => r.id);
+  const unverified = reqs.filter(r => !verifiedReqs.has(r.name ?? "")).map(r => r.id);
+
+  // Check connected ports (via connect statements)
+  const connectedPortNames = new Set<string>();
+  for (const el of model.elements) {
+    const k = typeof el.kind === "string" ? el.kind : "";
+    if (k === "connect_statement") {
+      if (el.name) el.name.split(".").forEach(p => connectedPortNames.add(p));
+      if (el.type_ref) el.type_ref.split(".").forEach(p => connectedPortNames.add(p));
+    }
+  }
+  const unconnected = ports.filter(p => !connectedPortNames.has(p.name ?? "")).map(p => p.id);
+
+  // Check untyped usages
+  const untyped = usages.filter(u => !u.type_ref).map(u => u.id);
+
+  const totalChecks = reqs.length * 2 + ports.length + usages.length;
+  const passedChecks = (reqs.length - unsatisfied.length) + (reqs.length - unverified.length) + (ports.length - unconnected.length) + (usages.length - untyped.length);
+  const score = totalChecks > 0 ? passedChecks / totalChecks : 1.0;
+
   return {
-    unsatisfied_requirements: reqs.map(r => r.id),
-    unverified_requirements: reqs.map(r => r.id),
-    unconnected_ports: ports.map(p => p.id),
-    untyped_usages: [],
-    score: reqs.length === 0 && ports.length === 0 ? 1.0 : 0.0,
+    unsatisfied_requirements: unsatisfied,
+    unverified_requirements: unverified,
+    unconnected_ports: unconnected,
+    untyped_usages: untyped,
+    score,
     summary: [
-      { label: "Requirements Satisfied", total: reqs.length, complete: 0 },
-      { label: "Requirements Verified", total: reqs.length, complete: 0 },
-      { label: "Ports Connected", total: ports.length, complete: 0 },
+      { label: "Requirements Satisfied", total: reqs.length, complete: reqs.length - unsatisfied.length },
+      { label: "Requirements Verified", total: reqs.length, complete: reqs.length - unverified.length },
+      { label: "Ports Connected", total: ports.length, complete: ports.length - unconnected.length },
+      { label: "Usages Typed", total: usages.length, complete: usages.length - untyped.length },
     ],
   };
 }
 
-/** Browser-side traceability (stub) */
+/** Browser-side traceability */
 export function browserTraceability(model: SysmlModel): TraceabilityEntry[] {
-  return model.elements
-    .filter(e => {
-      const k = typeof e.kind === "string" ? e.kind : "";
-      return k === "requirement_def" || k === "requirement_usage";
-    })
-    .map(r => ({
+  const reqs = model.elements.filter(e => {
+    const k = typeof e.kind === "string" ? e.kind : "";
+    return k === "requirement_def" || k === "requirement_usage";
+  });
+
+  return reqs.map(r => {
+    const satisfied: TraceLink[] = [];
+    const verified: TraceLink[] = [];
+
+    for (const el of model.elements) {
+      const k = typeof el.kind === "string" ? el.kind : "";
+      if (k === "satisfy_statement" && el.type_ref === r.name && el.name) {
+        const impl = model.elements.find(e => e.name === el.name);
+        if (impl) {
+          satisfied.push({
+            element_id: impl.id,
+            element_name: impl.name ?? "<unnamed>",
+            element_kind: typeof impl.kind === "string" ? impl.kind : "other",
+          });
+        }
+      }
+      if (k === "verify_statement" && el.type_ref === r.name && el.name) {
+        const impl = model.elements.find(e => e.name === el.name);
+        if (impl) {
+          verified.push({
+            element_id: impl.id,
+            element_name: impl.name ?? "<unnamed>",
+            element_kind: typeof impl.kind === "string" ? impl.kind : "other",
+          });
+        }
+      }
+    }
+
+    return {
       requirement_id: r.id,
       requirement_name: r.name ?? "<unnamed>",
-      satisfied_by: [],
-      verified_by: [],
+      satisfied_by: satisfied,
+      verified_by: verified,
       allocated_to: [],
-    }));
+    };
+  });
+}
+
+/** Browser-side model validation */
+export function browserValidation(model: SysmlModel): ValidationReport {
+  const issues: ValidationIssue[] = [];
+  const allNames = new Set(model.elements.filter(e => e.name).map(e => e.name!));
+  const idSet = new Set(model.elements.map(e => e.id));
+
+  for (const el of model.elements) {
+    const k = typeof el.kind === "string" ? el.kind : "";
+
+    // Missing type reference for usages
+    if (k.endsWith("_usage") && !k.startsWith("enum") && !k.startsWith("state") && !el.type_ref) {
+      issues.push({
+        element_id: el.id, severity: "warning",
+        message: `${el.name ?? "Element"} has no type reference`,
+        category: "missing_type",
+      });
+    }
+
+    // Unresolved type reference
+    if (el.type_ref && !allNames.has(el.type_ref)) {
+      // Check if it's a stdlib type
+      const isStdlib = /^[A-Z]/.test(el.type_ref);
+      if (!isStdlib) {
+        issues.push({
+          element_id: el.id, severity: "error",
+          message: `Type "${el.type_ref}" not found in model`,
+          category: "unresolved_ref",
+        });
+      }
+    }
+
+    // Empty definitions (no children)
+    if ((k.endsWith("_def") || k === "package") && el.children_ids.length === 0) {
+      issues.push({
+        element_id: el.id, severity: "info",
+        message: `${el.name ?? "Definition"} has no members`,
+        category: "incomplete",
+      });
+    }
+
+    // Orphaned elements (parent doesn't exist)
+    if (el.parent_id !== null && !idSet.has(el.parent_id)) {
+      issues.push({
+        element_id: el.id, severity: "error",
+        message: `Parent element (id ${el.parent_id}) not found`,
+        category: "orphan",
+      });
+    }
+  }
+
+  // Circular dependency detection via type_ref chains
+  const typeRefMap = new Map<string, string>();
+  for (const el of model.elements) {
+    if (el.name && el.type_ref) typeRefMap.set(el.name, el.type_ref);
+  }
+  for (const [startName] of typeRefMap) {
+    const visited = new Set<string>();
+    let current: string | undefined = startName;
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      current = typeRefMap.get(current);
+    }
+    if (current && visited.has(current) && current === startName) {
+      const el = model.elements.find(e => e.name === startName);
+      if (el) {
+        issues.push({
+          element_id: el.id, severity: "error",
+          message: `Circular type reference detected: ${startName}`,
+          category: "circular_dep",
+        });
+      }
+    }
+  }
+
+  const errors = issues.filter(i => i.severity === "error").length;
+  const warnings = issues.filter(i => i.severity === "warning").length;
+  const infos = issues.filter(i => i.severity === "info").length;
+
+  return { issues, summary: { errors, warnings, infos } };
 }
