@@ -23,15 +23,24 @@ export function ElementDetail() {
     ? model?.elements.find((e) => e.id === element.parent_id)?.name ?? "—"
     : "—";
 
-  // For diagram navigation: BDD nodes are labeled by definition names.
-  // If this is a usage, resolve to its type_ref (the definition name) for BDD highlight.
+  // For diagram navigation: resolve to the nearest element that would appear
+  // as a diagram node. Definitions are shown directly; usages/attributes/ports
+  // resolve up to their parent definition.
   const diagramLabel = (() => {
     const bestDiagram = getBestDiagramType(kindStr);
-    if (bestDiagram === "bdd" && isUsage) {
-      if (element.type_ref) return element.type_ref;
-      if (element.parent_id !== null) {
-        const parent = model?.elements.find(e => e.id === element.parent_id);
-        if (parent?.name) return parent.name;
+    // Definitions and named behavioral elements are shown directly
+    if (kindStr.endsWith("_def") || kindStr === "package") return element.name;
+    // For BDD: usages with type_ref point to their definition
+    if (bestDiagram === "bdd" && element.type_ref) return element.type_ref;
+    // Walk up parent chain to find nearest definition that shows on diagram
+    if (element.parent_id !== null && model) {
+      let current = model.elements.find(e => e.id === element.parent_id);
+      while (current) {
+        const ck = typeof current.kind === "string" ? current.kind : "";
+        if (ck.endsWith("_def") && current.name) return current.name;
+        current = current.parent_id !== null
+          ? model.elements.find(e => e.id === current!.parent_id)
+          : undefined;
       }
     }
     return element.name;
