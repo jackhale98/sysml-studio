@@ -650,6 +650,12 @@ export function browserReqLayout(model: SysmlModel): DiagramLayout {
     return k === "satisfy_statement" || k === "verify_statement";
   });
 
+  // Determine the rightmost x of all existing nodes for impl block placement
+  const implColumnX = nodes.length > 0
+    ? Math.max(...nodes.map(n => n.x + n.width)) + GAP_X * 2
+    : 300;
+  let nextImplY = 30;
+
   for (const sv of satisfyVerify) {
     const k = typeof sv.kind === "string" ? sv.kind : "";
     const reqName = sv.type_ref; // the requirement being satisfied/verified
@@ -666,32 +672,35 @@ export function browserReqLayout(model: SysmlModel): DiagramLayout {
     const reqNode = nodes.find(n => n.label === reqName);
     if (!reqNode) continue;
 
-    // Find or create a node for the implementing element (placed right of reqs)
+    // Find or create a node for the implementing element
     let implNode = nodes.find(n => n.label === implName);
     if (!implNode) {
       const w = Math.max(textWidth(implName, 12), 140);
-      // Stack impl nodes vertically: find how many block nodes already exist at this x column
-      const implX = reqNode.x + reqNode.width + GAP_X * 2;
-      const existingBlocks = nodes.filter(n => n.kind === "block");
-      const implY = existingBlocks.length > 0
-        ? Math.max(...existingBlocks.map(n => n.y + n.height)) + 30
-        : reqNode.y;
       nodes.push({
         element_id: implEl!.id, label: implName,
-        kind: "block", x: implX, y: implY, width: w, height: H,
+        kind: "block", x: implColumnX, y: nextImplY, width: w, height: H,
         color: "#3b82f6", children: [],
       });
       implNode = nodes[nodes.length - 1];
+      nextImplY += H + 30;
     }
 
+    // Skip duplicate edge (same impl → same req)
     const edgeType = k === "satisfy_statement" ? "satisfy" : "verify";
+    const alreadyHasEdge = edges.some(e =>
+      e.from_id === implNode!.element_id && e.to_id === reqNode.element_id && e.edge_type === edgeType
+    );
+    if (alreadyHasEdge) continue;
+
+    // Route edge: impl left side → req right side, with waypoints
+    const midX = (reqNode.x + reqNode.width + implNode.x) / 2;
     edges.push({
       from_id: implNode.element_id, to_id: reqNode.element_id,
       label: edgeType, edge_type: edgeType,
       points: [
         [implNode.x, implNode.y + H / 2],
-        [implNode.x - GAP_X * 0.4, implNode.y + H / 2],
-        [reqNode.x + reqNode.width + GAP_X * 0.4, reqNode.y + H / 2],
+        [midX, implNode.y + H / 2],
+        [midX, reqNode.y + H / 2],
         [reqNode.x + reqNode.width, reqNode.y + H / 2],
       ],
     });
