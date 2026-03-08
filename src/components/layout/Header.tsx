@@ -4,6 +4,7 @@ import { useUIStore } from "../../stores/ui-store";
 import { pickFile, pickSaveFile, readBrowserFile } from "../../lib/tauri-bridge";
 
 const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 export function Header() {
   const model = useModelStore((s) => s.model);
@@ -22,7 +23,7 @@ export function Header() {
   const fileName = filePath?.split("/").pop() ?? (model ? "untitled.sysml" : "No file");
 
   async function handleOpen() {
-    if (isTauri) {
+    if (isTauri && !isMobile) {
       const path = await pickFile();
       if (path) await loadFile(path);
     } else {
@@ -39,9 +40,9 @@ export function Header() {
   }
 
   async function handleSave() {
-    if (filePath && isTauri) {
+    if (filePath && isTauri && !isMobile) {
       await saveCurrentFile();
-    } else if (isTauri) {
+    } else if (isTauri && !isMobile) {
       const path = await pickSaveFile("model.sysml");
       if (path) await saveAs(path);
     } else {
