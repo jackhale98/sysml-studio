@@ -1,0 +1,850 @@
+import { useState, useCallback, useRef, useEffect } from “react”;
+
+// — Mock SysML v2 Data —
+const SYSML_SOURCE = `package VehicleSystem {
+part def Vehicle {
+part engine : Engine;
+part transmission : Transmission;
+part brakeSystem : BrakeSystem;
+part electricalSystem : ElectricalSystem;
+
+```
+port fuelIn : FuelPort;
+port powerOut : DrivePort;
+
+connection engineToTrans : Connect
+  connect engine.torqueOut to transmission.torqueIn;
+connection transToWheels : Connect
+  connect transmission.driveOut to powerOut;
+```
+
+}
+
+part def Engine {
+attribute displacement : Real;
+attribute maxRPM : Integer = 6500;
+attribute fuelType : FuelKind;
+
+```
+port fuelIn : FuelPort;
+port torqueOut : TorquePort;
+
+state def EngineStates {
+  state off;
+  state idle;
+  state running;
+  state overheating;
+
+  transition off_to_idle
+    first off then idle;
+  transition idle_to_running
+    first idle then running;
+}
+```
+
+}
+
+part def Transmission {
+attribute gearCount : Integer = 6;
+attribute type : TransType;
+
+```
+port torqueIn : TorquePort;
+port driveOut : DrivePort;
+```
+
+}
+
+part def BrakeSystem {
+part frontBrakes : DiscBrake[2];
+part rearBrakes : DiscBrake[2];
+part abs : ABSController;
+
+```
+requirement def StoppingDistance {
+  doc /* The vehicle shall stop within 40m from 100km/h */
+  attribute maxDistance : Real = 40.0;
+}
+```
+
+}
+
+part def ElectricalSystem {
+part battery : Battery;
+part alternator : Alternator;
+part ecu : ECU;
+
+```
+flow def PowerFlow {
+  flow alternator.powerOut to battery.chargeIn;
+  flow battery.powerOut to ecu.powerIn;
+}
+```
+
+}
+
+enum def FuelKind { gasoline; diesel; hydrogen; }
+enum def TransType { manual; automatic; cvt; dct; }
+}`;
+
+// — Parser —
+function parseSysML(source) {
+const elements = [];
+const lines = source.split(”\n”);
+const stack = [];
+let id = 0;
+
+for (const line of lines) {
+const trimmed = line.trim();
+if (!trimmed || trimmed.startsWith(”//”) || trimmed.startsWith(“doc”)) continue;
+
+```
+const partDefMatch = trimmed.match(/^part\s+def\s+(\w+)/);
+const partMatch = trimmed.match(/^part\s+(\w+)\s*:\s*(\w+)/);
+const attrMatch = trimmed.match(/^attribute\s+(\w+)\s*:\s*(\w+)/);
+const portMatch = trimmed.match(/^port\s+(\w+)\s*:\s*(\w+)/);
+const connMatch = trimmed.match(/^connection\s+(\w+)/);
+const stateDefMatch = trimmed.match(/^state\s+def\s+(\w+)/);
+const stateMatch = trimmed.match(/^state\s+(\w+)\s*;/);
+const transMatch = trimmed.match(/^transition\s+(\w+)/);
+const reqMatch = trimmed.match(/^requirement\s+def\s+(\w+)/);
+const flowMatch = trimmed.match(/^flow\s+def\s+(\w+)/);
+const enumMatch = trimmed.match(/^enum\s+def\s+(\w+)/);
+const pkgMatch = trimmed.match(/^package\s+(\w+)/);
+const connectMatch = trimmed.match(/^connect\s+(.+)\s+to\s+(.+);/);
+
+let el = null;
+if (pkgMatch) {
+  el = { id: id++, type: "package", name: pkgMatch[1], parent: stack[stack.length - 1]?.name || null, children: [] };
+} else if (partDefMatch) {
+  el = { id: id++, type: "part_def", name: partDefMatch[1], parent: stack[stack.length - 1]?.name || null, children: [], category: "structure" };
+} else if (partMatch) {
+  el = { id: id++, type: "part", name: partMatch[1], typeName: partMatch[2], parent: stack[stack.length - 1]?.name || null, category: "structure" };
+} else if (attrMatch) {
+  el = { id: id++, type: "attribute", name: attrMatch[1], typeName: attrMatch[2], parent: stack[stack.length - 1]?.name || null, category: "property" };
+} else if (portMatch) {
+  el = { id: id++, type: "port", name: portMatch[1], typeName: portMatch[2], parent: stack[stack.length - 1]?.name || null, category: "interface" };
+} else if (connMatch) {
+  el = { id: id++, type: "connection", name: connMatch[1], parent: stack[stack.length - 1]?.name || null, category: "relationship" };
+} else if (stateDefMatch) {
+  el = { id: id++, type: "state_def", name: stateDefMatch[1], parent: stack[stack.length - 1]?.name || null, children: [], category: "behavior" };
+} else if (stateMatch) {
+  el = { id: id++, type: "state", name: stateMatch[1], parent: stack[stack.length - 1]?.name || null, category: "behavior" };
+} else if (transMatch) {
+  el = { id: id++, type: "transition", name: transMatch[1], parent: stack[stack.length - 1]?.name || null, category: "behavior" };
+} else if (reqMatch) {
+  el = { id: id++, type: "requirement", name: reqMatch[1], parent: stack[stack.length - 1]?.name || null, category: "requirement" };
+} else if (flowMatch) {
+  el = { id: id++, type: "flow", name: flowMatch[1], parent: stack[stack.length - 1]?.name || null, category: "interface" };
+} else if (enumMatch) {
+  el = { id: id++, type: "enum", name: enumMatch[1], parent: stack[stack.length - 1]?.name || null, category: "property" };
+}
+
+if (el) elements.push(el);
+if (trimmed.includes("{")) stack.push(el || stack[stack.length - 1]);
+if (trimmed.includes("}")) stack.pop();
+```
+
+}
+return elements;
+}
+
+// — Diagram Node Layouts —
+const DIAGRAM_LAYOUTS = {
+bdd: [
+{ id: “Vehicle”, x: 280, y: 30, w: 160, h: 50, color: “#3b82f6”, type: “block” },
+{ id: “Engine”, x: 80, y: 140, w: 140, h: 50, color: “#ef4444”, type: “block” },
+{ id: “Transmission”, x: 280, y: 140, w: 140, h: 50, color: “#f59e0b”, type: “block” },
+{ id: “BrakeSystem”, x: 480, y: 140, w: 140, h: 50, color: “#10b981”, type: “block” },
+{ id: “ElectricalSystem”, x: 280, y: 260, w: 160, h: 50, color: “#8b5cf6”, type: “block” },
+{ id: “Battery”, x: 100, y: 370, w: 120, h: 44, color: “#6366f1”, type: “block” },
+{ id: “ECU”, x: 290, y: 370, w: 120, h: 44, color: “#6366f1”, type: “block” },
+{ id: “Alternator”, x: 470, y: 370, w: 130, h: 44, color: “#6366f1”, type: “block” },
+],
+state: [
+{ id: “off”, x: 80, y: 60, w: 110, h: 44, color: “#64748b”, type: “state” },
+{ id: “idle”, x: 280, y: 60, w: 110, h: 44, color: “#f59e0b”, type: “state” },
+{ id: “running”, x: 470, y: 60, w: 110, h: 44, color: “#10b981”, type: “state” },
+{ id: “overheating”, x: 280, y: 180, w: 130, h: 44, color: “#ef4444”, type: “state” },
+],
+};
+
+const DIAGRAM_EDGES = {
+bdd: [
+{ from: “Vehicle”, to: “Engine”, label: “engine” },
+{ from: “Vehicle”, to: “Transmission”, label: “transmission” },
+{ from: “Vehicle”, to: “BrakeSystem”, label: “brakeSystem” },
+{ from: “Vehicle”, to: “ElectricalSystem”, label: “electrical” },
+{ from: “ElectricalSystem”, to: “Battery”, label: “battery” },
+{ from: “ElectricalSystem”, to: “ECU”, label: “ecu” },
+{ from: “ElectricalSystem”, to: “Alternator”, label: “alternator” },
+],
+state: [
+{ from: “off”, to: “idle”, label: “start” },
+{ from: “idle”, to: “running”, label: “accelerate” },
+{ from: “running”, to: “overheating”, label: “overheat” },
+{ from: “overheating”, to: “idle”, label: “cool down” },
+],
+};
+
+// — Icons —
+const Icons = {
+file: (
+<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+</svg>
+),
+diagram: (
+<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm10 0a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM9 16a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+<path strokeLinecap="round" d="M7 10v3a1 1 0 001 1h1m8-4v3a1 1 0 01-1 1h-1" />
+</svg>
+),
+filter: (
+<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+</svg>
+),
+edit: (
+<svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+</svg>
+),
+chevron: (
+<svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+<path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+</svg>
+),
+search: (
+<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+</svg>
+),
+zoomIn: (
+<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7" />
+</svg>
+),
+zoomOut: (
+<svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+<path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM13 10H7" />
+</svg>
+),
+};
+
+// — Type badge colors —
+const TYPE_COLORS = {
+package: { bg: “#1e293b”, fg: “#94a3b8”, border: “#334155” },
+part_def: { bg: “#1e3a5f”, fg: “#60a5fa”, border: “#2563eb” },
+part: { bg: “#1a2e1a”, fg: “#4ade80”, border: “#16a34a” },
+attribute: { bg: “#2d1f0e”, fg: “#fbbf24”, border: “#d97706” },
+port: { bg: “#2e1065”, fg: “#a78bfa”, border: “#7c3aed” },
+connection: { bg: “#1e1e2e”, fg: “#f472b6”, border: “#db2777” },
+state_def: { bg: “#0c2d48”, fg: “#38bdf8”, border: “#0284c7” },
+state: { bg: “#0c2d48”, fg: “#38bdf8”, border: “#0284c7” },
+transition: { bg: “#2a1a2e”, fg: “#e879f9”, border: “#a21caf” },
+requirement: { bg: “#2e1a1a”, fg: “#fb7185”, border: “#e11d48” },
+flow: { bg: “#1a2e2e”, fg: “#2dd4bf”, border: “#0d9488” },
+enum: { bg: “#2e2e1a”, fg: “#facc15”, border: “#ca8a04” },
+};
+
+const CATEGORY_LABELS = {
+structure: { label: “Structure”, color: “#3b82f6” },
+behavior: { label: “Behavior”, color: “#38bdf8” },
+requirement: { label: “Requirements”, color: “#fb7185” },
+interface: { label: “Interfaces”, color: “#a78bfa” },
+property: { label: “Properties”, color: “#fbbf24” },
+relationship: { label: “Relationships”, color: “#f472b6” },
+};
+
+// — Components —
+
+function TypeBadge({ type }) {
+const c = TYPE_COLORS[type] || TYPE_COLORS.part;
+return (
+<span style={{
+display: “inline-block”, fontSize: 10, fontWeight: 600, letterSpacing: “0.05em”,
+padding: “2px 8px”, borderRadius: 4, background: c.bg, color: c.fg,
+border: `1px solid ${c.border}`, textTransform: “uppercase”, fontFamily: “‘JetBrains Mono’, monospace”,
+}}>
+{type.replace(”_”, “ “)}
+</span>
+);
+}
+
+function ElementRow({ el, onSelect, selected }) {
+return (
+<button
+onClick={() => onSelect(el)}
+style={{
+display: “flex”, alignItems: “center”, gap: 10, width: “100%”,
+padding: “10px 14px”, background: selected ? “#1e293b” : “transparent”,
+border: “none”, borderBottom: “1px solid #1e293b”, cursor: “pointer”,
+textAlign: “left”, transition: “background 0.15s”,
+borderLeft: selected ? “3px solid #3b82f6” : “3px solid transparent”,
+}}
+onMouseEnter={e => { if (!selected) e.currentTarget.style.background = “#0f172a”; }}
+onMouseLeave={e => { if (!selected) e.currentTarget.style.background = “transparent”; }}
+>
+<div style={{ flex: 1, minWidth: 0 }}>
+<div style={{ color: “#e2e8f0”, fontFamily: “‘JetBrains Mono’, monospace”, fontSize: 13, fontWeight: 500 }}>
+{el.name}
+</div>
+{el.parent && (
+<div style={{ color: “#475569”, fontSize: 11, marginTop: 2, fontFamily: “‘JetBrains Mono’, monospace” }}>
+← {el.parent}
+</div>
+)}
+</div>
+<TypeBadge type={el.type} />
+</button>
+);
+}
+
+function DiagramView({ diagramType, highlight, onNodeTap }) {
+const [zoom, setZoom] = useState(0.85);
+const [pan, setPan] = useState({ x: 0, y: 0 });
+const [dragging, setDragging] = useState(false);
+const lastTouch = useRef(null);
+
+const nodes = DIAGRAM_LAYOUTS[diagramType] || [];
+const edges = DIAGRAM_EDGES[diagramType] || [];
+
+const getCenter = (node) => ({ x: node.x + node.w / 2, y: node.y + node.h / 2 });
+
+const handleTouchStart = (e) => {
+if (e.touches.length === 1) {
+setDragging(true);
+lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+}
+};
+const handleTouchMove = (e) => {
+if (dragging && e.touches.length === 1) {
+const dx = e.touches[0].clientX - lastTouch.current.x;
+const dy = e.touches[0].clientY - lastTouch.current.y;
+setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+lastTouch.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+}
+};
+const handleTouchEnd = () => setDragging(false);
+
+return (
+<div style={{ width: “100%”, height: “100%”, position: “relative”, overflow: “hidden”, background: “#020617” }}>
+{/* Grid background */}
+<div style={{
+position: “absolute”, inset: 0, opacity: 0.15,
+backgroundImage: “radial-gradient(circle, #334155 1px, transparent 1px)”,
+backgroundSize: “20px 20px”,
+}} />
+{/* Zoom controls */}
+<div style={{
+position: “absolute”, top: 12, right: 12, display: “flex”, flexDirection: “column”,
+gap: 4, zIndex: 10,
+}}>
+<button onClick={() => setZoom(z => Math.min(z + 0.15, 2))}
+style={{ width: 34, height: 34, borderRadius: 8, border: “1px solid #1e293b”, background: “#0f172a”, color: “#94a3b8”, cursor: “pointer”, display: “flex”, alignItems: “center”, justifyContent: “center” }}>
+{Icons.zoomIn}
+</button>
+<button onClick={() => setZoom(z => Math.max(z - 0.15, 0.3))}
+style={{ width: 34, height: 34, borderRadius: 8, border: “1px solid #1e293b”, background: “#0f172a”, color: “#94a3b8”, cursor: “pointer”, display: “flex”, alignItems: “center”, justifyContent: “center” }}>
+{Icons.zoomOut}
+</button>
+<button onClick={() => { setZoom(0.85); setPan({ x: 0, y: 0 }); }}
+style={{ width: 34, height: 34, borderRadius: 8, border: “1px solid #1e293b”, background: “#0f172a”, color: “#94a3b8”, cursor: “pointer”, display: “flex”, alignItems: “center”, justifyContent: “center”, fontSize: 11, fontWeight: 700 }}>
+FIT
+</button>
+</div>
+{/* Diagram type label */}
+<div style={{
+position: “absolute”, top: 12, left: 12, fontSize: 11, fontWeight: 700, letterSpacing: “0.1em”,
+color: “#475569”, textTransform: “uppercase”, fontFamily: “‘JetBrains Mono’, monospace”, zIndex: 10,
+background: “#0f172acc”, padding: “4px 10px”, borderRadius: 6, border: “1px solid #1e293b”,
+}}>
+{diagramType === “bdd” ? “Block Definition Diagram” : “State Machine Diagram”}
+</div>
+{/* SVG Canvas */}
+<svg
+width=“100%” height=“100%”
+onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}
+onMouseDown={(e) => { setDragging(true); lastTouch.current = { x: e.clientX, y: e.clientY }; }}
+onMouseMove={(e) => {
+if (dragging) {
+const dx = e.clientX - lastTouch.current.x;
+const dy = e.clientY - lastTouch.current.y;
+setPan(p => ({ x: p.x + dx, y: p.y + dy }));
+lastTouch.current = { x: e.clientX, y: e.clientY };
+}
+}}
+onMouseUp={() => setDragging(false)}
+onMouseLeave={() => setDragging(false)}
+style={{ cursor: dragging ? “grabbing” : “grab” }}
+>
+<g transform={`translate(${pan.x}, ${pan.y}) scale(${zoom})`}>
+<defs>
+<marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+<polygon points="0 0, 8 3, 0 6" fill="#475569" />
+</marker>
+<filter id="glow">
+<feGaussianBlur stdDeviation="3" result="blur" />
+<feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+</filter>
+</defs>
+{/* Edges */}
+{edges.map((edge, i) => {
+const fromNode = nodes.find(n => n.id === edge.from);
+const toNode = nodes.find(n => n.id === edge.to);
+if (!fromNode || !toNode) return null;
+const fc = getCenter(fromNode);
+const tc = getCenter(toNode);
+const isHighlighted = highlight === edge.from || highlight === edge.to;
+return (
+<g key={i}>
+<line x1={fc.x} y1={fc.y} x2={tc.x} y2={tc.y}
+stroke={isHighlighted ? “#60a5fa” : “#334155”} strokeWidth={isHighlighted ? 2 : 1.5}
+markerEnd=“url(#arrowhead)” opacity={highlight && !isHighlighted ? 0.2 : 1}
+/>
+<text x={(fc.x + tc.x) / 2} y={(fc.y + tc.y) / 2 - 6}
+fill={isHighlighted ? “#93c5fd” : “#475569”} fontSize=“9”
+fontFamily=”‘JetBrains Mono’, monospace” textAnchor=“middle”
+opacity={highlight && !isHighlighted ? 0.2 : 1}>
+{edge.label}
+</text>
+</g>
+);
+})}
+{/* Nodes */}
+{nodes.map((node) => {
+const isHighlighted = highlight === node.id;
+const isState = node.type === “state”;
+return (
+<g key={node.id} onClick={() => onNodeTap(node.id)}
+style={{ cursor: “pointer” }}
+opacity={highlight && !isHighlighted ? 0.25 : 1}
+filter={isHighlighted ? “url(#glow)” : undefined}>
+<rect x={node.x} y={node.y} width={node.w} height={node.h}
+rx={isState ? node.h / 2 : 6} ry={isState ? node.h / 2 : 6}
+fill={isHighlighted ? node.color + “33” : “#0f172a”}
+stroke={isHighlighted ? node.color : node.color + “88”} strokeWidth={isHighlighted ? 2.5 : 1.5}
+/>
+{/* Header bar for blocks */}
+{!isState && (
+<rect x={node.x} y={node.y} width={node.w} height={4}
+rx={2} fill={node.color} opacity={0.8}
+/>
+)}
+<text x={node.x + node.w / 2} y={node.y + node.h / 2 + (isState ? 1 : 3)}
+fill={isHighlighted ? “#f1f5f9” : “#cbd5e1”} fontSize={isState ? 12 : 13}
+fontWeight={600} fontFamily=”‘JetBrains Mono’, monospace”
+textAnchor=“middle” dominantBaseline=“middle”>
+{node.id}
+</text>
+{!isState && (
+<text x={node.x + node.w / 2} y={node.y + 16}
+fill={node.color} fontSize=“8” fontWeight={700}
+fontFamily=”‘JetBrains Mono’, monospace” textAnchor=“middle”
+letterSpacing=“0.08em”>
+«block»
+</text>
+)}
+</g>
+);
+})}
+</g>
+</svg>
+</div>
+);
+}
+
+function FilterPanel({ categories, activeCategories, onToggle, searchTerm, onSearch }) {
+return (
+<div style={{ padding: “12px 14px”, background: “#0a0f1a”, borderBottom: “1px solid #1e293b” }}>
+{/* Search */}
+<div style={{
+display: “flex”, alignItems: “center”, gap: 8, background: “#0f172a”,
+borderRadius: 8, padding: “8px 12px”, border: “1px solid #1e293b”, marginBottom: 10,
+}}>
+<span style={{ color: “#475569” }}>{Icons.search}</span>
+<input
+value={searchTerm} onChange={e => onSearch(e.target.value)}
+placeholder=“Search elements…”
+style={{
+flex: 1, background: “transparent”, border: “none”, outline: “none”,
+color: “#e2e8f0”, fontSize: 13, fontFamily: “‘JetBrains Mono’, monospace”,
+}}
+/>
+</div>
+{/* Category chips */}
+<div style={{ display: “flex”, flexWrap: “wrap”, gap: 6 }}>
+{Object.entries(categories).map(([key, cat]) => {
+const active = activeCategories.includes(key);
+return (
+<button key={key} onClick={() => onToggle(key)}
+style={{
+padding: “4px 10px”, borderRadius: 20, fontSize: 11, fontWeight: 600,
+fontFamily: “‘JetBrains Mono’, monospace”, cursor: “pointer”, transition: “all 0.15s”,
+border: `1.5px solid ${active ? cat.color : "#1e293b"}`,
+background: active ? cat.color + “22” : “transparent”,
+color: active ? cat.color : “#475569”,
+}}>
+{cat.label}
+</button>
+);
+})}
+</div>
+</div>
+);
+}
+
+function EditorView({ source, onChange }) {
+const lines = source.split(”\n”);
+return (
+<div style={{ height: “100%”, overflow: “auto”, background: “#020617”, padding: “12px 0” }}>
+<div style={{ fontFamily: “‘JetBrains Mono’, monospace”, fontSize: 12, lineHeight: “22px” }}>
+{lines.map((line, i) => {
+// Simple syntax highlighting
+let colored = line;
+const keywords = [“part”, “def”, “attribute”, “port”, “connection”, “connect”, “state”, “transition”, “first”, “then”, “requirement”, “flow”, “enum”, “package”, “to”];
+let spans = [];
+const trimmed = line.trimStart();
+const indent = line.length - trimmed.length;
+
+```
+      if (trimmed.startsWith("doc") || trimmed.startsWith("//")) {
+        spans.push(<span key="c" style={{ color: "#4a6741" }}>{line}</span>);
+      } else {
+        const tokens = trimmed.split(/(\s+|[{};:\[\]=])/);
+        let idx = 0;
+        spans.push(<span key="indent" style={{ color: "transparent" }}>{" ".repeat(indent)}</span>);
+        tokens.forEach((tok, j) => {
+          if (keywords.includes(tok)) {
+            spans.push(<span key={j} style={{ color: "#c084fc" }}>{tok}</span>);
+          } else if (/^\d+$/.test(tok)) {
+            spans.push(<span key={j} style={{ color: "#fbbf24" }}>{tok}</span>);
+          } else if (tok === "{" || tok === "}" || tok === ";" || tok === ":" || tok === "=" || tok === "[" || tok === "]") {
+            spans.push(<span key={j} style={{ color: "#475569" }}>{tok}</span>);
+          } else if (/^[A-Z]/.test(tok)) {
+            spans.push(<span key={j} style={{ color: "#38bdf8" }}>{tok}</span>);
+          } else {
+            spans.push(<span key={j} style={{ color: "#94a3b8" }}>{tok}</span>);
+          }
+        });
+      }
+
+      return (
+        <div key={i} style={{ display: "flex", minHeight: 22 }}>
+          <span style={{
+            display: "inline-block", width: 44, textAlign: "right", paddingRight: 12,
+            color: "#334155", fontSize: 11, userSelect: "none", flexShrink: 0,
+          }}>
+            {i + 1}
+          </span>
+          <div style={{ flex: 1, whiteSpace: "pre" }}>
+            {spans}
+          </div>
+        </div>
+      );
+    })}
+  </div>
+</div>
+```
+
+);
+}
+
+// — Main App —
+export default function SysMLApp() {
+const [tab, setTab] = useState(“browser”);
+const [elements] = useState(() => parseSysML(SYSML_SOURCE));
+const [selectedEl, setSelectedEl] = useState(null);
+const [searchTerm, setSearchTerm] = useState(””);
+const [activeCategories, setActiveCategories] = useState(Object.keys(CATEGORY_LABELS));
+const [diagramType, setDiagramType] = useState(“bdd”);
+const [highlightNode, setHighlightNode] = useState(null);
+const [source, setSource] = useState(SYSML_SOURCE);
+const [showDetail, setShowDetail] = useState(false);
+
+const toggleCategory = (cat) => {
+setActiveCategories(prev =>
+prev.includes(cat) ? prev.filter(c => c !== cat) : […prev, cat]
+);
+};
+
+const filteredElements = elements.filter(el => {
+if (el.type === “package”) return false;
+const matchesSearch = !searchTerm || el.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+el.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
+(el.parent || “”).toLowerCase().includes(searchTerm.toLowerCase());
+const matchesCategory = !el.category || activeCategories.includes(el.category);
+return matchesSearch && matchesCategory;
+});
+
+const handleSelect = (el) => {
+setSelectedEl(el);
+setShowDetail(true);
+};
+
+const tabs = [
+{ id: “browser”, icon: Icons.file, label: “Browse” },
+{ id: “diagram”, icon: Icons.diagram, label: “Diagram” },
+{ id: “editor”, icon: Icons.edit, label: “Editor” },
+];
+
+return (
+<div style={{
+width: “100%”, maxWidth: 430, margin: “0 auto”, height: “100vh”, minHeight: 700,
+display: “flex”, flexDirection: “column”, background: “#020617”,
+fontFamily: “‘Inter’, -apple-system, sans-serif”, color: “#e2e8f0”,
+border: “1px solid #1e293b”, borderRadius: 0, overflow: “hidden”,
+position: “relative”,
+}}>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+```
+  {/* Status Bar */}
+  <div style={{
+    display: "flex", justifyContent: "space-between", alignItems: "center",
+    padding: "10px 16px 6px", fontSize: 12, fontWeight: 600, color: "#94a3b8",
+  }}>
+    <span>9:41</span>
+    <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <div style={{ width: 16, height: 10, border: "1.5px solid #94a3b8", borderRadius: 2.5, position: "relative" }}>
+        <div style={{ position: "absolute", right: 2, top: 2, bottom: 2, left: 2, background: "#4ade80", borderRadius: 1 }} />
+      </div>
+    </div>
+  </div>
+
+  {/* Header */}
+  <div style={{
+    padding: "8px 16px 12px", borderBottom: "1px solid #1e293b",
+    background: "linear-gradient(180deg, #0a0f1a 0%, #020617 100%)",
+  }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div>
+        <h1 style={{
+          margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em",
+          background: "linear-gradient(135deg, #e2e8f0 0%, #60a5fa 100%)",
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+        }}>
+          SysML Studio
+        </h1>
+        <div style={{
+          fontSize: 11, color: "#475569", fontFamily: "'JetBrains Mono', monospace",
+          marginTop: 2,
+        }}>
+          VehicleSystem.sysml — v2.0
+        </div>
+      </div>
+      <div style={{
+        display: "flex", alignItems: "center", gap: 4,
+        background: "#0f172a", borderRadius: 8, padding: "4px 10px",
+        border: "1px solid #1e293b",
+      }}>
+        <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#4ade80" }} />
+        <span style={{ fontSize: 10, color: "#4ade80", fontWeight: 600, fontFamily: "'JetBrains Mono', monospace" }}>
+          PARSED
+        </span>
+      </div>
+    </div>
+
+    {/* Stats bar */}
+    <div style={{
+      display: "flex", gap: 12, marginTop: 10,
+    }}>
+      {[
+        { label: "Elements", value: elements.length, color: "#3b82f6" },
+        { label: "Blocks", value: elements.filter(e => e.type === "part_def").length, color: "#10b981" },
+        { label: "States", value: elements.filter(e => e.type === "state").length, color: "#f59e0b" },
+        { label: "Reqs", value: elements.filter(e => e.type === "requirement").length, color: "#ef4444" },
+      ].map(s => (
+        <div key={s.label} style={{ flex: 1, textAlign: "center" }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: s.color, fontFamily: "'JetBrains Mono', monospace" }}>
+            {s.value}
+          </div>
+          <div style={{ fontSize: 9, color: "#475569", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 600 }}>
+            {s.label}
+          </div>
+        </div>
+      ))}
+    </div>
+  </div>
+
+  {/* Content area */}
+  <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+    {tab === "browser" && (
+      <>
+        <FilterPanel
+          categories={CATEGORY_LABELS}
+          activeCategories={activeCategories}
+          onToggle={toggleCategory}
+          searchTerm={searchTerm}
+          onSearch={setSearchTerm}
+        />
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {filteredElements.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#475569", fontSize: 13 }}>
+              No elements match filters
+            </div>
+          ) : (
+            filteredElements.map(el => (
+              <ElementRow key={el.id} el={el} onSelect={handleSelect}
+                selected={selectedEl?.id === el.id} />
+            ))
+          )}
+        </div>
+        {/* Element count */}
+        <div style={{
+          padding: "6px 14px", borderTop: "1px solid #1e293b", fontSize: 11,
+          color: "#475569", fontFamily: "'JetBrains Mono', monospace", textAlign: "center",
+        }}>
+          {filteredElements.length} of {elements.filter(e => e.type !== "package").length} elements
+        </div>
+      </>
+    )}
+
+    {tab === "diagram" && (
+      <>
+        {/* Diagram type toggle */}
+        <div style={{
+          display: "flex", gap: 6, padding: "10px 14px", background: "#0a0f1a",
+          borderBottom: "1px solid #1e293b",
+        }}>
+          {[
+            { id: "bdd", label: "Block Definition" },
+            { id: "state", label: "State Machine" },
+          ].map(d => (
+            <button key={d.id} onClick={() => { setDiagramType(d.id); setHighlightNode(null); }}
+              style={{
+                flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                fontFamily: "'JetBrains Mono', monospace", cursor: "pointer",
+                border: diagramType === d.id ? "1.5px solid #3b82f6" : "1.5px solid #1e293b",
+                background: diagramType === d.id ? "#3b82f622" : "#0f172a",
+                color: diagramType === d.id ? "#60a5fa" : "#64748b",
+                transition: "all 0.15s",
+              }}>
+              {d.label}
+            </button>
+          ))}
+        </div>
+        <div style={{ flex: 1 }}>
+          <DiagramView diagramType={diagramType} highlight={highlightNode}
+            onNodeTap={(id) => setHighlightNode(prev => prev === id ? null : id)} />
+        </div>
+        {highlightNode && (
+          <div style={{
+            padding: "10px 14px", background: "#0f172a", borderTop: "1.5px solid #3b82f6",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <div>
+              <span style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 14, fontWeight: 600, color: "#e2e8f0" }}>
+                {highlightNode}
+              </span>
+              <span style={{ fontSize: 11, color: "#475569", marginLeft: 8 }}>
+                {(DIAGRAM_EDGES[diagramType] || []).filter(e => e.from === highlightNode || e.to === highlightNode).length} connections
+              </span>
+            </div>
+            <button onClick={() => setHighlightNode(null)}
+              style={{ background: "#1e293b", border: "none", borderRadius: 6, color: "#94a3b8", padding: "4px 10px", fontSize: 11, cursor: "pointer" }}>
+              Clear
+            </button>
+          </div>
+        )}
+      </>
+    )}
+
+    {tab === "editor" && (
+      <EditorView source={source} onChange={setSource} />
+    )}
+  </div>
+
+  {/* Detail sheet */}
+  {showDetail && selectedEl && (
+    <div style={{
+      position: "absolute", bottom: 64, left: 0, right: 0,
+      background: "#0f172a", borderTop: "2px solid #3b82f6",
+      borderRadius: "16px 16px 0 0", padding: "16px",
+      boxShadow: "0 -8px 30px rgba(0,0,0,0.5)",
+      zIndex: 20, maxHeight: "40%", overflow: "auto",
+      animation: "slideUp 0.25s ease-out",
+    }}>
+      <style>{`@keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }`}</style>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginBottom: 12 }}>
+        <div>
+          <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>
+            {selectedEl.name}
+          </div>
+          <div style={{ marginTop: 6 }}><TypeBadge type={selectedEl.type} /></div>
+        </div>
+        <button onClick={() => setShowDetail(false)}
+          style={{ background: "#1e293b", border: "none", borderRadius: 8, color: "#94a3b8", padding: "6px 12px", fontSize: 12, cursor: "pointer", fontWeight: 600 }}>
+          ✕
+        </button>
+      </div>
+      <div style={{ display: "grid", gap: 8, fontSize: 12 }}>
+        {[
+          { label: "Parent", value: selectedEl.parent || "—" },
+          { label: "Category", value: selectedEl.category || "—" },
+          ...(selectedEl.typeName ? [{ label: "Type", value: selectedEl.typeName }] : []),
+        ].map(row => (
+          <div key={row.label} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid #1e293b" }}>
+            <span style={{ color: "#64748b", fontFamily: "'JetBrains Mono', monospace" }}>{row.label}</span>
+            <span style={{ color: "#e2e8f0", fontFamily: "'JetBrains Mono', monospace", fontWeight: 500 }}>{row.value}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <button onClick={() => { setTab("diagram"); setHighlightNode(selectedEl.name); setShowDetail(false); }}
+          style={{
+            flex: 1, padding: "10px", borderRadius: 8, border: "1.5px solid #3b82f6",
+            background: "#3b82f622", color: "#60a5fa", fontSize: 12, fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace", cursor: "pointer",
+          }}>
+          View in Diagram →
+        </button>
+        <button onClick={() => { setTab("editor"); setShowDetail(false); }}
+          style={{
+            flex: 1, padding: "10px", borderRadius: 8, border: "1.5px solid #1e293b",
+            background: "#0f172a", color: "#94a3b8", fontSize: 12, fontWeight: 600,
+            fontFamily: "'JetBrains Mono', monospace", cursor: "pointer",
+          }}>
+          Edit Source
+        </button>
+      </div>
+    </div>
+  )}
+
+  {/* Tab Bar */}
+  <div style={{
+    display: "flex", borderTop: "1px solid #1e293b", background: "#0a0f1a",
+    paddingBottom: "env(safe-area-inset-bottom, 8px)", position: "relative", zIndex: 30,
+  }}>
+    {tabs.map(t => (
+      <button key={t.id} onClick={() => { setTab(t.id); setShowDetail(false); }}
+        style={{
+          flex: 1, display: "flex", flexDirection: "column", alignItems: "center",
+          gap: 3, padding: "10px 0 6px", border: "none", background: "transparent",
+          cursor: "pointer", color: tab === t.id ? "#60a5fa" : "#475569",
+          transition: "color 0.15s",
+        }}>
+        <div style={{ transition: "transform 0.15s", transform: tab === t.id ? "scale(1.15)" : "scale(1)" }}>
+          {t.icon}
+        </div>
+        <span style={{
+          fontSize: 10, fontWeight: 600, letterSpacing: "0.03em",
+          fontFamily: "'JetBrains Mono', monospace",
+        }}>
+          {t.label}
+        </span>
+        {tab === t.id && (
+          <div style={{
+            position: "absolute", top: 0, width: 32, height: 2,
+            background: "#3b82f6", borderRadius: "0 0 2px 2px",
+          }} />
+        )}
+      </button>
+    ))}
+  </div>
+</div>
+```
+
+);
+}
