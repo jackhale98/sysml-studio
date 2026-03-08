@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  # Always runs — validates the build compiles for iOS
+  # Always runs — validates the build compiles for iOS simulator
   build-simulator:
     runs-on: macos-14
     name: iOS Simulator (debug)
@@ -63,7 +63,7 @@ jobs:
           path: src-tauri/gen/apple/build/
           retention-days: 14
 
-  # Only runs when signing secrets are configured — produces App Store .ipa
+  # Only runs on tags when signing secrets are configured — produces App Store .ipa
   build-release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
@@ -71,35 +71,52 @@ jobs:
     environment: ios-release
 
     steps:
+      - name: Check for signing secrets
+        env:
+          HAS_CERT: ${{ secrets.APPLE_CERTIFICATE }}
+        run: |
+          if [ -z "$HAS_CERT" ]; then
+            echo "::warning::Apple signing secrets not configured — skipping iOS release build"
+            echo "SKIP_BUILD=true" >> $GITHUB_ENV
+          fi
+
       - uses: actions/checkout@v4
+        if: env.SKIP_BUILD != 'true'
 
       - name: Install Rust stable
+        if: env.SKIP_BUILD != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-ios
 
       - name: Rust cache
+        if: env.SKIP_BUILD != 'true'
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
 
       - name: Setup Node.js
+        if: env.SKIP_BUILD != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
 
       - name: Install frontend dependencies
+        if: env.SKIP_BUILD != 'true'
         run: npm ci
 
       - name: Initialize iOS project
+        if: env.SKIP_BUILD != 'true'
         run: npx tauri ios init
 
       - name: Build frontend
+        if: env.SKIP_BUILD != 'true'
         run: npm run build
 
       # Install the Apple certificate and provisioning profile
       - name: Install Apple certificate
+        if: env.SKIP_BUILD != 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -121,6 +138,7 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Install provisioning profile
+        if: env.SKIP_BUILD != 'true'
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
@@ -131,6 +149,7 @@ jobs:
 
       # Archive and export .ipa
       - name: Archive iOS app
+        if: env.SKIP_BUILD != 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
@@ -145,6 +164,7 @@ jobs:
             archive
 
       - name: Create ExportOptions.plist
+        if: env.SKIP_BUILD != 'true'
         run: |
           cat > $RUNNER_TEMP/ExportOptions.plist << 'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
@@ -165,6 +185,7 @@ jobs:
           PLIST
 
       - name: Export .ipa
+        if: env.SKIP_BUILD != 'true'
         run: |
           xcodebuild -exportArchive \
             -archivePath $RUNNER_TEMP/SysMLStudio.xcarchive \
@@ -172,6 +193,7 @@ jobs:
             -exportPath $RUNNER_TEMP/export
 
       - name: Rename IPA for release
+        if: env.SKIP_BUILD != 'true'
         run: |
           IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
           if [ -n "$IPA" ]; then
@@ -179,6 +201,7 @@ jobs:
           fi
 
       - name: Upload .ipa artifact
+        if: env.SKIP_BUILD != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-ipa
@@ -186,6 +209,7 @@ jobs:
           retention-days: 90
 
       - name: Upload IPA to GitHub Release
+        if: env.SKIP_BUILD != 'true'
         uses: softprops/action-gh-release@v2
         with:
           draft: true
@@ -193,5 +217,5 @@ jobs:
 
       # Clean up keychain
       - name: Clean up keychain
-        if: always()
+        if: always() && env.SKIP_BUILD != 'true'
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db

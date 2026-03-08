@@ -653,43 +653,48 @@ export function browserReqLayout(model: SysmlModel): DiagramLayout {
   for (const sv of satisfyVerify) {
     const k = typeof sv.kind === "string" ? sv.kind : "";
     const reqName = sv.type_ref; // the requirement being satisfied/verified
-    const implName = sv.name; // the satisfying/verifying element
     if (!reqName) continue;
+
+    // The implementing element is the parent of the satisfy/verify statement
+    // e.g. "part def VehicleDesign { satisfy MaxSpeed; }" → VehicleDesign satisfies MaxSpeed
+    const implEl = sv.name
+      ? model.elements.find(e => e.name === sv.name)
+      : (sv.parent_id !== null ? model.elements.find(e => e.id === sv.parent_id) : null);
+    const implName = implEl?.name;
+    if (!implName) continue;
 
     const reqNode = nodes.find(n => n.label === reqName);
     if (!reqNode) continue;
 
-    // Find or create a node for the implementing element
+    // Find or create a node for the implementing element (placed right of reqs)
     let implNode = nodes.find(n => n.label === implName);
-    if (!implNode && implName) {
-      const implEl = model.elements.find(e => e.name === implName);
-      if (implEl) {
-        const w = Math.max(textWidth(implName, 12), 140);
-        const maxY = nodes.length > 0 ? Math.max(...nodes.map(n => n.y + n.height)) : 0;
-        const implX = reqNode.x + reqNode.width + GAP_X * 2;
-        const implY = reqNode.y;
-        nodes.push({
-          element_id: implEl.id, label: implName,
-          kind: "block", x: implX, y: implY, width: w, height: H,
-          color: "#3b82f6", children: [],
-        });
-        implNode = nodes[nodes.length - 1];
-      }
+    if (!implNode) {
+      const w = Math.max(textWidth(implName, 12), 140);
+      // Stack impl nodes vertically: find how many block nodes already exist at this x column
+      const implX = reqNode.x + reqNode.width + GAP_X * 2;
+      const existingBlocks = nodes.filter(n => n.kind === "block");
+      const implY = existingBlocks.length > 0
+        ? Math.max(...existingBlocks.map(n => n.y + n.height)) + 30
+        : reqNode.y;
+      nodes.push({
+        element_id: implEl!.id, label: implName,
+        kind: "block", x: implX, y: implY, width: w, height: H,
+        color: "#3b82f6", children: [],
+      });
+      implNode = nodes[nodes.length - 1];
     }
 
-    if (implNode) {
-      const edgeType = k === "satisfy_statement" ? "satisfy" : "verify";
-      edges.push({
-        from_id: reqNode.element_id, to_id: implNode.element_id,
-        label: edgeType, edge_type: edgeType,
-        points: [
-          [reqNode.x + reqNode.width, reqNode.y + H / 2],
-          [reqNode.x + reqNode.width + GAP_X * 0.4, reqNode.y + H / 2],
-          [implNode.x - GAP_X * 0.4, implNode.y + H / 2],
-          [implNode.x, implNode.y + H / 2],
-        ],
-      });
-    }
+    const edgeType = k === "satisfy_statement" ? "satisfy" : "verify";
+    edges.push({
+      from_id: implNode.element_id, to_id: reqNode.element_id,
+      label: edgeType, edge_type: edgeType,
+      points: [
+        [implNode.x, implNode.y + H / 2],
+        [implNode.x - GAP_X * 0.4, implNode.y + H / 2],
+        [reqNode.x + reqNode.width + GAP_X * 0.4, reqNode.y + H / 2],
+        [reqNode.x + reqNode.width, reqNode.y + H / 2],
+      ],
+    });
   }
 
   const allX = nodes.map(n => n.x + n.width);
