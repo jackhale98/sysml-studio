@@ -118,12 +118,9 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           PBXPROJ="src-tauri/gen/apple/sysml-studio.xcodeproj/project.pbxproj"
-          # Set development team on all empty DEVELOPMENT_TEAM entries
           sed -i '' "s/DEVELOPMENT_TEAM = \"\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/g" "$PBXPROJ"
-          # If no DEVELOPMENT_TEAM entries exist, add to all buildSettings blocks
-          if ! grep -q "DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"" "$PBXPROJ"; then
-            sed -i '' "/buildSettings = {/a\\
-\\t\\t\\t\\tDEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\";" "$PBXPROJ"
+          if ! grep -q "DEVELOPMENT_TEAM" "$PBXPROJ"; then
+            sed -i '' "s/buildSettings = {/buildSettings = { DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\";/g" "$PBXPROJ"
           fi
           echo "Patched DEVELOPMENT_TEAM in Xcode project"
 
