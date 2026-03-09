@@ -83,7 +83,7 @@ export function ElementDetail() {
 
   return (
     <div style={{
-      position: "absolute", bottom: 64, left: 0, right: 0,
+      position: "absolute", bottom: "calc(env(safe-area-inset-bottom, 8px) + 56px)", left: 0, right: 0,
       background: "var(--bg-tertiary)", borderTop: "2px solid var(--accent)",
       borderRadius: "16px 16px 0 0", padding: 16,
       boxShadow: "0 -8px 30px rgba(0,0,0,0.5)",

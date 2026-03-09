@@ -55,7 +55,7 @@ export function AppShell() {
             }
           }}
           style={{
-            position: "absolute", bottom: 76, right: 16, width: 48, height: 48,
+            position: "absolute", bottom: "calc(env(safe-area-inset-bottom, 8px) + 68px)", right: 16, width: 48, height: 48,
             borderRadius: "50%", border: "none", background: "var(--accent)",
             color: "#fff", fontSize: 24, fontWeight: 700, cursor: "pointer",
             boxShadow: "0 4px 16px rgba(59,130,246,0.4)",

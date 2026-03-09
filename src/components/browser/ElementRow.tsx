@@ -16,8 +16,8 @@ interface ElementRowProps {
 }
 
 const ACTION_W = 64;
-const DEAD_ZONE = 12;
-const SNAP_THRESHOLD = 32;
+const DEAD_ZONE = 18;
+const SNAP_THRESHOLD = 48;
 const INDENT_PX = 16;
 
 // Shared tracker: only one row swiped open at a time

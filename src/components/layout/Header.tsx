@@ -72,7 +72,8 @@ export function Header() {
 
   return (
     <div style={{
-      padding: "8px 12px 10px",
+      paddingTop: "calc(env(safe-area-inset-top, 0px) + 8px)",
+      paddingLeft: 12, paddingRight: 12, paddingBottom: 10,
       borderBottom: "1px solid var(--border)",
       background: "linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%)",
     }}>
