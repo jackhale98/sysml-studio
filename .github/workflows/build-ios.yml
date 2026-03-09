@@ -8,11 +8,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # Tauri CLI 2.10+ generates Xcode project format 77 (needs Xcode 16.3+).
-  # Pin to 2.5.0 for ios init to get format 56 (compatible with Xcode 15/16).
-  TAURI_CLI_INIT_VERSION: "2.5.0"
-
 jobs:
   # Always runs — validates the build compiles for iOS simulator
   build-simulator:
@@ -45,7 +40,7 @@ jobs:
         run: npm ci
 
       - name: Initialize iOS project
-        run: npx @tauri-apps/cli@${{ env.TAURI_CLI_INIT_VERSION }} ios init
+        run: npx tauri ios init
 
       - name: Build frontend
         run: npm run build
@@ -115,7 +110,7 @@ jobs:
         run: npm ci
 
       - name: Initialize iOS project
-        run: npx @tauri-apps/cli@${{ env.TAURI_CLI_INIT_VERSION }} ios init
+        run: npx tauri ios init
 
       - name: Build frontend
         run: npm run build
