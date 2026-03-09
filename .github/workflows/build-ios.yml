@@ -112,9 +112,6 @@ jobs:
       - name: Initialize iOS project
         run: npx tauri ios init
 
-      - name: Build frontend
-        run: npm run build
-
       # Install the Apple certificate and provisioning profile
       - name: Install Apple certificate
         env:
@@ -153,27 +150,14 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/${PP_UUID}.mobileprovision
 
-      # Archive and export .ipa
-      - name: Archive iOS app
+      # Build with Tauri CLI — handles Rust compilation, frontend bundling,
+      # and xcodebuild archive/export in one step
+      - name: Build iOS release
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PP_UUID: ${{ steps.profile.outputs.uuid }}
         run: |
-          cd src-tauri/gen/apple
-          xcodebuild \
-            -scheme "sysml-studio_iOS" \
-            -sdk iphoneos \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath $RUNNER_TEMP/SysMLStudio.xcarchive \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PP_UUID" \
-            CODE_SIGN_STYLE="Manual" \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            archive
-
-      - name: Create ExportOptions.plist
-        run: |
+          # Create ExportOptions.plist for App Store Connect
           cat > $RUNNER_TEMP/ExportOptions.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -185,28 +169,52 @@ jobs:
             <key>signingStyle</key>
             <string>manual</string>
             <key>teamID</key>
-            <string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <string>${APPLE_TEAM_ID}</string>
             <key>provisioningProfiles</key>
             <dict>
               <key>com.sysmlstudio.studio</key>
-              <string>${{ steps.profile.outputs.uuid }}</string>
+              <string>${PP_UUID}</string>
             </dict>
           </dict>
           </plist>
           EOF
 
-      - name: Export .ipa
-        run: |
-          xcodebuild -exportArchive \
-            -archivePath $RUNNER_TEMP/SysMLStudio.xcarchive \
-            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
-            -exportPath $RUNNER_TEMP/export
+          npx tauri ios build \
+            --export-method app-store-connect \
+            -- \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PP_UUID" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="Apple Distribution"
 
-      - name: Rename IPA for release
+      - name: Find and rename IPA
         run: |
-          IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
-          if [ -n "$IPA" ]; then
-            cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
+          IPA=$(find src-tauri/gen/apple -name "*.ipa" -o -name "*.xcarchive" | head -5)
+          echo "Found artifacts:"
+          echo "$IPA"
+
+          # Tauri ios build outputs the IPA in the gen/apple directory
+          FOUND_IPA=$(find src-tauri/gen/apple -name "*.ipa" | head -1)
+          if [ -z "$FOUND_IPA" ]; then
+            # Try exporting from the archive if tauri didn't produce an IPA directly
+            ARCHIVE=$(find ~/Library/Developer/Xcode/Archives $RUNNER_TEMP -name "*.xcarchive" 2>/dev/null | head -1)
+            if [ -n "$ARCHIVE" ]; then
+              echo "Found archive at $ARCHIVE, exporting IPA..."
+              xcodebuild -exportArchive \
+                -archivePath "$ARCHIVE" \
+                -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
+                -exportPath $RUNNER_TEMP/export
+              FOUND_IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
+            fi
+          fi
+
+          if [ -n "$FOUND_IPA" ]; then
+            mkdir -p $RUNNER_TEMP/export
+            cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
+            echo "IPA ready at $RUNNER_TEMP/export/sysml-studio-ios.ipa"
+          else
+            echo "::error::No IPA found after build"
+            exit 1
           fi
 
       # Upload to TestFlight via App Store Connect API
