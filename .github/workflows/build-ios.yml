@@ -112,6 +112,21 @@ jobs:
       - name: Initialize iOS project
         run: npx tauri ios init
 
+      # Patch Xcode project with signing settings before building
+      - name: Configure code signing
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          PBXPROJ="src-tauri/gen/apple/sysml-studio.xcodeproj/project.pbxproj"
+          # Set development team on all empty DEVELOPMENT_TEAM entries
+          sed -i '' "s/DEVELOPMENT_TEAM = \"\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/g" "$PBXPROJ"
+          # If no DEVELOPMENT_TEAM entries exist, add to all buildSettings blocks
+          if ! grep -q "DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"" "$PBXPROJ"; then
+            sed -i '' "/buildSettings = {/a\\
+\\t\\t\\t\\tDEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\";" "$PBXPROJ"
+          fi
+          echo "Patched DEVELOPMENT_TEAM in Xcode project"
+
       # Install the Apple certificate and provisioning profile
       - name: Install Apple certificate
         env:
@@ -153,11 +168,13 @@ jobs:
       # Build with Tauri CLI — handles Rust compilation, frontend bundling,
       # and xcodebuild archive/export in one step
       - name: Build iOS release
+        run: npx tauri ios build --export-method app-store-connect
+
+      - name: Create ExportOptions and export IPA
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PP_UUID: ${{ steps.profile.outputs.uuid }}
         run: |
-          # Create ExportOptions.plist for App Store Connect
           cat > $RUNNER_TEMP/ExportOptions.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -179,41 +196,33 @@ jobs:
           </plist>
           EOF
 
-          npx tauri ios build \
-            --export-method app-store-connect \
-            -- \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            PROVISIONING_PROFILE_SPECIFIER="$PP_UUID" \
-            CODE_SIGN_STYLE="Manual" \
-            CODE_SIGN_IDENTITY="Apple Distribution"
+          # Find the archive produced by tauri ios build
+          ARCHIVE=$(find ~/Library/Developer/Xcode/Archives src-tauri/gen/apple -name "*.xcarchive" 2>/dev/null | head -1)
 
-      - name: Find and rename IPA
-        run: |
-          IPA=$(find src-tauri/gen/apple -name "*.ipa" -o -name "*.xcarchive" | head -5)
-          echo "Found artifacts:"
-          echo "$IPA"
-
-          # Tauri ios build outputs the IPA in the gen/apple directory
-          FOUND_IPA=$(find src-tauri/gen/apple -name "*.ipa" | head -1)
-          if [ -z "$FOUND_IPA" ]; then
-            # Try exporting from the archive if tauri didn't produce an IPA directly
-            ARCHIVE=$(find ~/Library/Developer/Xcode/Archives $RUNNER_TEMP -name "*.xcarchive" 2>/dev/null | head -1)
-            if [ -n "$ARCHIVE" ]; then
-              echo "Found archive at $ARCHIVE, exporting IPA..."
-              xcodebuild -exportArchive \
-                -archivePath "$ARCHIVE" \
-                -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
-                -exportPath $RUNNER_TEMP/export
-              FOUND_IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
+          if [ -z "$ARCHIVE" ]; then
+            # tauri ios build may output IPA directly
+            FOUND_IPA=$(find src-tauri/gen/apple -name "*.ipa" | head -1)
+            if [ -n "$FOUND_IPA" ]; then
+              mkdir -p $RUNNER_TEMP/export
+              cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
+              echo "Found IPA directly at $FOUND_IPA"
+              exit 0
             fi
+            echo "::error::No archive or IPA found after build"
+            exit 1
           fi
 
-          if [ -n "$FOUND_IPA" ]; then
-            mkdir -p $RUNNER_TEMP/export
-            cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
-            echo "IPA ready at $RUNNER_TEMP/export/sysml-studio-ios.ipa"
+          echo "Exporting IPA from $ARCHIVE"
+          xcodebuild -exportArchive \
+            -archivePath "$ARCHIVE" \
+            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
+            -exportPath $RUNNER_TEMP/export
+
+          IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
+          if [ -n "$IPA" ]; then
+            cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
           else
-            echo "::error::No IPA found after build"
+            echo "::error::Export produced no IPA"
             exit 1
           fi
 
