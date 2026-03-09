@@ -138,18 +138,26 @@ jobs:
           security list-keychain -d user -s $KEYCHAIN_PATH
 
       - name: Install provisioning profile
+        id: profile
         env:
           APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
         run: |
           PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
           echo -n "$APPLE_PROVISIONING_PROFILE" | base64 --decode -o $PP_PATH
+
+          # Extract the UUID so Xcode can locate the profile
+          PP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< \
+            "$(/usr/bin/security cms -D -i $PP_PATH)")
+          echo "uuid=$PP_UUID" >> $GITHUB_OUTPUT
+
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/${PP_UUID}.mobileprovision
 
       # Archive and export .ipa
       - name: Archive iOS app
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PP_UUID: ${{ steps.profile.outputs.uuid }}
         run: |
           cd src-tauri/gen/apple
           xcodebuild \
@@ -159,11 +167,14 @@ jobs:
             -destination "generic/platform=iOS" \
             -archivePath $RUNNER_TEMP/SysMLStudio.xcarchive \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER="$PP_UUID" \
+            CODE_SIGN_STYLE="Manual" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
             archive
 
       - name: Create ExportOptions.plist
         run: |
-          cat > $RUNNER_TEMP/ExportOptions.plist << 'PLIST'
+          cat > $RUNNER_TEMP/ExportOptions.plist << EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
             "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -172,12 +183,17 @@ jobs:
             <key>method</key>
             <string>app-store-connect</string>
             <key>signingStyle</key>
-            <string>automatic</string>
+            <string>manual</string>
             <key>teamID</key>
             <string>${{ secrets.APPLE_TEAM_ID }}</string>
+            <key>provisioningProfiles</key>
+            <dict>
+              <key>com.sysmlstudio.studio</key>
+              <string>${{ steps.profile.outputs.uuid }}</string>
+            </dict>
           </dict>
           </plist>
-          PLIST
+          EOF
 
       - name: Export .ipa
         run: |
