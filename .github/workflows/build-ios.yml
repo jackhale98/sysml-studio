@@ -9,16 +9,12 @@ permissions:
   contents: write
 
 jobs:
-  # Always runs — validates the build compiles for iOS simulator
   build-simulator:
     runs-on: macos-15
     name: iOS Simulator (debug)
 
     steps:
       - uses: actions/checkout@v4
-
-      - name: Show Xcode version
-        run: xcodebuild -version
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -66,13 +62,12 @@ jobs:
           path: src-tauri/gen/apple/build/
           retention-days: 14
 
-  # Runs on tags or manual dispatch when signing secrets are configured
   build-release:
     if: >
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: macos-15
-    name: iOS Release → TestFlight
+    name: iOS Release
     environment: ios-release
 
     steps:
@@ -81,7 +76,7 @@ jobs:
           HAS_CERT: ${{ secrets.APPLE_CERTIFICATE }}
         run: |
           if [ -z "$HAS_CERT" ]; then
-            echo "::error::Apple signing secrets not configured — cannot build iOS release"
+            echo "::error::Apple signing secrets not configured"
             exit 1
           fi
 
@@ -112,19 +107,7 @@ jobs:
       - name: Initialize iOS project
         run: npx tauri ios init
 
-      # Patch Xcode project with signing settings before building
-      - name: Configure code signing
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          PBXPROJ="src-tauri/gen/apple/sysml-studio.xcodeproj/project.pbxproj"
-          sed -i '' "s/DEVELOPMENT_TEAM = \"\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/g" "$PBXPROJ"
-          if ! grep -q "DEVELOPMENT_TEAM" "$PBXPROJ"; then
-            sed -i '' "s/buildSettings = {/buildSettings = { DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\";/g" "$PBXPROJ"
-          fi
-          echo "Patched DEVELOPMENT_TEAM in Xcode project"
-
-      # Install the Apple certificate and provisioning profile
+      # 1. Install certificate
       - name: Install Apple certificate
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -146,6 +129,7 @@ jobs:
             -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
 
+      # 2. Install provisioning profile and extract UUID
       - name: Install provisioning profile
         id: profile
         env:
@@ -154,20 +138,41 @@ jobs:
           PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
           echo -n "$APPLE_PROVISIONING_PROFILE" | base64 --decode -o $PP_PATH
 
-          # Extract the UUID so Xcode can locate the profile
           PP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< \
             "$(/usr/bin/security cms -D -i $PP_PATH)")
           echo "uuid=$PP_UUID" >> $GITHUB_OUTPUT
+          echo "Profile UUID: $PP_UUID"
 
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/${PP_UUID}.mobileprovision
 
-      # Build with Tauri CLI — handles Rust compilation, frontend bundling,
-      # and xcodebuild archive/export in one step
+      # 3. Patch Xcode project for manual signing
+      - name: Configure code signing in Xcode project
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PP_UUID: ${{ steps.profile.outputs.uuid }}
+        run: |
+          PBXPROJ="src-tauri/gen/apple/sysml-studio.xcodeproj/project.pbxproj"
+
+          echo "Before patching:"
+          grep -c "buildSettings" "$PBXPROJ" || true
+
+          # Replace empty DEVELOPMENT_TEAM
+          sed -i '' "s/DEVELOPMENT_TEAM = \"\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/g" "$PBXPROJ"
+
+          # Add manual signing settings to every buildSettings block
+          sed -i '' "s/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"; CODE_SIGN_IDENTITY = \"Apple Distribution\"; CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE_SPECIFIER = \"$PP_UUID\"/g" "$PBXPROJ"
+
+          echo "After patching:"
+          grep "CODE_SIGN_STYLE" "$PBXPROJ" | head -3
+          grep "PROVISIONING_PROFILE_SPECIFIER" "$PBXPROJ" | head -3
+
+      # 4. Build with Tauri CLI
       - name: Build iOS release
         run: npx tauri ios build --export-method app-store-connect
 
-      - name: Create ExportOptions and export IPA
+      # 5. Export IPA from archive
+      - name: Export IPA
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PP_UUID: ${{ steps.profile.outputs.uuid }}
@@ -193,37 +198,36 @@ jobs:
           </plist>
           EOF
 
-          # Find the archive produced by tauri ios build
-          ARCHIVE=$(find ~/Library/Developer/Xcode/Archives src-tauri/gen/apple -name "*.xcarchive" 2>/dev/null | head -1)
+          # Look for IPA or archive produced by tauri ios build
+          echo "Searching for build artifacts..."
+          find src-tauri/gen/apple ~/Library/Developer/Xcode/Archives -name "*.ipa" -o -name "*.xcarchive" 2>/dev/null || true
 
-          if [ -z "$ARCHIVE" ]; then
-            # tauri ios build may output IPA directly
-            FOUND_IPA=$(find src-tauri/gen/apple -name "*.ipa" | head -1)
-            if [ -n "$FOUND_IPA" ]; then
-              mkdir -p $RUNNER_TEMP/export
-              cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
-              echo "Found IPA directly at $FOUND_IPA"
+          FOUND_IPA=$(find src-tauri/gen/apple -name "*.ipa" 2>/dev/null | head -1)
+          if [ -n "$FOUND_IPA" ]; then
+            mkdir -p $RUNNER_TEMP/export
+            cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
+            echo "Found IPA: $FOUND_IPA"
+            exit 0
+          fi
+
+          ARCHIVE=$(find ~/Library/Developer/Xcode/Archives -name "*.xcarchive" 2>/dev/null | head -1)
+          if [ -n "$ARCHIVE" ]; then
+            echo "Exporting IPA from archive: $ARCHIVE"
+            xcodebuild -exportArchive \
+              -archivePath "$ARCHIVE" \
+              -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
+              -exportPath $RUNNER_TEMP/export
+            IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
+            if [ -n "$IPA" ]; then
+              cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
               exit 0
             fi
-            echo "::error::No archive or IPA found after build"
-            exit 1
           fi
 
-          echo "Exporting IPA from $ARCHIVE"
-          xcodebuild -exportArchive \
-            -archivePath "$ARCHIVE" \
-            -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
-            -exportPath $RUNNER_TEMP/export
+          echo "::error::No IPA or archive found"
+          exit 1
 
-          IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
-          if [ -n "$IPA" ]; then
-            cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
-          else
-            echo "::error::Export produced no IPA"
-            exit 1
-          fi
-
-      # Upload to TestFlight via App Store Connect API
+      # 6. Upload to TestFlight
       - name: Upload to TestFlight
         env:
           API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
@@ -231,25 +235,21 @@ jobs:
           API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
           if [ -z "$API_KEY" ]; then
-            echo "::warning::App Store Connect API key not configured — skipping TestFlight upload"
-            echo "Download the .ipa from the artifacts and upload manually via Transporter"
+            echo "::warning::App Store Connect API key not configured -- skipping TestFlight upload"
             exit 0
           fi
 
-          # Write the API key to the expected location
           mkdir -p ~/.private_keys
           echo -n "$API_KEY" | base64 --decode > ~/.private_keys/AuthKey_${API_KEY_ID}.p8
 
-          IPA_PATH=$RUNNER_TEMP/export/sysml-studio-ios.ipa
-
-          echo "Uploading to App Store Connect / TestFlight..."
+          echo "Uploading to TestFlight..."
           xcrun altool --upload-app \
-            -f "$IPA_PATH" \
+            -f $RUNNER_TEMP/export/sysml-studio-ios.ipa \
             --type ios \
             --apiKey "$API_KEY_ID" \
             --apiIssuer "$API_ISSUER_ID"
 
-          echo "Upload complete — build will appear in TestFlight after Apple processing (15-30 min)"
+          echo "Upload complete -- build appears in TestFlight after 15-30 min"
 
       - name: Upload .ipa artifact
         uses: actions/upload-artifact@v4
@@ -265,7 +265,6 @@ jobs:
           draft: true
           files: ${{ runner.temp }}/export/sysml-studio-ios.ipa
 
-      # Clean up keychain
       - name: Clean up keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
