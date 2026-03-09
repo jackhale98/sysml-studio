@@ -105,146 +105,58 @@ jobs:
         run: npm ci
 
       - name: Initialize iOS project
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
         run: npx tauri ios init
 
-      # 1. Install certificate
-      - name: Install Apple certificate
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ github.run_id }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-      # 2. Install provisioning profile and extract UUID
-      - name: Install provisioning profile
-        id: profile
-        env:
-          APPLE_PROVISIONING_PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
-        run: |
-          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
-          echo -n "$APPLE_PROVISIONING_PROFILE" | base64 --decode -o $PP_PATH
-
-          PP_UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< \
-            "$(/usr/bin/security cms -D -i $PP_PATH)")
-          echo "uuid=$PP_UUID" >> $GITHUB_OUTPUT
-          echo "Profile UUID: $PP_UUID"
-
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/${PP_UUID}.mobileprovision
-
-      # 3. Patch Xcode project for manual signing
-      - name: Configure code signing in Xcode project
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          PP_UUID: ${{ steps.profile.outputs.uuid }}
-        run: |
-          PBXPROJ="src-tauri/gen/apple/sysml-studio.xcodeproj/project.pbxproj"
-
-          echo "Before patching:"
-          grep -c "buildSettings" "$PBXPROJ" || true
-
-          # Replace empty DEVELOPMENT_TEAM
-          sed -i '' "s/DEVELOPMENT_TEAM = \"\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/g" "$PBXPROJ"
-
-          # Add manual signing settings to every buildSettings block
-          sed -i '' "s/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"/DEVELOPMENT_TEAM = \"$APPLE_TEAM_ID\"; CODE_SIGN_IDENTITY = \"Apple Distribution\"; CODE_SIGN_STYLE = Manual; PROVISIONING_PROFILE_SPECIFIER = \"$PP_UUID\"/g" "$PBXPROJ"
-
-          echo "After patching:"
-          grep "CODE_SIGN_STYLE" "$PBXPROJ" | head -3
-          grep "PROVISIONING_PROFILE_SPECIFIER" "$PBXPROJ" | head -3
-
-      # 4. Build with Tauri CLI
-      - name: Build iOS release
-        run: npx tauri ios build --export-method app-store-connect
-
-      # 5. Export IPA from archive
-      - name: Export IPA
-        env:
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          PP_UUID: ${{ steps.profile.outputs.uuid }}
-        run: |
-          cat > $RUNNER_TEMP/ExportOptions.plist << EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-            "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>app-store-connect</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>teamID</key>
-            <string>${APPLE_TEAM_ID}</string>
-            <key>provisioningProfiles</key>
-            <dict>
-              <key>com.sysmlstudio.studio</key>
-              <string>${PP_UUID}</string>
-            </dict>
-          </dict>
-          </plist>
-          EOF
-
-          # Look for IPA or archive produced by tauri ios build
-          echo "Searching for build artifacts..."
-          find src-tauri/gen/apple ~/Library/Developer/Xcode/Archives -name "*.ipa" -o -name "*.xcarchive" 2>/dev/null || true
-
-          FOUND_IPA=$(find src-tauri/gen/apple -name "*.ipa" 2>/dev/null | head -1)
-          if [ -n "$FOUND_IPA" ]; then
-            mkdir -p $RUNNER_TEMP/export
-            cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
-            echo "Found IPA: $FOUND_IPA"
-            exit 0
-          fi
-
-          ARCHIVE=$(find ~/Library/Developer/Xcode/Archives -name "*.xcarchive" 2>/dev/null | head -1)
-          if [ -n "$ARCHIVE" ]; then
-            echo "Exporting IPA from archive: $ARCHIVE"
-            xcodebuild -exportArchive \
-              -archivePath "$ARCHIVE" \
-              -exportOptionsPlist $RUNNER_TEMP/ExportOptions.plist \
-              -exportPath $RUNNER_TEMP/export
-            IPA=$(find $RUNNER_TEMP/export -name "*.ipa" | head -1)
-            if [ -n "$IPA" ]; then
-              cp "$IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
-              exit 0
-            fi
-          fi
-
-          echo "::error::No IPA or archive found"
-          exit 1
-
-      # 6. Upload to TestFlight
-      - name: Upload to TestFlight
+      - name: Prepare App Store Connect API key
         env:
           API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
           API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
         run: |
-          if [ -z "$API_KEY" ]; then
-            echo "::warning::App Store Connect API key not configured -- skipping TestFlight upload"
-            exit 0
+          if [ -n "$API_KEY" ]; then
+            mkdir -p ~/.private_keys
+            echo -n "$API_KEY" | base64 --decode > ~/.private_keys/AuthKey_${API_KEY_ID}.p8
+            echo "API_KEY_PATH=$HOME/.private_keys/AuthKey_${API_KEY_ID}.p8" >> $GITHUB_ENV
           fi
 
-          mkdir -p ~/.private_keys
-          echo -n "$API_KEY" | base64 --decode > ~/.private_keys/AuthKey_${API_KEY_ID}.p8
+      - name: Build iOS release
+        env:
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          IOS_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IOS_MOBILE_PROVISION: ${{ secrets.APPLE_PROVISIONING_PROFILE }}
+          APPLE_API_ISSUER: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          APPLE_API_KEY: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          APPLE_API_KEY_PATH: ${{ env.API_KEY_PATH }}
+        run: npx tauri ios build --export-method app-store-connect
 
+      - name: Find IPA
+        id: find-ipa
+        run: |
+          echo "Searching for IPA..."
+          find src-tauri/gen/apple ~/Library/Developer/Xcode -name "*.ipa" 2>/dev/null || true
+
+          FOUND_IPA=$(find src-tauri/gen/apple ~/Library/Developer/Xcode -name "*.ipa" 2>/dev/null | head -1)
+          if [ -n "$FOUND_IPA" ]; then
+            mkdir -p $RUNNER_TEMP/export
+            cp "$FOUND_IPA" $RUNNER_TEMP/export/sysml-studio-ios.ipa
+            echo "ipa_path=$RUNNER_TEMP/export/sysml-studio-ios.ipa" >> $GITHUB_OUTPUT
+            echo "Found IPA: $FOUND_IPA"
+          else
+            echo "::error::No IPA found after build"
+            exit 1
+          fi
+
+      - name: Upload to TestFlight
+        if: env.API_KEY_PATH != ''
+        env:
+          API_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+        run: |
           echo "Uploading to TestFlight..."
           xcrun altool --upload-app \
-            -f $RUNNER_TEMP/export/sysml-studio-ios.ipa \
+            -f ${{ steps.find-ipa.outputs.ipa_path }} \
             --type ios \
             --apiKey "$API_KEY_ID" \
             --apiIssuer "$API_ISSUER_ID"
@@ -255,7 +167,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-release-ipa
-          path: ${{ runner.temp }}/export/*.ipa
+          path: ${{ steps.find-ipa.outputs.ipa_path }}
           retention-days: 90
 
       - name: Upload IPA to GitHub Release
@@ -263,8 +175,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: ${{ runner.temp }}/export/sysml-studio-ios.ipa
-
-      - name: Clean up keychain
-        if: always()
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
+          files: ${{ steps.find-ipa.outputs.ipa_path }}
