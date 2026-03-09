@@ -11,7 +11,7 @@ permissions:
 jobs:
   # Always runs — validates the build compiles for iOS simulator
   build-simulator:
-    runs-on: macos-14
+    runs-on: macos-15
     name: iOS Simulator (debug)
 
     steps:
@@ -68,7 +68,7 @@ jobs:
     if: >
       (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
+    runs-on: macos-15
     name: iOS Release → TestFlight
     environment: ios-release
 
