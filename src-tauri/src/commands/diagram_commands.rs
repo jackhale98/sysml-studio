@@ -736,10 +736,30 @@ pub fn compute_ibd_layout(
     let model = model_lock.as_ref().ok_or("No model loaded")?;
 
     // Find the block to display internals for
+    // First try matching a part_def by name; if not found, check if a part_usage
+    // with that name has a type_ref pointing to a definition
     let block = if let Some(ref name) = block_name {
-        model.elements.iter().find(|e| e.kind == ElementKind::PartDef && e.name.as_deref() == Some(name.as_str()))
+        model.elements.iter()
+            .find(|e| e.kind == ElementKind::PartDef && e.name.as_deref() == Some(name.as_str()))
+            .or_else(|| {
+                // Resolve part_usage name → type_ref → part_def
+                let usage = model.elements.iter().find(|e|
+                    e.kind == ElementKind::PartUsage && e.name.as_deref() == Some(name.as_str())
+                )?;
+                let type_ref = usage.type_ref.as_deref()?;
+                model.elements.iter().find(|e|
+                    e.kind == ElementKind::PartDef && e.name.as_deref() == Some(type_ref)
+                )
+            })
     } else {
-        model.elements.iter().find(|e| e.kind == ElementKind::PartDef)
+        // Default: pick the first part_def that has child parts/ports
+        model.elements.iter()
+            .find(|e| e.kind == ElementKind::PartDef && model.elements.iter().any(|c|
+                c.parent_id == Some(e.id) && matches!(c.kind,
+                    ElementKind::PartUsage | ElementKind::PortUsage |
+                    ElementKind::AttributeUsage | ElementKind::ItemUsage)
+            ))
+            .or_else(|| model.elements.iter().find(|e| e.kind == ElementKind::PartDef))
     };
 
     let block = match block {

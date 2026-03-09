@@ -846,10 +846,26 @@ export function browserUcdLayout(model: SysmlModel): DiagramLayout {
 
 /** Browser-side Internal Block Diagram layout */
 export function browserIbdLayout(model: SysmlModel, blockName?: string): DiagramLayout {
-  // Find the target block definition
-  const blockDef = blockName
+  // Find the target block definition; if blockName matches a part_usage, resolve via type_ref
+  let blockDef = blockName
     ? model.elements.find(e => typeof e.kind === "string" && e.kind === "part_def" && e.name === blockName)
-    : model.elements.find(e => typeof e.kind === "string" && e.kind === "part_def");
+    : undefined;
+
+  if (!blockDef && blockName) {
+    const usage = model.elements.find(e => typeof e.kind === "string" && e.kind === "part_usage" && e.name === blockName);
+    if (usage?.type_ref) {
+      blockDef = model.elements.find(e => typeof e.kind === "string" && e.kind === "part_def" && e.name === usage.type_ref);
+    }
+  }
+
+  if (!blockDef) {
+    // Default: first part_def that has child parts/ports
+    blockDef = model.elements.find(e =>
+      typeof e.kind === "string" && e.kind === "part_def" &&
+      model.elements.some(c => typeof c.kind === "string" && c.parent_id === e.id &&
+        (c.kind === "part_usage" || c.kind === "port_usage" || c.kind === "attribute_usage"))
+    ) ?? model.elements.find(e => typeof e.kind === "string" && e.kind === "part_def");
+  }
 
   if (!blockDef) return { diagram_type: "ibd", nodes: [], edges: [], bounds: [0, 0, 400, 300] };
 
