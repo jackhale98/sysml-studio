@@ -94,6 +94,7 @@ export function AppShell() {
   const openDialog = useUIStore((s) => s.openDialog);
   const highlightedNodeId = useUIStore((s) => s.highlightedNodeId);
   const model = useModelStore((s) => s.model);
+  const hasFiles = Object.keys(useModelStore((s) => s.openFiles)).length > 0;
 
   return (
     <div style={{
@@ -103,7 +104,7 @@ export function AppShell() {
     }}>
       <Header />
 
-      {model === null ? (
+      {!hasFiles ? (
         <WelcomeScreen />
       ) : (
         <>

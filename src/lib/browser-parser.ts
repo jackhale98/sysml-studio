@@ -61,6 +61,7 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
   [/^allocation\s+(\w+)/, "allocation_usage", "relationship"],
   [/^requirement\s+(\w+)/, "requirement_usage", "requirement"],
   [/^constraint\s+(\w+)/, "constraint_usage", "constraint"],
+  [/^use\s+case\s+(\w+)\s*[;{]/, "use_case_usage", "behavior"],
 ];
 
 const OTHER_PATTERNS: [RegExp, string, Category][] = [
@@ -150,11 +151,18 @@ export function browserParse(source: string): SysmlModel {
               specializations = [m[3], m[4]];
             }
           }
+          // Extract value expression: `= <value>` at end of line
+          const valMatch = matchLine.match(/=\s*([^;{]+?)\s*[;{]?\s*$/);
+          const valueExpr = valMatch ? valMatch[1].trim() : null;
+          // Extract multiplicity: `[N]` or `[0..N]`
+          const multMatch = matchLine.match(/\[([^\]]+)\]/);
+          const multiplicity = multMatch ? multMatch[1].trim() : null;
+
           const el: SysmlElement = {
             id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
-            modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: null,
+            modifiers: [], multiplicity, doc: null, short_name: shortName, value_expr: valueExpr,
           };
           ctx.elements.push(el);
           if (parentId !== null) {

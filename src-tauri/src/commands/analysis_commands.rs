@@ -276,3 +276,113 @@ pub fn execute_action(
 
     Ok(sysml_core::sim::action_exec::execute_action(action, &config))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::elements::*;
+
+    fn make_el(
+        id: ElementId, kind: ElementKind, name: &str,
+        parent_id: Option<ElementId>, type_ref: Option<&str>,
+        value_expr: Option<&str>, multiplicity: Option<&str>,
+    ) -> SysmlElement {
+        SysmlElement {
+            id, kind,
+            name: Some(name.to_string()),
+            qualified_name: name.to_string(),
+            category: Category::Structure,
+            parent_id,
+            children_ids: vec![],
+            span: SourceSpan { start_line: 0, start_col: 0, end_line: 0, end_col: 0, start_byte: 0, end_byte: 0 },
+            type_ref: type_ref.map(String::from),
+            specializations: vec![],
+            modifiers: vec![],
+            multiplicity: multiplicity.map(String::from),
+            doc: None,
+            short_name: None,
+            value_expr: value_expr.map(String::from),
+        }
+    }
+
+    #[test]
+    fn test_bom_rollup_mass_and_cost() {
+        // Build: Vehicle { mass=100, cost=500, engine:Engine, wheels:Wheel[4], chassis:Chassis }
+        // Engine { mass=150, cost=5000 }
+        // Wheel { mass=12.5, cost=200 }
+        // Chassis { mass=800, cost=3000 }
+        let elements = vec![
+            make_el(0, ElementKind::Package, "VehicleBOM", None, None, None, None),
+            // Definitions
+            make_el(1, ElementKind::PartDef, "Engine", Some(0), None, None, None),
+            make_el(2, ElementKind::AttributeUsage, "mass", Some(1), Some("Real"), Some("150.0"), None),
+            make_el(3, ElementKind::AttributeUsage, "cost", Some(1), Some("Real"), Some("5000.0"), None),
+            make_el(4, ElementKind::PartDef, "Wheel", Some(0), None, None, None),
+            make_el(5, ElementKind::AttributeUsage, "mass", Some(4), Some("Real"), Some("12.5"), None),
+            make_el(6, ElementKind::AttributeUsage, "cost", Some(4), Some("Real"), Some("200.0"), None),
+            make_el(7, ElementKind::PartDef, "Chassis", Some(0), None, None, None),
+            make_el(8, ElementKind::AttributeUsage, "mass", Some(7), Some("Real"), Some("800.0"), None),
+            make_el(9, ElementKind::AttributeUsage, "cost", Some(7), Some("Real"), Some("3000.0"), None),
+            // Vehicle definition
+            make_el(10, ElementKind::PartDef, "Vehicle", Some(0), None, None, None),
+            make_el(11, ElementKind::AttributeUsage, "mass", Some(10), Some("Real"), Some("100.0"), None),
+            make_el(12, ElementKind::AttributeUsage, "cost", Some(10), Some("Real"), Some("500.0"), None),
+            // Part usages inside Vehicle
+            make_el(13, ElementKind::PartUsage, "engine", Some(10), Some("Engine"), None, None),
+            make_el(14, ElementKind::PartUsage, "wheels", Some(10), Some("Wheel"), None, Some("4")),
+            make_el(15, ElementKind::PartUsage, "chassis", Some(10), Some("Chassis"), None, None),
+        ];
+
+        let mut visited = std::collections::HashSet::new();
+        let vehicle = &elements[10]; // Vehicle PartDef
+        let bom = build_bom_node(vehicle, &elements, 1.0, &mut visited);
+
+        // Vehicle's own: mass=100, cost=500
+        // + engine (Engine): mass=150, cost=5000
+        // + wheels (Wheel x4): mass=12.5*4=50, cost=200*4=800
+        // + chassis (Chassis): mass=800, cost=3000
+        // Total mass: 100 + 150 + 50 + 800 = 1100
+        // Total cost: 500 + 5000 + 800 + 3000 = 9300
+
+        let total_mass = bom.rollups.get("mass").copied().unwrap_or(0.0);
+        let total_cost = bom.rollups.get("cost").copied().unwrap_or(0.0);
+
+        assert_eq!(bom.name, "Vehicle");
+        assert_eq!(bom.children.len(), 3, "Vehicle should have 3 child parts");
+
+        // Check wheel multiplicity
+        let wheel_child = bom.children.iter().find(|c| c.name == "Wheel").expect("Wheel child");
+        assert_eq!(wheel_child.multiplicity, 4.0);
+        let wheel_mass = wheel_child.rollups.get("mass").copied().unwrap_or(0.0);
+        assert!((wheel_mass - 50.0).abs() < 0.01, "Wheel mass rollup should be 50, got {}", wheel_mass);
+
+        assert!((total_mass - 1100.0).abs() < 0.01, "Total mass should be 1100, got {}", total_mass);
+        assert!((total_cost - 9300.0).abs() < 0.01, "Total cost should be 9300, got {}", total_cost);
+    }
+
+    #[test]
+    fn test_bom_no_value_expr_skipped() {
+        // Attributes without value_expr should not contribute to rollups
+        let elements = vec![
+            make_el(0, ElementKind::PartDef, "Box", None, None, None, None),
+            make_el(1, ElementKind::AttributeUsage, "label", Some(0), Some("String"), None, None),
+            make_el(2, ElementKind::AttributeUsage, "mass", Some(0), Some("Real"), Some("25.0"), None),
+        ];
+
+        let mut visited = std::collections::HashSet::new();
+        let bom = build_bom_node(&elements[0], &elements, 1.0, &mut visited);
+
+        assert_eq!(bom.rollups.len(), 1, "Only 'mass' should roll up, not 'label'");
+        assert!((bom.rollups["mass"] - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_parse_multiplicity_variants() {
+        assert_eq!(parse_multiplicity(None), 1.0);
+        assert_eq!(parse_multiplicity(Some("4")), 4.0);
+        assert_eq!(parse_multiplicity(Some("[4]")), 4.0);
+        assert_eq!(parse_multiplicity(Some("0..4")), 4.0);
+        assert_eq!(parse_multiplicity(Some("[0..4]")), 4.0);
+        assert_eq!(parse_multiplicity(Some("*")), 1.0);
+    }
+}

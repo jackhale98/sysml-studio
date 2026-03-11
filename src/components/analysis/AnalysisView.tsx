@@ -227,10 +227,21 @@ function BomTreeNode({ node, depth }: { node: BomNode; depth: number }) {
 
 // ─── State Machine Simulation Panel ───
 
+/** Extract unique signal trigger names from a machine's transitions */
+function getAvailableEvents(machine: StateMachineModel): string[] {
+  const events = new Set<string>();
+  for (const t of machine.transitions) {
+    if (t.trigger && typeof t.trigger === "object" && "Signal" in t.trigger) {
+      events.add(t.trigger.Signal);
+    }
+  }
+  return [...events].sort();
+}
+
 function StateMachinePanel() {
   const [machines, setMachines] = useState<StateMachineModel[]>([]);
   const [selected, setSelected] = useState<string>("");
-  const [events, setEvents] = useState<string>("");
+  const [eventQueue, setEventQueue] = useState<string[]>([]);
   const [result, setResult] = useState<SimulationState | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -242,13 +253,17 @@ function StateMachinePanel() {
   }, []);
 
   const machine = machines.find((m) => m.name === selected);
+  const availableEvents = machine ? getAvailableEvents(machine) : [];
+
+  const addEvent = (evt: string) => setEventQueue([...eventQueue, evt]);
+  const removeEvent = (idx: number) => setEventQueue(eventQueue.filter((_, i) => i !== idx));
+  const clearEvents = () => setEventQueue([]);
 
   const runSim = async () => {
     if (!selected) return;
     setLoading(true);
     try {
-      const eventList = events.split(",").map((e) => e.trim()).filter(Boolean);
-      const res = await simulateStateMachine(selected, eventList);
+      const res = await simulateStateMachine(selected, eventQueue);
       setResult(res);
     } catch { /* ignore */ }
     setLoading(false);
@@ -262,64 +277,174 @@ function StateMachinePanel() {
         </div>
       ) : (
         <>
+          {/* Machine selector */}
           <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
             <select
               value={selected}
-              onChange={(e) => { setSelected(e.target.value); setResult(null); }}
+              onChange={(e) => { setSelected(e.target.value); setResult(null); setEventQueue([]); }}
               style={{
                 flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)",
                 background: "var(--bg-tertiary)", color: "var(--text-primary)",
                 fontSize: 12, fontFamily: "var(--font-mono)",
               }}
             >
-              {machines.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+              {machines.map((m) => (
+                <option key={m.name} value={m.name}>
+                  {m.name} ({m.states.length} states, {m.transitions.length} transitions)
+                </option>
+              ))}
             </select>
           </div>
 
-          {/* Machine info */}
+          {/* Machine structure overview */}
           {machine && (
             <div style={{ ...card, marginBottom: 12 }}>
-              <div style={{ ...monoSmall, fontWeight: 600, color: "#38bdf8", marginBottom: 4 }}>
+              <div style={{ ...monoSmall, fontWeight: 600, color: "#38bdf8", marginBottom: 6 }}>
                 {machine.name}
+                {machine.entry_state && (
+                  <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> (entry: {machine.entry_state})</span>
+                )}
               </div>
-              <div style={{ ...monoSmall, color: "var(--text-muted)" }}>
-                States: {machine.states.map((s) => s.name).join(", ")}
+
+              {/* States */}
+              <div style={{ ...monoSmall, color: "var(--text-muted)", marginBottom: 6 }}>
+                <span style={{ fontWeight: 600 }}>States:</span>
               </div>
-              <div style={{ ...monoSmall, color: "var(--text-muted)", marginTop: 2 }}>
-                Transitions: {machine.transitions.length}
-                {machine.entry_state && <span> &middot; Entry: {machine.entry_state}</span>}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+                {machine.states.map((s) => (
+                  <span key={s.name} style={{
+                    ...monoSmall, padding: "2px 8px", borderRadius: 4,
+                    background: s.name === machine.entry_state ? "rgba(56,189,248,0.15)" : "var(--bg-primary)",
+                    border: `1px solid ${s.name === machine.entry_state ? "rgba(56,189,248,0.4)" : "var(--border)"}`,
+                    color: s.name === machine.entry_state ? "#38bdf8" : "var(--text-secondary)",
+                  }}>
+                    {s.name}
+                  </span>
+                ))}
+              </div>
+
+              {/* Transitions table */}
+              <div style={{ ...monoSmall, color: "var(--text-muted)", marginBottom: 4 }}>
+                <span style={{ fontWeight: 600 }}>Transitions:</span>
+              </div>
+              <div style={{ maxHeight: 120, overflowY: "auto" }}>
+                {machine.transitions.map((t, i) => {
+                  const triggerLabel = t.trigger
+                    ? typeof t.trigger === "object" && "Signal" in t.trigger
+                      ? t.trigger.Signal
+                      : "completion"
+                    : "auto";
+                  return (
+                    <div key={i} style={{
+                      ...monoSmall, padding: "2px 0",
+                      display: "flex", gap: 6, alignItems: "center",
+                    }}>
+                      <span style={{ color: "#ef4444" }}>{t.source}</span>
+                      <span style={{ color: "var(--text-muted)" }}>&rarr;</span>
+                      <span style={{ color: "#4ade80" }}>{t.target}</span>
+                      <span style={{ color: "#c084fc", marginLeft: "auto" }}>[{triggerLabel}]</span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
 
-          {/* Events input + Run */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-            <input
-              placeholder="Events (comma-separated)"
-              value={events}
-              onChange={(e) => setEvents(e.target.value)}
-              style={{
-                flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)",
-                background: "var(--bg-tertiary)", color: "var(--text-primary)",
-                fontSize: 12, fontFamily: "var(--font-mono)",
-              }}
-            />
-            <button onClick={runSim} style={{
-              padding: "6px 14px", borderRadius: 6, border: "none",
-              background: "#10b981", color: "#fff", fontSize: 11, fontWeight: 600,
-              fontFamily: "var(--font-mono)", cursor: "pointer",
+          {/* Event queue builder */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ ...monoSmall, color: "var(--text-muted)", fontWeight: 600, marginBottom: 6 }}>
+              Event Sequence:
+            </div>
+
+            {/* Available events as clickable chips */}
+            {availableEvents.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+                {availableEvents.map((evt) => (
+                  <button
+                    key={evt}
+                    onClick={() => addEvent(evt)}
+                    style={{
+                      ...monoSmall, padding: "4px 10px", borderRadius: 6,
+                      border: "1px solid rgba(192,132,252,0.3)",
+                      background: "rgba(192,132,252,0.1)",
+                      color: "#c084fc", cursor: "pointer", fontWeight: 600,
+                    }}
+                  >
+                    + {evt}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Current event queue */}
+            {eventQueue.length > 0 ? (
+              <div style={{
+                display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center",
+                padding: 8, borderRadius: 6,
+                border: "1px solid var(--border)", background: "var(--bg-primary)",
+                marginBottom: 8,
+              }}>
+                {eventQueue.map((evt, i) => (
+                  <span key={i} style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    ...monoSmall, padding: "3px 8px", borderRadius: 4,
+                    background: "rgba(192,132,252,0.15)",
+                    color: "#c084fc", fontWeight: 600,
+                  }}>
+                    {i > 0 && <span style={{ color: "var(--text-muted)", fontSize: 9, marginRight: 2 }}>&rarr;</span>}
+                    {evt}
+                    <button
+                      onClick={() => removeEvent(i)}
+                      style={{
+                        background: "none", border: "none", color: "var(--text-muted)",
+                        cursor: "pointer", padding: 0, fontSize: 11, lineHeight: 1,
+                      }}
+                    >
+                      x
+                    </button>
+                  </span>
+                ))}
+                <button onClick={clearEvents} style={{
+                  ...monoSmall, background: "none", border: "none",
+                  color: "var(--text-muted)", cursor: "pointer", fontSize: 10,
+                }}>
+                  clear
+                </button>
+              </div>
+            ) : (
+              <div style={{
+                ...monoSmall, color: "var(--text-muted)", padding: "8px",
+                borderRadius: 6, border: "1px dashed var(--border)", textAlign: "center",
+                marginBottom: 8,
+              }}>
+                {availableEvents.length > 0
+                  ? "Tap events above to build a sequence, or run with no events for auto-completion transitions"
+                  : "No signal triggers found — this machine uses completion transitions only"}
+              </div>
+            )}
+
+            <button onClick={runSim} disabled={!selected} style={{
+              width: "100%", padding: "8px 14px", borderRadius: 6, border: "none",
+              background: selected ? "#10b981" : "var(--bg-tertiary)",
+              color: selected ? "#fff" : "var(--text-muted)",
+              fontSize: 12, fontWeight: 600,
+              fontFamily: "var(--font-mono)", cursor: selected ? "pointer" : "default",
             }}>
-              {loading ? "..." : "Run"}
+              {loading ? "Simulating..." : `Run Simulation${eventQueue.length > 0 ? ` (${eventQueue.length} events)` : ""}`}
             </button>
           </div>
 
           {/* Simulation result */}
           {result && (
             <div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                 <StatusBadge label={`State: ${result.current_state}`} color="#38bdf8" />
                 <StatusBadge label={`Steps: ${result.step}`} color="#f59e0b" />
-                <StatusBadge label={result.status} color={result.status === "Completed" ? "#4ade80" : "#ef4444"} />
+                <StatusBadge label={result.status} color={
+                  result.status === "Completed" ? "#4ade80"
+                  : result.status === "Deadlocked" ? "#ef4444"
+                  : "#f59e0b"
+                } />
               </div>
 
               {result.trace.length > 0 && (
@@ -330,14 +455,19 @@ function StateMachinePanel() {
                   {result.trace.map((t: SimStep, i: number) => (
                     <div key={i} style={{
                       ...monoSmall, padding: "3px 0",
-                      borderBottom: "1px solid var(--border)",
+                      borderBottom: i < result.trace.length - 1 ? "1px solid var(--border)" : "none",
                       color: "var(--text-primary)",
                     }}>
                       <span style={{ color: "var(--text-muted)" }}>#{t.step}</span>{" "}
                       <span style={{ color: "#ef4444" }}>{t.from_state}</span>
-                      {" → "}
+                      {" \u2192 "}
                       <span style={{ color: "#4ade80" }}>{t.to_state}</span>
                       {t.trigger && <span style={{ color: "#c084fc" }}> [{t.trigger}]</span>}
+                      {t.guard_result !== null && (
+                        <span style={{ color: t.guard_result ? "#4ade80" : "#ef4444", marginLeft: 4 }}>
+                          guard:{t.guard_result ? "T" : "F"}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -352,9 +482,37 @@ function StateMachinePanel() {
 
 // ─── Action Flow Panel ───
 
+/** Recursively extract step labels from action steps for preview */
+function describeSteps(steps: unknown[], prefix = ""): { label: string; kind: string }[] {
+  const result: { label: string; kind: string }[] = [];
+  for (const step of steps) {
+    if (step && typeof step === "object") {
+      // sysml-core ActionStep is a tagged enum — extract the variant
+      const entries = Object.entries(step as Record<string, unknown>);
+      if (entries.length > 0) {
+        const [kind, data] = entries[0];
+        if (data && typeof data === "object" && "name" in (data as Record<string, unknown>)) {
+          result.push({ kind, label: `${prefix}${(data as { name: string }).name}` });
+        } else {
+          result.push({ kind, label: `${prefix}${kind}` });
+        }
+        // Recurse into sub-steps if present
+        if (data && typeof data === "object" && "steps" in (data as Record<string, unknown>)) {
+          const sub = (data as { steps: unknown[] }).steps;
+          if (Array.isArray(sub)) {
+            result.push(...describeSteps(sub, prefix + "  "));
+          }
+        }
+      }
+    }
+  }
+  return result;
+}
+
 function ActionFlowPanel() {
   const [actions, setActions] = useState<ActionModel[]>([]);
   const [selected, setSelected] = useState<string>("");
+  const [maxSteps, setMaxSteps] = useState<number>(1000);
   const [result, setResult] = useState<ActionExecState | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -365,14 +523,24 @@ function ActionFlowPanel() {
     });
   }, []);
 
+  const action = actions.find((a) => a.name === selected);
+  const stepPreview = action ? describeSteps(action.steps) : [];
+
   const runAction = async () => {
     if (!selected) return;
     setLoading(true);
     try {
-      const res = await executeAction(selected);
+      const res = await executeAction(selected, maxSteps);
       setResult(res);
     } catch { /* ignore */ }
     setLoading(false);
+  };
+
+  const stepKindColors: Record<string, string> = {
+    Action: "#c084fc", Send: "#38bdf8", Accept: "#4ade80",
+    Assign: "#f59e0b", If: "#fb923c", While: "#fb923c",
+    For: "#fb923c", Merge: "#64748b", Fork: "#64748b",
+    Join: "#64748b", Decide: "#fb923c", Succession: "var(--text-muted)",
   };
 
   return (
@@ -383,6 +551,7 @@ function ActionFlowPanel() {
         </div>
       ) : (
         <>
+          {/* Action selector */}
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
             <select
               value={selected}
@@ -393,40 +562,97 @@ function ActionFlowPanel() {
                 fontSize: 12, fontFamily: "var(--font-mono)",
               }}
             >
-              {actions.map((a) => <option key={a.name} value={a.name}>{a.name} ({a.steps.length} steps)</option>)}
+              {actions.map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name} ({a.steps.length} steps)
+                </option>
+              ))}
             </select>
-            <button onClick={runAction} style={{
-              padding: "6px 14px", borderRadius: 6, border: "none",
-              background: "#10b981", color: "#fff", fontSize: 11, fontWeight: 600,
-              fontFamily: "var(--font-mono)", cursor: "pointer",
+          </div>
+
+          {/* Action structure preview */}
+          {action && stepPreview.length > 0 && (
+            <div style={{ ...card, marginBottom: 12 }}>
+              <div style={{ ...monoSmall, fontWeight: 600, color: "#c084fc", marginBottom: 6 }}>
+                {action.name} — Flow Structure
+              </div>
+              <div style={{ maxHeight: 150, overflowY: "auto" }}>
+                {stepPreview.map((s, i) => (
+                  <div key={i} style={{
+                    ...monoSmall, padding: "2px 0",
+                    color: "var(--text-secondary)",
+                    whiteSpace: "pre",
+                  }}>
+                    <span style={{ color: stepKindColors[s.kind] ?? "var(--text-muted)", fontWeight: 600 }}>
+                      {s.kind}
+                    </span>{" "}
+                    <span>{s.label.trim()}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Max steps + execute */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+            <label style={{ ...monoSmall, color: "var(--text-muted)", flexShrink: 0 }}>Max steps:</label>
+            <input
+              type="number"
+              value={maxSteps}
+              onChange={(e) => setMaxSteps(parseInt(e.target.value) || 1000)}
+              style={{
+                width: 70, padding: "6px 8px", borderRadius: 6, border: "1px solid var(--border)",
+                background: "var(--bg-tertiary)", color: "var(--text-primary)",
+                fontSize: 12, fontFamily: "var(--font-mono)",
+              }}
+            />
+            <button onClick={runAction} disabled={!selected} style={{
+              flex: 1, padding: "8px 14px", borderRadius: 6, border: "none",
+              background: selected ? "#10b981" : "var(--bg-tertiary)",
+              color: selected ? "#fff" : "var(--text-muted)",
+              fontSize: 12, fontWeight: 600,
+              fontFamily: "var(--font-mono)", cursor: selected ? "pointer" : "default",
             }}>
-              {loading ? "..." : "Execute"}
+              {loading ? "Executing..." : "Execute"}
             </button>
           </div>
 
+          {/* Execution result */}
           {result && (
             <div>
-              <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
                 <StatusBadge label={`Steps: ${result.step}`} color="#f59e0b" />
-                <StatusBadge label={result.status} color={result.status === "Completed" ? "#4ade80" : "#ef4444"} />
+                <StatusBadge label={result.status} color={
+                  result.status === "Completed" ? "#4ade80"
+                  : result.status === "Error" ? "#ef4444"
+                  : "#f59e0b"
+                } />
+                {Object.keys(result.env.bindings).length > 0 && (
+                  <StatusBadge
+                    label={`Env: ${Object.entries(result.env.bindings).map(([k, v]) => `${k}=${v}`).join(", ")}`}
+                    color="#38bdf8"
+                  />
+                )}
               </div>
 
               {result.trace.length > 0 && (
                 <div style={card}>
                   <div style={{ ...monoSmall, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 6 }}>
-                    Execution Trace
+                    Execution Trace ({result.trace.length} steps)
                   </div>
-                  {result.trace.map((t: ActionExecStep, i: number) => (
-                    <div key={i} style={{
-                      ...monoSmall, padding: "3px 0",
-                      borderBottom: "1px solid var(--border)",
-                      color: "var(--text-primary)",
-                    }}>
-                      <span style={{ color: "var(--text-muted)" }}>#{t.step}</span>{" "}
-                      <span style={{ color: "#c084fc", fontWeight: 600 }}>{t.kind}</span>{" "}
-                      {t.description}
-                    </div>
-                  ))}
+                  <div style={{ maxHeight: 300, overflowY: "auto" }}>
+                    {result.trace.map((t: ActionExecStep, i: number) => (
+                      <div key={i} style={{
+                        ...monoSmall, padding: "3px 0",
+                        borderBottom: i < result.trace.length - 1 ? "1px solid var(--border)" : "none",
+                        color: "var(--text-primary)",
+                      }}>
+                        <span style={{ color: "var(--text-muted)" }}>#{t.step}</span>{" "}
+                        <span style={{ color: stepKindColors[t.kind] ?? "#c084fc", fontWeight: 600 }}>{t.kind}</span>{" "}
+                        {t.description}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useEffect, useMemo } from "react";
+import React, { useRef, useCallback, useEffect, useMemo, useState } from "react";
 import { EditorView as CMEditorView, keymap, lineNumbers, highlightActiveLine, drawSelection, highlightActiveLineGutter } from "@codemirror/view";
 import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
@@ -11,6 +11,7 @@ import { useUIStore } from "../../stores/ui-store";
 import {
   sysmlBrowserHighlighting,
 } from "./sysml-language";
+import { ImportDialog } from "./ImportDialog";
 
 // ─── CodeMirror Theme ───
 
@@ -93,9 +94,12 @@ export function EditorView() {
   const source = useModelStore((s) => s.source);
   const updateSource = useModelStore((s) => s.updateSource);
   const model = useModelStore((s) => s.model);
+  const openFiles = useModelStore((s) => s.openFiles);
   const scrollToLine = useUIStore((s) => s.scrollToLine);
   const clearScrollToLine = useUIStore((s) => s.clearScrollToLine);
   const theme = useUIStore((s) => s.theme);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const hasOtherFiles = Object.keys(openFiles).length > 1;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<CMEditorView | null>(null);
@@ -269,6 +273,18 @@ export function EditorView() {
             {snippet.label}
           </button>
         ))}
+        <button
+          onClick={() => setShowImportDialog(true)}
+          style={{
+            padding: "4px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+            fontFamily: "var(--font-mono)", border: "1px solid var(--accent)",
+            background: hasOtherFiles ? "rgba(59,130,246,0.1)" : "var(--bg-tertiary)",
+            color: "var(--accent)",
+            cursor: "pointer", whiteSpace: "nowrap", minHeight: 30,
+          }}
+        >
+          + import
+        </button>
       </div>
 
       {/* CodeMirror container */}
@@ -286,6 +302,8 @@ export function EditorView() {
         <span>{model?.stats.parse_time_ms !== undefined ? `${model.stats.parse_time_ms.toFixed(1)}ms` : ""}</span>
         <span>SysML v2</span>
       </div>
+
+      {showImportDialog && <ImportDialog onClose={() => setShowImportDialog(false)} />}
     </div>
   );
 }
