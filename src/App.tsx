@@ -11,6 +11,15 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
   part def Vehicle {
     doc /* Top-level vehicle assembly — mass and cost roll up from children */
 
+    attribute passengerCount : Real = 4;
+    attribute passengerMass : Real = 75;
+    attribute efficiency : Real = 15;
+    attribute velocity : Real = 120;
+    attribute friction : Real = 0.7;
+    attribute gravity : Real = 9.81;
+    attribute laborCost : Real = 2000;
+    attribute overheadRate : Real = 0.35;
+
     part engine : Engine;
     part transmission : Transmission;
     part brakeSystem : BrakeSystem;

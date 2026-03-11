@@ -58,6 +58,7 @@ fn estimate_text_width(text: &str, font_size: f64) -> f64 {
 }
 
 /// Shorthand to create a DiagramNode with empty optional fields
+#[allow(clippy::too_many_arguments)]
 fn make_node(
     element_id: ElementId, label: String, kind: &str,
     x: f64, y: f64, width: f64, height: f64, color: &str,
