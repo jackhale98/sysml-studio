@@ -266,6 +266,22 @@ function textWidth(label: string, fontSize = 11): number {
   return label.length * fontSize * 0.65 + 24; // padding
 }
 
+/** Smart edge routing between two nodes based on relative position */
+function connectNodes(from: DiagramNode, to: DiagramNode): [number, number][] {
+  const fromCy = from.y + from.height / 2;
+  const toCy = to.y + to.height / 2;
+  if (Math.abs(fromCy - toCy) < from.height) {
+    // Same row: connect horizontally
+    return from.x < to.x
+      ? [[from.x + from.width, fromCy], [to.x, toCy]]
+      : [[from.x, fromCy], [to.x + to.width, toCy]];
+  } else if (from.y < to.y) {
+    return [[from.x + from.width / 2, from.y + from.height], [to.x + to.width / 2, to.y]];
+  } else {
+    return [[from.x + from.width / 2, from.y], [to.x + to.width / 2, to.y + to.height]];
+  }
+}
+
 /** Browser-side BDD layout — proper hierarchical tree */
 export function browserBddLayout(model: SysmlModel): DiagramLayout {
   const defs = model.elements.filter(e => {
@@ -281,12 +297,12 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
 
   const H = 58, GAP_X = 40, GAP_Y = 120;
 
-  type TreeNode = { def: SysmlElement; children: TreeNode[]; usageNames: Map<number, string>; w: number };
+  type TreeNode = { def: SysmlElement; children: TreeNode[]; usageNames: Map<number, string>; usageMults: Map<number, string | null>; w: number };
 
   const defById = new Map(defs.map(d => [d.id, d]));
   const defByName = new Map(defs.map(d => [d.name ?? "", d]));
 
-  const childrenOf = new Map<number, { usageName: string; childDef: SysmlElement }[]>();
+  const childrenOf = new Map<number, { usageName: string; childDef: SysmlElement; mult: string | null }[]>();
   const hasParent = new Set<number>();
 
   // Track placeholder defs created for unresolved type refs
@@ -327,7 +343,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         }
         if (parentDef.id !== childDef.id) {
           if (!childrenOf.has(parentDef.id)) childrenOf.set(parentDef.id, []);
-          childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? el.type_ref, childDef });
+          childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? el.type_ref, childDef, mult: el.multiplicity });
           hasParent.add(childDef.id);
         }
       } else {
@@ -343,7 +359,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         defs.push(usageNode);
         defById.set(usageNode.id, usageNode);
         if (!childrenOf.has(parentDef.id)) childrenOf.set(parentDef.id, []);
-        childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? "<unnamed>", childDef: usageNode });
+        childrenOf.get(parentDef.id)!.push({ usageName: el.name ?? "<unnamed>", childDef: usageNode, mult: el.multiplicity });
         hasParent.add(usageNode.id);
       }
     }
@@ -356,15 +372,17 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
     visited.add(def.id);
     const kids = childrenOf.get(def.id) ?? [];
     const usageNames = new Map<number, string>();
+    const usageMults = new Map<number, string | null>();
     const childTrees: TreeNode[] = [];
-    for (const { usageName, childDef } of kids) {
+    for (const { usageName, childDef, mult } of kids) {
       if (!visited.has(childDef.id)) {
         usageNames.set(childDef.id, usageName);
+        usageMults.set(childDef.id, mult);
         childTrees.push(buildTree(childDef));
       }
     }
     const w = Math.max(textWidth(def.name ?? "<unnamed>", 13), 130);
-    return { def, children: childTrees, usageNames, w };
+    return { def, children: childTrees, usageNames, usageMults, w };
   }
 
   const forest = roots.map(r => buildTree(r));
@@ -409,6 +427,9 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         const childNodeW = child.w;
         const childNodeX = childX + (childAvailWidth - childNodeW) / 2;
         const usageName = tree.usageNames.get(child.def.id);
+        const mult = tree.usageMults.get(child.def.id);
+        const edgeLabel = usageName && mult ? `${usageName} [${mult}]`
+          : usageName ?? (mult ? `[${mult}]` : null);
 
         // Edge: vertical from parent bottom center, route to child top center
         const parentCx = nodeX + nodeW / 2;
@@ -417,7 +438,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
 
         edges.push({
           from_id: tree.def.id, to_id: child.def.id,
-          label: usageName ?? null, edge_type: "composition",
+          label: edgeLabel, edge_type: "composition",
           points: [
             [parentCx, nodeY + H],
             [parentCx, midY],
@@ -878,8 +899,12 @@ export function browserIbdLayout(model: SysmlModel, blockName?: string): Diagram
   );
   const connections = model.elements.filter(e =>
     typeof e.kind === "string" &&
-    (e.kind === "connection_usage" || e.kind === "connect_statement") &&
-    e.parent_id === blockDef.id
+    (e.kind === "connection_usage" || e.kind === "connect_statement" || e.kind === "interface_usage") &&
+    (e.parent_id === blockDef.id || model.elements.some(p => p.id === e.parent_id && p.parent_id === blockDef.id))
+  );
+  const flows = model.elements.filter(e =>
+    typeof e.kind === "string" && e.kind === "flow_statement" &&
+    e.specializations && e.specializations.length >= 2
   );
 
   const MARGIN = 50, PART_H = 55, PORT_SIZE = 22, GAP = 50;
@@ -941,81 +966,83 @@ export function browserIbdLayout(model: SysmlModel, blockName?: string): Diagram
     });
   });
 
-  // First try explicit connect statements
+  // Helper to find a node by part/port name
+  const partNames = new Set(parts.map(p => p.name).filter(Boolean));
+  const portNames = new Set(ports.map(p => p.name).filter(Boolean));
+  const findNode = (name: string) =>
+    nodes.find(n => n.kind !== "block_container" && (n.label === name || n.label.startsWith(name + " :")));
+
   const connectedPairs = new Set<string>();
+
+  // Connect statements and connection usages with parsed source/target in specializations
   for (const conn of connections) {
-    if (conn.name && conn.type_ref) {
-      // Parse "partName.portName" endpoints
-      const fromParts = conn.name.split(".");
-      const toParts = conn.type_ref.split(".");
-      if (fromParts.length >= 1 && toParts.length >= 1) {
-        const fromPartName = fromParts[0];
-        const toPartName = toParts[0];
-        const fromNode = nodes.find(n => n.kind === "part" && n.label.startsWith(fromPartName));
-        const toNode = nodes.find(n => n.kind === "part" && n.label.startsWith(toPartName));
-        if (fromNode && toNode) {
-          const pairKey = [fromNode.element_id, toNode.element_id].sort().join("-");
-          connectedPairs.add(pairKey);
-          const label = fromParts[1] && toParts[1] ? `${fromParts[1]} - ${toParts[1]}` : null;
-          edges.push({
-            from_id: fromNode.element_id, to_id: toNode.element_id,
-            label, edge_type: "connection",
-            points: [
-              [fromNode.x + PART_W, fromNode.y + PART_H / 2],
-              [fromNode.x + PART_W + GAP * 0.3, fromNode.y + PART_H / 2],
-              [toNode.x - GAP * 0.3, toNode.y + PART_H / 2],
-              [toNode.x, toNode.y + PART_H / 2],
-            ],
-          });
-        }
+    if (conn.specializations && conn.specializations.length >= 2) {
+      const srcName = conn.specializations[0].split(".")[0];
+      const tgtName = conn.specializations[1].split(".")[0];
+      if (!partNames.has(srcName) && !portNames.has(srcName)) continue;
+      if (!partNames.has(tgtName) && !portNames.has(tgtName)) continue;
+
+      const fromNode = findNode(srcName);
+      const toNode = findNode(tgtName);
+      if (fromNode && toNode && fromNode.element_id !== toNode.element_id) {
+        const pairKey = [fromNode.element_id, toNode.element_id].sort().join("-");
+        if (connectedPairs.has(pairKey)) continue;
+        connectedPairs.add(pairKey);
+        const srcPort = conn.specializations[0].split(".")[1] ?? "";
+        const tgtPort = conn.specializations[1].split(".")[1] ?? "";
+        const label = conn.name ?? (srcPort || tgtPort
+          ? `${srcPort || srcName} → ${tgtPort || tgtName}` : null);
+        edges.push({
+          from_id: fromNode.element_id, to_id: toNode.element_id,
+          label, edge_type: "connection",
+          points: connectNodes(fromNode, toNode),
+        });
+      }
+    } else if (conn.type_ref) {
+      // Fallback: parent → type_ref
+      const fromNode = conn.parent_id != null ? nodes.find(n => n.element_id === conn.parent_id) : undefined;
+      const toNode = findNode(conn.type_ref);
+      if (fromNode && toNode && fromNode.element_id !== toNode.element_id) {
+        const pairKey = [fromNode.element_id, toNode.element_id].sort().join("-");
+        if (connectedPairs.has(pairKey)) continue;
+        connectedPairs.add(pairKey);
+        edges.push({
+          from_id: fromNode.element_id, to_id: toNode.element_id,
+          label: conn.name ?? null, edge_type: "connection",
+          points: connectNodes(fromNode, toNode),
+        });
       }
     }
   }
 
-  // Connect parts to each other based on matching port types
-  // Simple heuristic: if two parts have ports of the same type, connect them
-  for (let i = 0; i < parts.length; i++) {
-    for (let j = i + 1; j < parts.length; j++) {
-      // Check if they share port types via their definitions
-      const partIPorts = model.elements.filter(e =>
-        typeof e.kind === "string" && e.kind === "port_usage" && e.parent_id === parts[i].id
-      );
-      const partJPorts = model.elements.filter(e =>
-        typeof e.kind === "string" && e.kind === "port_usage" && e.parent_id === parts[j].id
-      );
+  // Flow edges
+  for (const flow of flows) {
+    const srcName = flow.specializations![0].split(".")[0];
+    const tgtName = flow.specializations![1].split(".")[0];
+    if (!partNames.has(srcName) && !portNames.has(srcName)) continue;
+    if (!partNames.has(tgtName) && !portNames.has(tgtName)) continue;
 
-      // Also check ports defined on the type_ref definitions
-      const defI = model.elements.find(e => e.name === parts[i].type_ref && typeof e.kind === "string" && e.kind === "part_def");
-      const defJ = model.elements.find(e => e.name === parts[j].type_ref && typeof e.kind === "string" && e.kind === "part_def");
-      const defIPorts = defI ? model.elements.filter(e => typeof e.kind === "string" && e.kind === "port_usage" && e.parent_id === defI.id) : [];
-      const defJPorts = defJ ? model.elements.filter(e => typeof e.kind === "string" && e.kind === "port_usage" && e.parent_id === defJ.id) : [];
+    const fromNode = findNode(srcName);
+    const toNode = findNode(tgtName);
+    if (fromNode && toNode && fromNode.element_id !== toNode.element_id) {
+      const label = flow.name ?? (flow.type_ref ? `«${flow.type_ref}»` : null);
+      edges.push({
+        from_id: fromNode.element_id, to_id: toNode.element_id,
+        label, edge_type: "flow",
+        points: connectNodes(fromNode, toNode),
+      });
+    }
+  }
 
-      const allIPorts = [...partIPorts, ...defIPorts];
-      const allJPorts = [...partJPorts, ...defJPorts];
-
-      for (const pi of allIPorts) {
-        for (const pj of allJPorts) {
-          if (pi.type_ref && pi.type_ref === pj.type_ref) {
-            const nodeI = nodes.find(n => n.element_id === parts[i].id);
-            const nodeJ = nodes.find(n => n.element_id === parts[j].id);
-            if (nodeI && nodeJ) {
-              const pairKey = [parts[i].id, parts[j].id].sort().join("-");
-              if (connectedPairs.has(pairKey)) continue;
-              connectedPairs.add(pairKey);
-              edges.push({
-                from_id: parts[i].id, to_id: parts[j].id,
-                label: pi.type_ref, edge_type: "connection",
-                points: [
-                  [nodeI.x + PART_W, nodeI.y + PART_H / 2],
-                  [nodeI.x + PART_W + GAP * 0.3, nodeI.y + PART_H / 2],
-                  [nodeJ.x - GAP * 0.3, nodeJ.y + PART_H / 2],
-                  [nodeJ.x, nodeJ.y + PART_H / 2],
-                ],
-              });
-            }
-          }
-        }
-      }
+  // Port direction indicators
+  for (const portNode of nodes.filter(n => n.kind === "port")) {
+    const portEl = model.elements.find(e => e.id === portNode.element_id);
+    if (portEl?.modifiers?.includes("in")) {
+      portNode.label = `→ ${portNode.label}`;
+    } else if (portEl?.modifiers?.includes("out")) {
+      portNode.label = `${portNode.label} →`;
+    } else if (portEl?.modifiers?.includes("inout")) {
+      portNode.label = `↔ ${portNode.label}`;
     }
   }
 

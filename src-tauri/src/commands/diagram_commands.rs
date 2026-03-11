@@ -42,6 +42,9 @@ fn estimate_text_width(text: &str, font_size: f64) -> f64 {
     (text.len() as f64 * font_size * 0.6).max(130.0)
 }
 
+/// BDD child entry: (usage_name, child_id, child_label, multiplicity)
+type BddChildEntry = (String, ElementId, String, Option<String>);
+
 /// Tree node for recursive BDD layout
 struct BddTreeNode {
     id: ElementId,
@@ -50,6 +53,7 @@ struct BddTreeNode {
     width: f64,
     children: Vec<BddTreeNode>,
     usage_names: std::collections::HashMap<ElementId, String>,
+    usage_mults: std::collections::HashMap<ElementId, Option<String>>,
 }
 
 fn subtree_pixel_width(tree: &BddTreeNode) -> f64 {
@@ -99,10 +103,17 @@ fn position_tree(
             let mid_y = node_y + NODE_HEIGHT + V_SPACING * 0.45;
 
             let usage_name = tree.usage_names.get(&child.id).cloned();
+            let mult = tree.usage_mults.get(&child.id).and_then(|m| m.clone());
+            let label = match (usage_name, mult) {
+                (Some(name), Some(m)) if !name.is_empty() => Some(format!("{} [{}]", name, m)),
+                (Some(name), None) if !name.is_empty() => Some(name),
+                (None, Some(m)) | (Some(_), Some(m)) => Some(format!("[{}]", m)),
+                _ => None,
+            };
             edges.push(DiagramEdge {
                 from_id: tree.id,
                 to_id: child.id,
-                label: usage_name,
+                label,
                 edge_type: "composition".into(),
                 points: vec![
                     (parent_cx, node_y + NODE_HEIGHT),
@@ -166,8 +177,8 @@ pub fn compute_bdd_layout(
         .collect();
 
     // Build parent→children map from part usages
-    let mut children_of: std::collections::HashMap<ElementId, Vec<(String, ElementId, String)>> =
-        std::collections::HashMap::new(); // parent_id -> [(usage_name, child_id, child_label)]
+    let mut children_of: std::collections::HashMap<ElementId, Vec<BddChildEntry>> =
+        std::collections::HashMap::new(); // parent_id -> [(usage_name, child_id, child_label, multiplicity)]
     let mut has_parent: std::collections::HashSet<ElementId> = std::collections::HashSet::new();
     let mut next_virtual_id: ElementId = u32::MAX;
 
@@ -190,15 +201,16 @@ pub fn compute_bdd_layout(
         let usage_name = el.name.clone().unwrap_or_default();
 
         if let Some(ref type_ref) = el.type_ref {
+            let mult = el.multiplicity.clone();
             let child_entry = if let Some(&(child_id, _)) = def_by_name.get(type_ref.as_str()) {
                 if child_id == parent_def_id { continue; }
-                (usage_name, child_id, type_ref.clone())
+                (usage_name, child_id, type_ref.clone(), mult)
             } else {
                 // Virtual node for unresolved type
                 let vid = next_virtual_id;
                 next_virtual_id = next_virtual_id.wrapping_sub(1);
                 def_by_name.insert(type_ref.clone(), (vid, "#94a3b8".into()));
-                (usage_name, vid, type_ref.clone())
+                (usage_name, vid, type_ref.clone(), mult)
             };
             has_parent.insert(child_entry.1);
             children_of.entry(parent_def_id).or_default().push(child_entry);
@@ -206,7 +218,7 @@ pub fn compute_bdd_layout(
             let vid = next_virtual_id;
             next_virtual_id = next_virtual_id.wrapping_sub(1);
             has_parent.insert(vid);
-            children_of.entry(parent_def_id).or_default().push((usage_name.clone(), vid, usage_name));
+            children_of.entry(parent_def_id).or_default().push((usage_name.clone(), vid, usage_name, None));
         }
     }
 
@@ -223,7 +235,7 @@ pub fn compute_bdd_layout(
         id: ElementId,
         label: String,
         color: String,
-        children_of: &std::collections::HashMap<ElementId, Vec<(String, ElementId, String)>>,
+        children_of: &std::collections::HashMap<ElementId, Vec<BddChildEntry>>,
         def_by_name: &std::collections::HashMap<String, (ElementId, String)>,
         visited: &mut std::collections::HashSet<ElementId>,
     ) -> BddTreeNode {
@@ -231,16 +243,18 @@ pub fn compute_bdd_layout(
         let width = estimate_text_width(&label, 13.0);
         let kids = children_of.get(&id).cloned().unwrap_or_default();
         let mut usage_names = std::collections::HashMap::new();
+        let mut usage_mults = std::collections::HashMap::new();
         let mut child_trees = Vec::new();
-        for (usage_name, child_id, child_label) in kids {
+        for (usage_name, child_id, child_label, mult) in kids {
             if visited.contains(&child_id) { continue; }
             let child_color = def_by_name.get(&child_label)
                 .map(|(_, c)| c.clone())
                 .unwrap_or_else(|| "#94a3b8".into());
             usage_names.insert(child_id, usage_name);
+            usage_mults.insert(child_id, mult);
             child_trees.push(build_tree(child_id, child_label, child_color, children_of, def_by_name, visited));
         }
-        BddTreeNode { id, label, color, width, children: child_trees, usage_names }
+        BddTreeNode { id, label, color, width, children: child_trees, usage_names, usage_mults }
     }
 
     let forest: Vec<BddTreeNode> = roots.iter().map(|r| {
@@ -836,34 +850,133 @@ pub fn compute_ibd_layout(
         });
     }
 
-    // Connection edges between parts
-    let connections: Vec<&SysmlElement> = model.elements.iter()
+    // Build lookup sets for matching connection endpoints
+    let part_labels: std::collections::HashSet<&str> = children.iter()
+        .filter_map(|c| c.name.as_deref())
+        .collect();
+    let port_labels: std::collections::HashSet<&str> = ports.iter()
+        .filter_map(|p| p.name.as_deref())
+        .collect();
+
+    // Connection edges from ConnectStatement elements (sysml-core parsed source/target)
+    for conn in model.elements.iter().filter(|e| e.kind == ElementKind::ConnectStatement && e.specializations.len() >= 2) {
+        let src_name = conn.specializations[0].split('.').next().unwrap_or(&conn.specializations[0]);
+        let tgt_name = conn.specializations[1].split('.').next().unwrap_or(&conn.specializations[1]);
+
+        let src_in_block = part_labels.contains(src_name) || port_labels.contains(src_name);
+        let tgt_in_block = part_labels.contains(tgt_name) || port_labels.contains(tgt_name);
+        if !src_in_block || !tgt_in_block { continue; }
+
+        let from_node = nodes.iter().find(|n| n.label == src_name && n.kind != "block_container");
+        let to_node = nodes.iter().find(|n| n.label == tgt_name && n.kind != "block_container");
+
+        if let (Some(from), Some(to)) = (from_node, to_node) {
+            if from.element_id == to.element_id { continue; }
+            let label = conn.name.clone().or_else(|| {
+                let src_port = conn.specializations[0].split('.').nth(1).unwrap_or("");
+                let tgt_port = conn.specializations[1].split('.').nth(1).unwrap_or("");
+                if !src_port.is_empty() || !tgt_port.is_empty() {
+                    Some(format!("{} → {}",
+                        if src_port.is_empty() { src_name } else { src_port },
+                        if tgt_port.is_empty() { tgt_name } else { tgt_port }
+                    ))
+                } else {
+                    None
+                }
+            });
+            edges.push(DiagramEdge {
+                from_id: from.element_id, to_id: to.element_id,
+                label, edge_type: "connection".into(),
+                points: connect_nodes(from, to),
+            });
+        }
+    }
+
+    // ConnectionUsage/InterfaceUsage with parsed source/target in specializations
+    for conn in model.elements.iter()
         .filter(|e| matches!(e.kind, ElementKind::ConnectionUsage | ElementKind::InterfaceUsage))
+        .filter(|e| e.specializations.len() >= 2)
         .filter(|e| e.parent_id == Some(block.id) || {
             e.parent_id.map(|pid| model.elements.iter().any(|p| p.id == pid && p.parent_id == Some(block.id)))
                 .unwrap_or(false)
         })
-        .collect();
+    {
+        let src_name = conn.specializations[0].split('.').next().unwrap_or(&conn.specializations[0]);
+        let tgt_name = conn.specializations[1].split('.').next().unwrap_or(&conn.specializations[1]);
 
-    for conn in &connections {
+        let from_node = nodes.iter().find(|n| n.label == src_name && n.kind != "block_container");
+        let to_node = nodes.iter().find(|n| n.label == tgt_name && n.kind != "block_container");
+
+        if let (Some(from), Some(to)) = (from_node, to_node) {
+            if from.element_id == to.element_id { continue; }
+            if edges.iter().any(|e| e.from_id == from.element_id && e.to_id == to.element_id) { continue; }
+            edges.push(DiagramEdge {
+                from_id: from.element_id, to_id: to.element_id,
+                label: conn.name.clone(), edge_type: "connection".into(),
+                points: connect_nodes(from, to),
+            });
+        }
+    }
+
+    // Fallback: ConnectionUsage/InterfaceUsage without specializations (old logic)
+    for conn in model.elements.iter()
+        .filter(|e| matches!(e.kind, ElementKind::ConnectionUsage | ElementKind::InterfaceUsage))
+        .filter(|e| e.specializations.len() < 2)
+        .filter(|e| e.parent_id == Some(block.id) || {
+            e.parent_id.map(|pid| model.elements.iter().any(|p| p.id == pid && p.parent_id == Some(block.id)))
+                .unwrap_or(false)
+        })
+    {
         if let Some(ref type_ref) = conn.type_ref {
-            // Try to find source (parent) and target (type_ref) among placed nodes
             if let (Some(from_id), Some(to_node)) = (
                 conn.parent_id,
-                nodes.iter().find(|n| n.label == *type_ref)
+                nodes.iter().find(|n| n.label == *type_ref && n.kind != "block_container")
             ) {
                 if let Some(from_node) = nodes.iter().find(|n| n.element_id == from_id) {
+                    if edges.iter().any(|e| e.from_id == from_node.element_id && e.to_id == to_node.element_id) { continue; }
                     edges.push(DiagramEdge {
-                        from_id: from_node.element_id,
-                        to_id: to_node.element_id,
-                        label: conn.name.clone(),
-                        edge_type: "connection".into(),
-                        points: vec![
-                            (from_node.x + from_node.width / 2.0, from_node.y + from_node.height),
-                            (to_node.x + to_node.width / 2.0, to_node.y),
-                        ],
+                        from_id: from_node.element_id, to_id: to_node.element_id,
+                        label: conn.name.clone(), edge_type: "connection".into(),
+                        points: connect_nodes(from_node, to_node),
                     });
                 }
+            }
+        }
+    }
+
+    // Flow edges from FlowStatement elements
+    for flow in model.elements.iter().filter(|e| e.kind == ElementKind::FlowStatement && e.specializations.len() >= 2) {
+        let src_name = flow.specializations[0].split('.').next().unwrap_or(&flow.specializations[0]);
+        let tgt_name = flow.specializations[1].split('.').next().unwrap_or(&flow.specializations[1]);
+
+        let src_in_block = part_labels.contains(src_name) || port_labels.contains(src_name);
+        let tgt_in_block = part_labels.contains(tgt_name) || port_labels.contains(tgt_name);
+        if !src_in_block || !tgt_in_block { continue; }
+
+        let from_node = nodes.iter().find(|n| n.label == src_name && n.kind != "block_container");
+        let to_node = nodes.iter().find(|n| n.label == tgt_name && n.kind != "block_container");
+
+        if let (Some(from), Some(to)) = (from_node, to_node) {
+            if from.element_id == to.element_id { continue; }
+            let label = flow.name.clone()
+                .or_else(|| flow.type_ref.as_ref().map(|t| format!("«{}»", t)));
+            edges.push(DiagramEdge {
+                from_id: from.element_id, to_id: to.element_id,
+                label, edge_type: "flow".into(),
+                points: connect_nodes(from, to),
+            });
+        }
+    }
+
+    // Port direction indicators
+    for port_node in nodes.iter_mut().filter(|n| n.kind == "port") {
+        if let Some(port_el) = model.elements.iter().find(|e| e.id == port_node.element_id) {
+            if port_el.modifiers.iter().any(|m| m == "in") {
+                port_node.label = format!("→ {}", port_node.label);
+            } else if port_el.modifiers.iter().any(|m| m == "out") {
+                port_node.label = format!("{} →", port_node.label);
+            } else if port_el.modifiers.iter().any(|m| m == "inout") {
+                port_node.label = format!("↔ {}", port_node.label);
             }
         }
     }
@@ -873,6 +986,33 @@ pub fn compute_ibd_layout(
         (20.0 + container_h + 20.0).max(300.0));
 
     Ok(DiagramLayout { diagram_type: "ibd".into(), nodes, edges, bounds })
+}
+
+/// Smart edge routing between two nodes based on relative position
+fn connect_nodes(from: &DiagramNode, to: &DiagramNode) -> Vec<(f64, f64)> {
+    let from_cy = from.y + from.height / 2.0;
+    let to_cy = to.y + to.height / 2.0;
+
+    // Same row: connect horizontally
+    if (from_cy - to_cy).abs() < from.height {
+        if from.x < to.x {
+            vec![(from.x + from.width, from_cy), (to.x, to_cy)]
+        } else {
+            vec![(from.x, from_cy), (to.x + to.width, to_cy)]
+        }
+    } else if from.y < to.y {
+        // From is above to
+        vec![
+            (from.x + from.width / 2.0, from.y + from.height),
+            (to.x + to.width / 2.0, to.y),
+        ]
+    } else {
+        // From is below to
+        vec![
+            (from.x + from.width / 2.0, from.y),
+            (to.x + to.width / 2.0, to.y + to.height),
+        ]
+    }
 }
 
 fn kind_to_color(kind: &ElementKind) -> String {
