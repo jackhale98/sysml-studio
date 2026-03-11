@@ -38,6 +38,7 @@ function makeElement(overrides: Partial<SysmlElement> & { id: number; kind: stri
     multiplicity: null,
     doc: null,
     short_name: null,
+    value_expr: null,
     ...overrides,
     kind: overrides.kind as any,
   };

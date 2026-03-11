@@ -170,6 +170,8 @@ pub struct SysmlElement {
     pub doc: Option<String>,
     /// Short name (e.g., `<V>`)
     pub short_name: Option<String>,
+    /// Default value expression text (e.g., "150.0" from `attribute mass : Real = 150.0`)
+    pub value_expr: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

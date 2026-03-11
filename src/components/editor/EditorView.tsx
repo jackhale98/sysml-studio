@@ -10,12 +10,7 @@ import { useModelStore } from "../../stores/model-store";
 import { useUIStore } from "../../stores/ui-store";
 import {
   sysmlBrowserHighlighting,
-  sysmlTreeSitterHighlighting,
-  dispatchHighlightTokens,
 } from "./sysml-language";
-import { getHighlightRanges } from "../../lib/tauri-bridge";
-
-const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 
 // ─── CodeMirror Theme ───
 
@@ -105,28 +100,12 @@ export function EditorView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<CMEditorView | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const themeCompartment = useRef(new Compartment());
   // Track if source is being updated from outside (store → editor sync)
   const externalUpdateRef = useRef(false);
 
-  // Choose highlight mode
-  const highlightExtension = useMemo(() => {
-    return isTauri ? sysmlTreeSitterHighlighting() : sysmlBrowserHighlighting();
-  }, []);
-
-  // Fetch tree-sitter highlights from Rust backend
-  const fetchHighlights = useCallback(async (view: CMEditorView) => {
-    if (!isTauri) return;
-    try {
-      const tokens = await getHighlightRanges();
-      if (tokens.length > 0 && viewRef.current === view) {
-        dispatchHighlightTokens(view, tokens);
-      }
-    } catch {
-      // Ignore — Rust backend may not have parsed yet
-    }
-  }, []);
+  // Use StreamLanguage highlighting for both Tauri and browser modes
+  const highlightExtension = useMemo(() => sysmlBrowserHighlighting(), []);
 
   // Initialize CodeMirror
   useEffect(() => {
@@ -137,10 +116,7 @@ export function EditorView() {
         const newSource = update.state.doc.toString();
         if (debounceRef.current) clearTimeout(debounceRef.current);
         debounceRef.current = setTimeout(() => {
-          updateSource(newSource).then(() => {
-            // After parse completes, fetch new highlights
-            if (viewRef.current) fetchHighlights(viewRef.current);
-          });
+          updateSource(newSource);
         }, 400);
       }
     });
@@ -179,14 +155,10 @@ export function EditorView() {
     const view = new CMEditorView({ state, parent: containerRef.current });
     viewRef.current = view;
 
-    // Initial highlight fetch
-    fetchHighlights(view);
-
     return () => {
       view.destroy();
       viewRef.current = null;
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
     };
     // Only run on mount
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,10 +185,8 @@ export function EditorView() {
         changes: { from: 0, to: currentDoc.length, insert: source },
       });
       externalUpdateRef.current = false;
-      // Fetch highlights after external source change
-      fetchHighlights(view);
     }
-  }, [source, fetchHighlights]);
+  }, [source]);
 
   // Sync parse errors as CodeMirror diagnostics
   useEffect(() => {

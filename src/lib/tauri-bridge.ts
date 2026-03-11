@@ -1,7 +1,10 @@
 import type {
   SysmlModel, SysmlElement, ElementId,
   CompletenessReport, TraceabilityEntry,
-  DiagramLayout, ValidationReport, HighlightToken
+  DiagramLayout, ValidationReport, HighlightToken,
+  BomNode, ConstraintModel, CalcModel, EvalResult,
+  StateMachineModel, SimulationState,
+  ActionModel, ActionExecState,
 } from "./element-types";
 import {
   browserParse, browserBddLayout, browserStmLayout,
@@ -217,6 +220,85 @@ function browserHighlight(model: SysmlModel | null): HighlightToken[] {
   // For browser mode we don't have the raw source bytes accessible from the model,
   // so return empty — the CodeMirror StreamLanguage handles browser-mode highlighting
   return [];
+}
+
+// ─── Analysis Commands ───
+
+export async function computeBom(rootName?: string): Promise<BomNode[]> {
+  if (isTauri) return tauriInvoke<BomNode[]>("compute_bom", { rootName: rootName ?? null });
+  // Browser fallback: build simple BOM from cached model
+  if (cachedModel) return browserBom(cachedModel, rootName);
+  return [];
+}
+
+export async function listConstraints(): Promise<ConstraintModel[]> {
+  if (isTauri) return tauriInvoke<ConstraintModel[]>("list_constraints");
+  return [];
+}
+
+export async function listCalculations(): Promise<CalcModel[]> {
+  if (isTauri) return tauriInvoke<CalcModel[]>("list_calculations");
+  return [];
+}
+
+export async function evaluateConstraint(constraintName: string, bindings: Record<string, number>): Promise<EvalResult> {
+  if (isTauri) return tauriInvoke<EvalResult>("evaluate_constraint", { constraintName, bindings });
+  return { name: constraintName, success: false, value: "", error: "Not available in browser mode" };
+}
+
+export async function evaluateCalculation(calcName: string, bindings: Record<string, number>): Promise<EvalResult> {
+  if (isTauri) return tauriInvoke<EvalResult>("evaluate_calculation", { calcName, bindings });
+  return { name: calcName, success: false, value: "", error: "Not available in browser mode" };
+}
+
+export async function listStateMachines(): Promise<StateMachineModel[]> {
+  if (isTauri) return tauriInvoke<StateMachineModel[]>("list_state_machines");
+  return [];
+}
+
+export async function simulateStateMachine(machineName: string, events: string[], maxSteps?: number): Promise<SimulationState> {
+  if (isTauri) return tauriInvoke<SimulationState>("simulate_state_machine", { machineName, events, maxSteps: maxSteps ?? null });
+  return { machine_name: machineName, current_state: "", step: 0, env: { bindings: {} }, trace: [], status: "Completed" };
+}
+
+export async function listActions(): Promise<ActionModel[]> {
+  if (isTauri) return tauriInvoke<ActionModel[]>("list_actions");
+  return [];
+}
+
+export async function executeAction(actionName: string, maxSteps?: number): Promise<ActionExecState> {
+  if (isTauri) return tauriInvoke<ActionExecState>("execute_action", { actionName, maxSteps: maxSteps ?? null });
+  return { action_name: actionName, step: 0, env: { bindings: {} }, trace: [], status: "Completed" };
+}
+
+/** Simple browser-side BOM builder from model elements */
+function browserBom(model: SysmlModel, rootName?: string): BomNode[] {
+  const els = model.elements;
+  const roots = rootName
+    ? els.filter(e => e.name === rootName && (e.kind === "part_def" || e.kind === "part_usage"))
+    : els.filter(e => (e.kind === "part_def" || e.kind === "part_usage") &&
+        (e.parent_id === null || els.find(p => p.id === e.parent_id)?.kind === "package"));
+
+  const visited = new Set<ElementId>();
+  function buildNode(el: SysmlElement, mult: number): BomNode {
+    visited.add(el.id);
+    const attrs = els.filter(c => c.parent_id === el.id && c.kind === "attribute_usage")
+      .map(a => ({ name: a.name ?? "", value: a.value_expr ? parseFloat(a.value_expr) || null : null, unit: null, type_ref: a.type_ref }));
+    const children: BomNode[] = [];
+    for (const child of els.filter(c => c.parent_id === el.id && c.kind === "part_usage")) {
+      if (visited.has(child.id)) continue;
+      const cm = child.multiplicity ? parseFloat(child.multiplicity) || 1 : 1;
+      const resolved = child.type_ref ? els.find(e => e.name === child.type_ref && e.kind === "part_def") : undefined;
+      children.push(buildNode(resolved && !visited.has(resolved.id) ? resolved : child, cm));
+    }
+    const rollups: Record<string, number> = {};
+    for (const a of attrs) if (a.value !== null) rollups[a.name] = (rollups[a.name] ?? 0) + a.value * mult;
+    for (const c of children) for (const [k, v] of Object.entries(c.rollups)) rollups[k] = (rollups[k] ?? 0) + v;
+    const kind = typeof el.kind === "string" ? el.kind : "other";
+    return { element_id: el.id, name: el.name ?? "<unnamed>", kind, type_ref: el.type_ref, multiplicity: mult, attributes: attrs, children, rollups };
+  }
+
+  return roots.map(r => buildNode(r, 1));
 }
 
 // Diagram Commands

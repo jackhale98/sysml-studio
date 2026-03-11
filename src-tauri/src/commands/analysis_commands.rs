@@ -1,0 +1,278 @@
+//! Analysis commands: BOM rollups, constraint/calc evaluation, state machine sim, action flow sim.
+//!
+//! Leverages sysml-core's simulation engine directly — its types already derive Serialize
+//! so we pass them through to the frontend with minimal wrapping.
+
+use serde::{Serialize, Deserialize};
+use tauri::State;
+use crate::commands::parse_commands::AppState;
+use crate::model::elements::*;
+
+// Re-export sysml-core types that are already Serialize — no wrapper needed
+use sysml_core::sim::constraint_eval::{ConstraintModel, CalcModel};
+use sysml_core::sim::state_machine::StateMachineModel;
+use sysml_core::sim::state_sim::SimulationState;
+use sysml_core::sim::action_flow::ActionModel;
+use sysml_core::sim::action_exec::ActionExecState;
+use sysml_core::sim::expr::{Env, Value};
+
+// ─── BOM / Rollup (Studio-specific — not in sysml-core) ───
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BomNode {
+    pub element_id: ElementId,
+    pub name: String,
+    pub kind: String,
+    pub type_ref: Option<String>,
+    pub multiplicity: f64,
+    pub attributes: Vec<BomAttribute>,
+    pub children: Vec<BomNode>,
+    pub rollups: std::collections::HashMap<String, f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BomAttribute {
+    pub name: String,
+    pub value: Option<f64>,
+    pub unit: Option<String>,
+    pub type_ref: Option<String>,
+}
+
+/// Eval result wrapper — thin envelope around sysml-core's evaluator output
+#[derive(Debug, Clone, Serialize)]
+pub struct EvalResult {
+    pub name: String,
+    pub success: bool,
+    pub value: String,
+    pub error: Option<String>,
+}
+
+// ─── BOM Rollup ───
+
+#[tauri::command]
+pub fn compute_bom(
+    root_name: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<BomNode>, String> {
+    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+    let model = model_lock.as_ref().ok_or("No model loaded")?;
+
+    let roots: Vec<&SysmlElement> = if let Some(ref name) = root_name {
+        model.elements.iter()
+            .filter(|e| e.name.as_deref() == Some(name.as_str()) &&
+                matches!(e.kind, ElementKind::PartDef | ElementKind::PartUsage))
+            .collect()
+    } else {
+        model.elements.iter()
+            .filter(|e| matches!(e.kind, ElementKind::PartDef | ElementKind::PartUsage) &&
+                e.parent_id.map(|pid| model.elements.iter().find(|p| p.id == pid)
+                    .map(|p| p.kind == ElementKind::Package).unwrap_or(false))
+                    .unwrap_or(true))
+            .collect()
+    };
+
+    Ok(roots.iter()
+        .map(|r| build_bom_node(r, &model.elements, 1.0, &mut std::collections::HashSet::new()))
+        .collect())
+}
+
+fn build_bom_node(
+    el: &SysmlElement,
+    all: &[SysmlElement],
+    multiplicity: f64,
+    visited: &mut std::collections::HashSet<ElementId>,
+) -> BomNode {
+    visited.insert(el.id);
+
+    let attributes: Vec<BomAttribute> = all.iter()
+        .filter(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::AttributeUsage)
+        .map(|attr| BomAttribute {
+            name: attr.name.clone().unwrap_or_default(),
+            value: attr.value_expr.as_ref().and_then(|v| v.trim().parse::<f64>().ok()),
+            unit: None,
+            type_ref: attr.type_ref.clone(),
+        })
+        .collect();
+
+    let mut children = Vec::new();
+    for child in all.iter().filter(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::PartUsage) {
+        if visited.contains(&child.id) { continue; }
+        let child_mult = parse_multiplicity(child.multiplicity.as_deref());
+
+        // Resolve type_ref → definition for richer attribute data
+        let resolved = child.type_ref.as_deref()
+            .and_then(|tref| all.iter().find(|e| e.kind.is_definition() && e.name.as_deref() == Some(tref)))
+            .filter(|def| !visited.contains(&def.id));
+
+        children.push(build_bom_node(
+            resolved.unwrap_or(child), all, child_mult, visited,
+        ));
+    }
+
+    // Rollups: own attributes + children's rollups (scaled by multiplicity)
+    let mut rollups: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for attr in &attributes {
+        if let Some(val) = attr.value {
+            *rollups.entry(attr.name.clone()).or_default() += val * multiplicity;
+        }
+    }
+    for child in &children {
+        for (key, &val) in &child.rollups {
+            *rollups.entry(key.clone()).or_default() += val;
+        }
+    }
+
+    BomNode {
+        element_id: el.id,
+        name: el.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+        kind: el.kind.display_label().to_string(),
+        type_ref: el.type_ref.clone(),
+        multiplicity,
+        attributes,
+        children,
+        rollups,
+    }
+}
+
+fn parse_multiplicity(mult: Option<&str>) -> f64 {
+    match mult {
+        None => 1.0,
+        Some(s) => {
+            let s = s.trim().trim_start_matches('[').trim_end_matches(']');
+            if s.contains("..") {
+                s.split("..").last().and_then(|p| p.parse::<f64>().ok()).unwrap_or(1.0)
+            } else if s == "*" {
+                1.0
+            } else {
+                s.parse::<f64>().unwrap_or(1.0)
+            }
+        }
+    }
+}
+
+// ─── Constraints & Calculations (delegates to sysml-core extractors + evaluator) ───
+
+/// Returns sysml-core's ConstraintModel directly — already Serialize
+#[tauri::command]
+pub fn list_constraints(state: State<'_, AppState>) -> Result<Vec<ConstraintModel>, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    if source.is_empty() { return Ok(vec![]); }
+    Ok(sysml_core::sim::constraint_eval::extract_constraints("<buffer>", &source))
+}
+
+/// Returns sysml-core's CalcModel directly
+#[tauri::command]
+pub fn list_calculations(state: State<'_, AppState>) -> Result<Vec<CalcModel>, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    if source.is_empty() { return Ok(vec![]); }
+    Ok(sysml_core::sim::constraint_eval::extract_calculations("<buffer>", &source))
+}
+
+#[tauri::command]
+pub fn evaluate_constraint(
+    constraint_name: String,
+    bindings: std::collections::HashMap<String, f64>,
+    state: State<'_, AppState>,
+) -> Result<EvalResult, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    let constraints = sysml_core::sim::constraint_eval::extract_constraints("<buffer>", &source);
+    let c = constraints.iter().find(|c| c.name == constraint_name)
+        .ok_or_else(|| format!("Constraint '{}' not found", constraint_name))?;
+    let expr = c.expression.as_ref().ok_or("Constraint has no expression")?;
+
+    let mut env = Env::new();
+    for (k, v) in &bindings { env.bind(k.clone(), Value::Number(*v)); }
+
+    match sysml_core::sim::eval::evaluate_constraint(expr, &env) {
+        Ok(result) => Ok(EvalResult { name: constraint_name, success: true, value: result.to_string(), error: None }),
+        Err(e) => Ok(EvalResult { name: constraint_name, success: false, value: String::new(), error: Some(e.message) }),
+    }
+}
+
+#[tauri::command]
+pub fn evaluate_calculation(
+    calc_name: String,
+    bindings: std::collections::HashMap<String, f64>,
+    state: State<'_, AppState>,
+) -> Result<EvalResult, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    let calcs = sysml_core::sim::constraint_eval::extract_calculations("<buffer>", &source);
+    let c = calcs.iter().find(|c| c.name == calc_name)
+        .ok_or_else(|| format!("Calculation '{}' not found", calc_name))?;
+    let expr = c.return_expr.as_ref().ok_or("Calculation has no return expression")?;
+
+    let mut env = Env::new();
+    for (k, v) in &bindings { env.bind(k.clone(), Value::Number(*v)); }
+    for (name, bind_expr) in &c.local_bindings {
+        if let Ok(val) = sysml_core::sim::eval::evaluate(bind_expr, &env) {
+            env.bind(name.clone(), val);
+        }
+    }
+
+    match sysml_core::sim::eval::evaluate_calc(expr, &env) {
+        Ok(result) => Ok(EvalResult { name: calc_name, success: true, value: result.to_string(), error: None }),
+        Err(e) => Ok(EvalResult { name: calc_name, success: false, value: String::new(), error: Some(e.message) }),
+    }
+}
+
+// ─── State Machine Simulation (delegates to sysml-core sim engine) ───
+
+/// Returns sysml-core's StateMachineModel directly
+#[tauri::command]
+pub fn list_state_machines(state: State<'_, AppState>) -> Result<Vec<StateMachineModel>, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    if source.is_empty() { return Ok(vec![]); }
+    Ok(sysml_core::sim::state_parser::extract_state_machines("<buffer>", &source))
+}
+
+/// Returns sysml-core's SimulationState directly
+#[tauri::command]
+pub fn simulate_state_machine(
+    machine_name: String,
+    events: Vec<String>,
+    max_steps: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<SimulationState, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    let machines = sysml_core::sim::state_parser::extract_state_machines("<buffer>", &source);
+    let machine = machines.iter().find(|m| m.name == machine_name)
+        .ok_or_else(|| format!("State machine '{}' not found", machine_name))?;
+
+    let config = sysml_core::sim::state_sim::SimConfig {
+        max_steps: max_steps.unwrap_or(100),
+        initial_env: Env::new(),
+        events,
+    };
+
+    Ok(sysml_core::sim::state_sim::simulate(machine, &config))
+}
+
+// ─── Action Flow Execution (delegates to sysml-core action engine) ───
+
+/// Returns sysml-core's ActionModel directly
+#[tauri::command]
+pub fn list_actions(state: State<'_, AppState>) -> Result<Vec<ActionModel>, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    if source.is_empty() { return Ok(vec![]); }
+    Ok(sysml_core::sim::action_parser::extract_actions("<buffer>", &source))
+}
+
+/// Returns sysml-core's ActionExecState directly
+#[tauri::command]
+pub fn execute_action(
+    action_name: String,
+    max_steps: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<ActionExecState, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    let actions = sysml_core::sim::action_parser::extract_actions("<buffer>", &source);
+    let action = actions.iter().find(|a| a.name == action_name)
+        .ok_or_else(|| format!("Action '{}' not found", action_name))?;
+
+    let config = sysml_core::sim::action_exec::ActionExecConfig {
+        max_steps: max_steps.unwrap_or(1000),
+        initial_env: Env::new(),
+    };
+
+    Ok(sysml_core::sim::action_exec::execute_action(action, &config))
+}

@@ -368,6 +368,7 @@ mod tests {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         }
     }
 

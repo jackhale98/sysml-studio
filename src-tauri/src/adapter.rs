@@ -45,6 +45,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: def.doc.clone(),
             short_name: def.short_name.clone(),
+            value_expr: None,
         });
 
         // Enum members as child elements
@@ -66,6 +67,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
                 multiplicity: None,
                 doc: member.doc.clone(),
                 short_name: None,
+                value_expr: None,
             });
         }
     }
@@ -103,6 +105,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: usage.multiplicity.as_ref().map(|m| m.to_string()),
             doc: None,
             short_name: usage.short_name.clone(),
+            value_expr: usage.value_expr.clone(),
         });
     }
 
@@ -125,6 +128,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         });
     }
 
@@ -146,6 +150,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         });
     }
 
@@ -167,6 +172,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         });
     }
 
@@ -188,6 +194,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         });
     }
 
@@ -209,6 +216,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         });
     }
 
@@ -236,6 +244,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: None,
             short_name: None,
+            value_expr: None,
         });
     }
 
@@ -258,6 +267,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: None,
             doc: Some(comment.text.clone()),
             short_name: None,
+            value_expr: None,
         });
     }
 

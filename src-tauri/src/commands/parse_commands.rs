@@ -12,6 +12,8 @@ pub struct AppState {
     pub current_graph: Mutex<Option<ElementGraph>>,
     /// sysml-core Model kept for lint checks and future analysis
     pub core_model: Mutex<Option<sysml_core::model::Model>>,
+    /// Current source text — needed for simulation extraction (constraint/calc/state/action parsers)
+    pub current_source: Mutex<String>,
 }
 
 #[tauri::command]
@@ -32,6 +34,7 @@ pub fn parse_source(source: String, state: State<'_, AppState>) -> Result<SysmlM
     *state.current_graph.lock().map_err(|e| e.to_string())? = Some(graph);
     *state.core_model.lock().map_err(|e| e.to_string())? = Some(core_model);
     *state.current_model.lock().map_err(|e| e.to_string())? = Some(model.clone());
+    *state.current_source.lock().map_err(|e| e.to_string())? = source;
 
     Ok(model)
 }

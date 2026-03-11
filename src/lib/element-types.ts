@@ -76,6 +76,7 @@ export interface SysmlElement {
   multiplicity: string | null;
   doc: string | null;
   short_name: string | null;
+  value_expr: string | null;
 }
 
 export interface ParseError {
@@ -167,6 +168,144 @@ export interface ValidationIssue {
 export interface ValidationReport {
   issues: ValidationIssue[];
   summary: { errors: number; warnings: number; infos: number };
+}
+
+// ─── Analysis Types ───
+
+// Studio-specific BOM rollup
+export interface BomNode {
+  element_id: ElementId;
+  name: string;
+  kind: string;
+  type_ref: string | null;
+  multiplicity: number;
+  attributes: BomAttribute[];
+  children: BomNode[];
+  rollups: Record<string, number>;
+}
+
+export interface BomAttribute {
+  name: string;
+  value: number | null;
+  unit: string | null;
+  type_ref: string | null;
+}
+
+// Thin wrapper for eval results
+export interface EvalResult {
+  name: string;
+  success: boolean;
+  value: string;
+  error: string | null;
+}
+
+// ─── sysml-core types (serialized directly from Rust) ───
+
+// sysml_core::sim::constraint_eval::ConstraintModel
+export interface ConstraintModel {
+  name: string;
+  params: Parameter[];
+  expression: unknown | null; // Expr AST
+  span: CoreSpan;
+}
+
+// sysml_core::sim::constraint_eval::CalcModel
+export interface CalcModel {
+  name: string;
+  params: Parameter[];
+  return_name: string | null;
+  return_type: string | null;
+  return_expr: unknown | null; // Expr AST
+  local_bindings: [string, unknown][]; // [(name, Expr)]
+  span: CoreSpan;
+}
+
+// sysml_core::sim::constraint_eval::Parameter
+export interface Parameter {
+  name: string;
+  type_ref: string | null;
+  direction: "In" | "Out" | "InOut";
+}
+
+// sysml_core::model::Span
+export interface CoreSpan {
+  start_row: number;
+  start_col: number;
+  end_row: number;
+  end_col: number;
+  start_byte: number;
+  end_byte: number;
+}
+
+// sysml_core::sim::state_machine::StateMachineModel
+export interface StateMachineModel {
+  name: string;
+  states: StateNode[];
+  transitions: CoreTransition[];
+  entry_state: string | null;
+  span: CoreSpan;
+}
+
+export interface StateNode {
+  name: string;
+  entry_action: unknown | null;
+  do_action: unknown | null;
+  exit_action: unknown | null;
+  span: CoreSpan;
+}
+
+export interface CoreTransition {
+  name: string | null;
+  source: string;
+  target: string;
+  trigger: { Signal: string } | "Completion" | null;
+  guard: unknown | null;
+  effect: unknown | null;
+  span: CoreSpan;
+}
+
+// sysml_core::sim::state_sim::SimulationState
+export interface SimulationState {
+  machine_name: string;
+  current_state: string;
+  step: number;
+  env: { bindings: Record<string, unknown> };
+  trace: SimStep[];
+  status: "Running" | "Completed" | "Deadlocked" | "MaxSteps";
+}
+
+export interface SimStep {
+  step: number;
+  from_state: string;
+  transition_name: string | null;
+  trigger: string | null;
+  guard_result: boolean | null;
+  effect: string | null;
+  to_state: string;
+  exit_action: string | null;
+  entry_action: string | null;
+}
+
+// sysml_core::sim::action_flow::ActionModel
+export interface ActionModel {
+  name: string;
+  steps: unknown[]; // ActionStep enum — complex recursive type
+  span: CoreSpan;
+}
+
+// sysml_core::sim::action_exec::ActionExecState
+export interface ActionExecState {
+  action_name: string;
+  step: number;
+  env: { bindings: Record<string, unknown> };
+  trace: ActionExecStep[];
+  status: "Running" | "Completed" | "Error" | "MaxSteps";
+}
+
+export interface ActionExecStep {
+  step: number;
+  kind: string;
+  description: string;
 }
 
 // Syntax highlighting token from tree-sitter

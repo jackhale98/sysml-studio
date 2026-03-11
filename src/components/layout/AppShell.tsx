@@ -5,6 +5,7 @@ import { ElementBrowser } from "../browser/ElementBrowser";
 import { DiagramView } from "../diagram/DiagramView";
 import { EditorView } from "../editor/EditorView";
 import { MbseDashboard } from "../mbse/MbseDashboard";
+import { AnalysisView } from "../analysis/AnalysisView";
 import { ElementDetail } from "../browser/ElementDetail";
 import { CreateElementDialog } from "../dialogs/CreateElementDialog";
 import { EditElementDialog } from "../dialogs/EditElementDialog";
@@ -111,6 +112,7 @@ export function AppShell() {
             {activeTab === "diagram" && <DiagramView />}
             {activeTab === "editor" && <EditorView />}
             {activeTab === "mbse" && <MbseDashboard />}
+            {activeTab === "analysis" && <AnalysisView />}
           </div>
 
           {showDetailSheet && <ElementDetail />}

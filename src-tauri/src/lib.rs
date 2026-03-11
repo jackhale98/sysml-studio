@@ -14,6 +14,7 @@ pub fn run() {
             current_model: Mutex::new(None),
             current_graph: Mutex::new(None),
             core_model: Mutex::new(None),
+            current_source: Mutex::new(String::new()),
         })
         .invoke_handler(tauri::generate_handler![
             commands::parse_commands::parse_source,
@@ -31,6 +32,15 @@ pub fn run() {
             commands::diagram_commands::compute_req_layout,
             commands::diagram_commands::compute_ucd_layout,
             commands::diagram_commands::compute_ibd_layout,
+            commands::analysis_commands::compute_bom,
+            commands::analysis_commands::list_constraints,
+            commands::analysis_commands::list_calculations,
+            commands::analysis_commands::evaluate_constraint,
+            commands::analysis_commands::evaluate_calculation,
+            commands::analysis_commands::list_state_machines,
+            commands::analysis_commands::simulate_state_machine,
+            commands::analysis_commands::list_actions,
+            commands::analysis_commands::execute_action,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

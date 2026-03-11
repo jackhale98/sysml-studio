@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { ElementId } from "../lib/element-types";
 
-export type TabId = "browser" | "diagram" | "editor" | "mbse";
+export type TabId = "browser" | "diagram" | "editor" | "mbse" | "analysis";
 export type DiagramType = "bdd" | "stm" | "req" | "ucd" | "ibd";
 export type ThemeMode = "dark" | "light";
 

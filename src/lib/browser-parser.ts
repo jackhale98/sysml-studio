@@ -120,7 +120,7 @@ export function browserParse(source: string): SysmlModel {
           id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
           category: category as Category, parent_id: parentId, children_ids: [],
           span: makeSpan(i, 0, lines[i].length), type_ref: null, specializations,
-          modifiers: [], multiplicity: null, doc: null, short_name: shortName,
+          modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: null,
         };
         ctx.elements.push(el);
         if (parentId !== null) {
@@ -154,7 +154,7 @@ export function browserParse(source: string): SysmlModel {
             id: ctx.nextId++, kind: kind as any, name: m[1], qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
-            modifiers: [], multiplicity: null, doc: null, short_name: shortName,
+            modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: null,
           };
           ctx.elements.push(el);
           if (parentId !== null) {
@@ -196,7 +196,7 @@ export function browserParse(source: string): SysmlModel {
             id: ctx.nextId++, kind: kind as any, name, qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
-            modifiers: [], multiplicity: null, doc: null, short_name: shortName,
+            modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: null,
           };
           ctx.elements.push(el);
           if (parentId !== null) {
@@ -334,7 +334,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
             category: "structure", parent_id: null, children_ids: [],
             span: { start_line: 0, start_col: 0, end_line: 0, end_col: 0, start_byte: 0, end_byte: 0 },
             type_ref: null, specializations: [], modifiers: [],
-            multiplicity: null, doc: null, short_name: null,
+            multiplicity: null, doc: null, short_name: null, value_expr: null,
           };
           defs.push(placeholderDef);
           defById.set(placeholderDef.id, placeholderDef);
@@ -354,7 +354,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
           parent_id: el.parent_id, children_ids: el.children_ids,
           span: el.span, type_ref: el.type_ref, specializations: el.specializations,
           modifiers: el.modifiers, multiplicity: el.multiplicity,
-          doc: el.doc, short_name: el.short_name,
+          doc: el.doc, short_name: el.short_name, value_expr: el.value_expr,
         };
         defs.push(usageNode);
         defById.set(usageNode.id, usageNode);

@@ -24,6 +24,7 @@ function makeEl(
     multiplicity: null,
     doc: null,
     short_name: null,
+    value_expr: null,
   };
 }
 
