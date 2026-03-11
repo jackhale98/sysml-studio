@@ -84,6 +84,14 @@ export async function pickSaveFile(defaultName?: string): Promise<string | null>
 /**
  * Resolve imports: scan source for `import` statements, load referenced files
  * from the same directory, and return combined source.
+ *
+ * Handles patterns like:
+ *   import Foo::*;       (wildcard)
+ *   import Foo::Bar;     (specific)
+ *   import Foo;           (bare package)
+ *   import Foo::**;       (recursive)
+ *
+ * Recursively resolves imports in imported files too.
  */
 export async function resolveImports(source: string, filePath: string): Promise<string> {
   if (!isTauri) return source; // Can't resolve file imports in browser mode
@@ -92,27 +100,32 @@ export async function resolveImports(source: string, filePath: string): Promise<
   const dir = filePath.substring(0, filePath.lastIndexOf("/") + 1) || filePath.substring(0, filePath.lastIndexOf("\\") + 1);
   if (!dir) return source;
 
-  // Find import statements like: import MyPackage::*; or import SomeFile::*;
-  const importRegex = /^\s*import\s+(\w+)::\*/gm;
-  const importedNames = new Set<string>();
-  let match;
-  while ((match = importRegex.exec(source)) !== null) {
-    importedNames.add(match[1]);
-  }
-
-  if (importedNames.size === 0) return source;
-
-  // Try to load .sysml files from same directory matching import names
+  const currentFileName = filePath.split("/").pop()?.split("\\").pop() ?? "";
+  const resolvedFiles = new Set<string>([currentFileName]);
   const importedSources: string[] = [];
-  for (const name of importedNames) {
-    for (const ext of [".sysml", ".sysml2"]) {
-      try {
-        const importPath = dir + name + ext;
-        const importSource = await readTextFile(importPath);
-        importedSources.push(`// --- Imported from ${name}${ext} ---\n${importSource}`);
-        break; // found it
-      } catch {
-        // File doesn't exist, skip
+
+  // Process sources in a queue to handle recursive imports
+  const pendingSources = [source];
+  while (pendingSources.length > 0) {
+    const currentSource = pendingSources.pop()!;
+    // Match any import statement and extract the first path component
+    const importRegex = /^\s*import\s+(\w+)/gm;
+    let match;
+    while ((match = importRegex.exec(currentSource)) !== null) {
+      const name = match[1];
+      for (const ext of [".sysml", ".sysml2"]) {
+        const fname = name + ext;
+        if (resolvedFiles.has(fname)) break;
+        try {
+          const importPath = dir + fname;
+          const importSource = await readTextFile(importPath);
+          resolvedFiles.add(fname);
+          importedSources.push(`// --- Imported from ${fname} ---\n${importSource}`);
+          pendingSources.push(importSource); // Check for nested imports
+          break;
+        } catch {
+          // File doesn't exist with this extension, try next
+        }
       }
     }
   }

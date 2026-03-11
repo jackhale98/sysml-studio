@@ -8,6 +8,8 @@ import {
 interface ModelState {
   model: SysmlModel | null;
   source: string;
+  /** Cached content from imported files — prepended to source for parsing, NOT saved */
+  importedPrefix: string;
   filePath: string | null;
   dirty: boolean;
   loading: boolean;
@@ -29,6 +31,7 @@ interface ModelState {
 export const useModelStore = create<ModelState>((set, get) => ({
   model: null,
   source: "",
+  importedPrefix: "",
   filePath: null,
   dirty: false,
   loading: false,
@@ -38,7 +41,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
   validation: null,
 
   loadSource: async (source, filePath) => {
-    set({ loading: true, error: null, source, filePath: filePath ?? null, dirty: false });
+    set({ loading: true, error: null, source, importedPrefix: "", filePath: filePath ?? null, dirty: false });
     try {
       const model = await parseSource(source);
       set({ model, loading: false });
@@ -52,15 +55,18 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const [model, rawSource] = await openFile(path);
-      // Resolve imports from the same directory
-      const source = await resolveImports(rawSource, path);
-      if (source !== rawSource) {
-        // Re-parse with combined source
-        const combinedModel = await parseSource(source);
-        set({ model: combinedModel, source, filePath: path, dirty: false, loading: false });
-      } else {
-        set({ model, source: rawSource, filePath: path, dirty: false, loading: false });
+      // Resolve imports from sibling .sysml files
+      const resolved = await resolveImports(rawSource, path);
+      let importedPrefix = "";
+      let finalModel = model;
+
+      if (resolved !== rawSource) {
+        // Extract the prefix (imported content) so we can re-use it on edits
+        importedPrefix = resolved.substring(0, resolved.length - rawSource.length);
+        finalModel = await parseSource(resolved);
       }
+
+      set({ model: finalModel, source: rawSource, importedPrefix, filePath: path, dirty: false, loading: false });
       get().refreshMbseData();
     } catch (e) {
       set({ error: String(e), loading: false });
@@ -70,7 +76,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
   updateSource: async (source) => {
     set({ source, dirty: true });
     try {
-      const model = await parseSource(source);
+      // Prepend cached imports so imported elements stay in the model
+      const { importedPrefix } = get();
+      const fullSource = importedPrefix ? importedPrefix + source : source;
+      const model = await parseSource(fullSource);
       set({ model, error: null });
       get().refreshMbseData();
     } catch (e) {

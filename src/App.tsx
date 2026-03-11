@@ -4,6 +4,8 @@ import { useModelStore } from "./stores/model-store";
 import { useUIStore } from "./stores/ui-store";
 import "./styles/globals.css";
 
+const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+
 // Sample SysML source for development/demo
 const SAMPLE_SOURCE = `package VehicleSystem {
   part def Vehicle {
@@ -123,8 +125,11 @@ function App() {
   }, [theme]);
 
   useEffect(() => {
-    // Load sample source on startup for development
-    loadSource(SAMPLE_SOURCE);
+    // Browser mode: load demo content so users can explore without files
+    // Tauri app: start empty — user must open or create a file
+    if (!isTauri) {
+      loadSource(SAMPLE_SOURCE);
+    }
   }, [loadSource]);
 
   return <AppShell />;

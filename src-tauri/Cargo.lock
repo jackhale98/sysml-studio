@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "sysml-studio"
-version = "0.3.0"
+version = "0.3.3"
 dependencies = [
  "serde",
  "serde_json",

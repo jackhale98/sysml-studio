@@ -39,14 +39,75 @@ pub fn parse_source(source: String, state: State<'_, AppState>) -> Result<SysmlM
 #[tauri::command]
 pub fn open_file(path: String, state: State<'_, AppState>) -> Result<(SysmlModel, String), String> {
     let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let mut model = parse_source(source.clone(), state)?;
+
+    // Resolve imports: read sibling .sysml files referenced by import statements
+    let combined = resolve_sibling_imports(&source, &path);
+    let mut model = parse_source(combined, state)?;
     model.file_path = Some(path);
-    Ok((model, source))
+    Ok((model, source)) // Return original source for the editor, not the combined
 }
 
 #[tauri::command]
 pub fn save_file(path: String, source: String) -> Result<(), String> {
     std::fs::write(&path, &source).map_err(|e| e.to_string())
+}
+
+/// Resolve import statements by reading sibling .sysml files from the same directory.
+/// Handles recursive imports (imported files may import other files).
+fn resolve_sibling_imports(source: &str, file_path: &str) -> String {
+    use std::path::Path;
+    use std::collections::HashSet;
+
+    let path = Path::new(file_path);
+    let dir = match path.parent() {
+        Some(d) => d,
+        None => return source.to_string(),
+    };
+    let current_file = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
+
+    let mut resolved_files = HashSet::new();
+    resolved_files.insert(current_file.to_string());
+
+    let mut imported_sources: Vec<String> = Vec::new();
+    let mut pending_sources = vec![source.to_string()];
+
+    while let Some(current_source) = pending_sources.pop() {
+        for line in current_source.lines() {
+            let trimmed = line.trim();
+            // Match: import Foo, import Foo::*, import Foo::Bar::*, etc.
+            let rest = if let Some(r) = trimmed.strip_prefix("import ") {
+                r
+            } else if let Some(r) = trimmed.strip_prefix("public import ") {
+                r
+            } else if let Some(r) = trimmed.strip_prefix("private import ") {
+                r
+            } else {
+                continue;
+            };
+
+            // Extract the first path component as the file name to look up
+            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
+            if name.is_empty() { continue; }
+
+            for ext in &["sysml", "sysml2"] {
+                let fname = format!("{}.{}", name, ext);
+                if resolved_files.contains(&fname) { break; }
+                let import_path = dir.join(&fname);
+                if let Ok(import_source) = std::fs::read_to_string(&import_path) {
+                    resolved_files.insert(fname.clone());
+                    imported_sources.push(format!("// --- Imported from {} ---\n{}", fname, import_source));
+                    pending_sources.push(import_source);
+                    break;
+                }
+            }
+        }
+    }
+
+    if imported_sources.is_empty() {
+        return source.to_string();
+    }
+
+    format!("{}\n\n{}", imported_sources.join("\n\n"), source)
 }
 
 #[tauri::command]
