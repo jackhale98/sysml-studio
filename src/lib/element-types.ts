@@ -131,6 +131,11 @@ export interface TraceLink {
 }
 
 // Diagram Types
+export interface Compartment {
+  heading: string;
+  entries: string[];
+}
+
 export interface DiagramNode {
   element_id: ElementId;
   label: string;
@@ -141,6 +146,9 @@ export interface DiagramNode {
   height: number;
   color: string;
   children: DiagramNode[];
+  stereotype?: string;
+  compartments?: Compartment[];
+  description?: string;
 }
 
 export interface DiagramEdge {

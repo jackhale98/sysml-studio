@@ -87,10 +87,32 @@ const monoSmall: React.CSSProperties = {
 
 // ─── BOM / Rollup Panel ───
 
+/** Collect every unique numeric attribute name across the BOM tree */
+function collectAttrKeys(roots: BomNode[]): string[] {
+  const keys = new Set<string>();
+  function walk(n: BomNode) {
+    for (const a of n.attributes) if (a.value !== null) keys.add(a.name);
+    n.children.forEach(walk);
+  }
+  roots.forEach(walk);
+  return [...keys].sort();
+}
+
+function fmtNum(v: number): string {
+  return v % 1 === 0 ? v.toLocaleString() : v.toLocaleString(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 2 });
+}
+
+/** Read a node's own attribute value (not rolled up) */
+function ownAttrValue(node: BomNode, key: string): number | null {
+  const attr = node.attributes.find((a) => a.name === key);
+  return attr?.value ?? null;
+}
+
 function BomPanel() {
   const model = useModelStore((s) => s.model);
   const [bom, setBom] = useState<BomNode[]>([]);
   const [scopeName, setScopeName] = useState<string>("");
+  const [rollupKey, setRollupKey] = useState<string>("");
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -104,32 +126,47 @@ function BomPanel() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  // All numeric attribute names found in the tree
+  const attrKeys = React.useMemo(() => collectAttrKeys(bom), [bom]);
+
+  // Auto-select first key when keys change and current selection is invalid
+  useEffect(() => {
+    if (attrKeys.length > 0 && !attrKeys.includes(rollupKey)) {
+      setRollupKey(attrKeys[0]);
+    }
+  }, [attrKeys, rollupKey]);
+
   // Collect available scope targets
   const scopeTargets = model?.elements
     .filter((e) => e.kind === "part_def" || (e.kind === "part_usage" && e.children_ids.length > 0))
     .map((e) => e.name)
     .filter((n): n is string => !!n) ?? [];
 
+  const total = rollupKey ? bom.reduce((sum, n) => sum + (n.rollups[rollupKey] ?? 0), 0) : 0;
+
   return (
     <div>
-      {/* Scope selector */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 12, alignItems: "center" }}>
+      {/* Controls row */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center" }}>
         <select
           value={scopeName}
           onChange={(e) => setScopeName(e.target.value)}
-          style={{
-            flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)",
-            background: "var(--bg-tertiary)", color: "var(--text-primary)",
-            fontSize: 12, fontFamily: "var(--font-mono)",
-          }}
+          style={selectStyle}
         >
           <option value="">All top-level parts</option>
           {scopeTargets.map((n) => <option key={n} value={n}>{n}</option>)}
         </select>
+        <select
+          value={rollupKey}
+          onChange={(e) => setRollupKey(e.target.value)}
+          style={{ ...selectStyle, flex: "none", minWidth: 100 }}
+        >
+          {attrKeys.map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
         <button onClick={refresh} style={{
-          padding: "6px 14px", borderRadius: 6, border: "1px solid var(--border)",
+          padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)",
           background: "var(--accent)", color: "#fff", fontSize: 11, fontWeight: 600,
-          fontFamily: "var(--font-mono)", cursor: "pointer",
+          fontFamily: "var(--font-mono)", cursor: "pointer", flexShrink: 0,
         }}>
           {loading ? "..." : "Refresh"}
         </button>
@@ -141,85 +178,131 @@ function BomPanel() {
         </div>
       )}
 
-      {bom.map((node) => <BomTreeNode key={node.element_id} node={node} depth={0} />)}
-
-      {/* Rollup summary */}
-      {bom.length > 0 && bom.some((n) => Object.keys(n.rollups).length > 0) && (
-        <div style={{ marginTop: 12 }}>
-          <div style={sectionTitle}>Rollup Totals</div>
-          {bom.map((node) => (
-            <div key={node.element_id} style={card}>
-              <div style={{ ...monoSmall, fontWeight: 600, color: "#3b82f6", marginBottom: 4 }}>
-                {node.name}
-              </div>
-              {Object.entries(node.rollups).length === 0 ? (
-                <span style={{ ...monoSmall, color: "var(--text-muted)" }}>No numeric attributes</span>
-              ) : (
-                Object.entries(node.rollups).map(([key, val]) => (
-                  <div key={key} style={{ display: "flex", justifyContent: "space-between", ...monoSmall }}>
-                    <span style={{ color: "var(--text-muted)" }}>{key}</span>
-                    <span style={{ fontWeight: 600, color: "#f59e0b" }}>{val.toFixed(2)}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          ))}
+      {/* Total banner */}
+      {bom.length > 0 && rollupKey && total > 0 && (
+        <div style={{
+          ...card, display: "flex", justifyContent: "space-between", alignItems: "baseline",
+          marginBottom: 10, padding: "8px 12px",
+        }}>
+          <span style={{ ...monoSmall, color: "var(--text-muted)", textTransform: "uppercase", fontSize: 10, letterSpacing: "0.06em" }}>
+            Total {rollupKey}
+          </span>
+          <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-mono)", color: "#f59e0b" }}>
+            {fmtNum(total)}
+          </span>
         </div>
       )}
+
+      {/* Column header */}
+      {bom.length > 0 && rollupKey && (
+        <div style={{
+          display: "flex", alignItems: "center", padding: "4px 8px", marginBottom: 2,
+          ...monoSmall, fontSize: 9, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em",
+        }}>
+          <span style={{ flex: 1 }}>Part</span>
+          <span style={{ width: 54, textAlign: "right", flexShrink: 0 }}>Qty</span>
+          <span style={{ width: 70, textAlign: "right", flexShrink: 0 }}>Unit</span>
+          <span style={{ width: 70, textAlign: "right", flexShrink: 0 }}>Total</span>
+        </div>
+      )}
+
+      {/* BOM tree */}
+      {bom.map((node) => (
+        <BomTreeNode key={node.element_id} node={node} depth={0} isLast={true} rollupKey={rollupKey} />
+      ))}
     </div>
   );
 }
 
-function BomTreeNode({ node, depth }: { node: BomNode; depth: number }) {
-  const [expanded, setExpanded] = useState(depth < 2);
+const selectStyle: React.CSSProperties = {
+  flex: 1, padding: "6px 10px", borderRadius: 6, border: "1px solid var(--border)",
+  background: "var(--bg-tertiary)", color: "var(--text-primary)",
+  fontSize: 12, fontFamily: "var(--font-mono)",
+};
+
+function BomTreeNode({ node, depth, isLast, rollupKey }: { node: BomNode; depth: number; isLast: boolean; rollupKey: string }) {
+  const [expanded, setExpanded] = useState(depth < 3);
   const hasChildren = node.children.length > 0;
-  const indent = depth * 16;
+
+  const treeColor = "var(--border)";
+  const connectorW = 16;
+
+  const rollupVal = rollupKey ? (node.rollups[rollupKey] ?? 0) : 0;
+  const ownVal = rollupKey ? ownAttrValue(node, rollupKey) : null;
+  // Per-unit value: own attribute for leaves, rolled-up / multiplicity for assemblies
+  const unitVal = hasChildren
+    ? (node.multiplicity > 0 ? rollupVal / node.multiplicity : rollupVal)
+    : ownVal;
+  const totalVal = hasChildren ? rollupVal : (ownVal !== null ? ownVal * node.multiplicity : null);
 
   return (
-    <div>
+    <div style={{ position: "relative" }}>
+      {/* Vertical tree line from parent */}
+      {depth > 0 && (
+        <div style={{
+          position: "absolute", left: (depth - 1) * connectorW + 18, top: 0,
+          width: 1, height: isLast ? 14 : "100%", background: treeColor,
+          pointerEvents: "none",
+        }} />
+      )}
+      {/* Horizontal connector to this node */}
+      {depth > 0 && (
+        <div style={{
+          position: "absolute", left: (depth - 1) * connectorW + 18, top: 14,
+          width: connectorW - 4, height: 1, background: treeColor,
+          pointerEvents: "none",
+        }} />
+      )}
+
       <div
         onClick={() => hasChildren && setExpanded(!expanded)}
         style={{
-          ...card, display: "flex", alignItems: "center", gap: 8,
-          paddingLeft: 10 + indent, cursor: hasChildren ? "pointer" : "default",
-          marginBottom: 4,
+          display: "flex", alignItems: "center", gap: 4,
+          marginLeft: depth * connectorW + 4, padding: "3px 8px", borderRadius: 4,
+          cursor: hasChildren ? "pointer" : "default",
+          background: depth === 0 ? "var(--bg-tertiary)" : "transparent",
+          border: depth === 0 ? "1px solid var(--border)" : "none",
+          marginBottom: depth === 0 ? 2 : 0, marginTop: depth === 0 && !isLast ? 6 : 0,
+          minHeight: 26,
         }}
       >
-        {hasChildren && (
-          <span style={{ ...monoSmall, color: "var(--text-muted)", width: 12 }}>
+        {/* Expand/collapse or leaf dot */}
+        {hasChildren ? (
+          <span style={{ ...monoSmall, color: "var(--text-muted)", width: 10, flexShrink: 0, userSelect: "none" }}>
             {expanded ? "▾" : "▸"}
           </span>
-        )}
-        <span style={{ ...monoSmall, fontWeight: 600, color: "#3b82f6" }}>
-          {node.name}
-        </span>
-        {node.type_ref && (
-          <span style={{ ...monoSmall, color: "var(--text-muted)" }}>: {node.type_ref}</span>
-        )}
-        {node.multiplicity !== 1 && (
-          <span style={{ ...monoSmall, color: "#f59e0b", fontWeight: 600 }}>
-            [{node.multiplicity}]
+        ) : (
+          <span style={{ width: 10, flexShrink: 0, display: "flex", justifyContent: "center" }}>
+            <span style={{ width: 4, height: 4, borderRadius: 2, background: "var(--text-muted)", display: "block" }} />
           </span>
         )}
-        <span style={{ ...monoSmall, color: "var(--text-muted)", marginLeft: "auto", fontSize: 9 }}>
-          {node.kind}
+
+        {/* Name and type */}
+        <span style={{ ...monoSmall, fontWeight: 600, color: depth === 0 ? "#3b82f6" : "#93c5fd", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>
+          {node.name}
+          {node.type_ref && (
+            <span style={{ fontWeight: 400, color: "var(--text-muted)" }}> : {node.type_ref}</span>
+          )}
         </span>
+
+        {/* Qty | Unit | Total columns */}
+        {rollupKey && (
+          <>
+            <span style={{ ...monoSmall, width: 54, textAlign: "right", flexShrink: 0, color: node.multiplicity !== 1 ? "#f59e0b" : "var(--text-muted)", fontWeight: node.multiplicity !== 1 ? 700 : 400, fontSize: 10 }}>
+              {node.multiplicity !== 1 ? `x${node.multiplicity}` : ""}
+            </span>
+            <span style={{ ...monoSmall, width: 70, textAlign: "right", flexShrink: 0, color: "var(--text-muted)", fontSize: 10 }}>
+              {unitVal !== null && unitVal !== 0 ? fmtNum(unitVal) : "-"}
+            </span>
+            <span style={{ ...monoSmall, width: 70, textAlign: "right", flexShrink: 0, fontWeight: 600, fontSize: 11, color: hasChildren ? "#f59e0b" : "#4ade80" }}>
+              {totalVal !== null && totalVal !== 0 ? fmtNum(totalVal) : "-"}
+            </span>
+          </>
+        )}
       </div>
 
-      {expanded && node.attributes.length > 0 && (
-        <div style={{ paddingLeft: indent + 28, marginBottom: 4 }}>
-          {node.attributes.map((attr) => (
-            <div key={attr.name} style={{ ...monoSmall, color: "var(--text-muted)", padding: "1px 0" }}>
-              <span style={{ color: "#f59e0b" }}>{attr.name}</span>
-              {attr.type_ref && <span> : {attr.type_ref}</span>}
-              {attr.value !== null && <span style={{ color: "#4ade80", fontWeight: 600 }}> = {attr.value}</span>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {expanded && node.children.map((child) => (
-        <BomTreeNode key={child.element_id} node={child} depth={depth + 1} />
+      {expanded && node.children.map((child, i) => (
+        <BomTreeNode key={child.element_id} node={child} depth={depth + 1} isLast={i === node.children.length - 1} rollupKey={rollupKey} />
       ))}
     </div>
   );
@@ -239,6 +322,7 @@ function getAvailableEvents(machine: StateMachineModel): string[] {
 }
 
 function StateMachinePanel() {
+  const model = useModelStore((s) => s.model);
   const [machines, setMachines] = useState<StateMachineModel[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [eventQueue, setEventQueue] = useState<string[]>([]);
@@ -248,9 +332,9 @@ function StateMachinePanel() {
   useEffect(() => {
     listStateMachines().then((m) => {
       setMachines(m);
-      if (m.length > 0 && !selected) setSelected(m[0].name);
-    });
-  }, []);
+      if (m.length > 0) setSelected(prev => prev || m[0].name);
+    }).catch(() => setMachines([]));
+  }, [model]);
 
   const machine = machines.find((m) => m.name === selected);
   const availableEvents = machine ? getAvailableEvents(machine) : [];
@@ -510,6 +594,7 @@ function describeSteps(steps: unknown[], prefix = ""): { label: string; kind: st
 }
 
 function ActionFlowPanel() {
+  const model = useModelStore((s) => s.model);
   const [actions, setActions] = useState<ActionModel[]>([]);
   const [selected, setSelected] = useState<string>("");
   const [maxSteps, setMaxSteps] = useState<number>(1000);
@@ -519,9 +604,9 @@ function ActionFlowPanel() {
   useEffect(() => {
     listActions().then((a) => {
       setActions(a);
-      if (a.length > 0 && !selected) setSelected(a[0].name);
-    });
-  }, []);
+      if (a.length > 0) setSelected(prev => prev || a[0].name);
+    }).catch(() => setActions([]));
+  }, [model]);
 
   const action = actions.find((a) => a.name === selected);
   const stepPreview = action ? describeSteps(action.steps) : [];
@@ -666,16 +751,38 @@ function ActionFlowPanel() {
 // ─── Calcs & Constraints Panel ───
 
 function CalcsPanel() {
+  const model = useModelStore((s) => s.model);
   const [constraints, setConstraints] = useState<ConstraintModel[]>([]);
   const [calcs, setCalcs] = useState<CalcModel[]>([]);
-  const [results, setResults] = useState<EvalResult[]>([]);
+  const [mode, setMode] = useState<"model" | "whatif">("model");
 
   useEffect(() => {
     Promise.all([listConstraints(), listCalculations()]).then(([c, k]) => {
       setConstraints(c);
       setCalcs(k);
-    });
-  }, []);
+    }).catch(() => { setConstraints([]); setCalcs([]); });
+  }, [model]);
+
+  // Collect all numeric attribute values from model for auto-binding
+  // Keyed by lowercase attribute name → array of { value, context }
+  const modelAttrs = React.useMemo(() => {
+    if (!model) return new Map<string, { value: number; context: string }[]>();
+    const attrs = new Map<string, { value: number; context: string }[]>();
+    for (const el of model.elements) {
+      if (el.kind === "attribute_usage" && el.name && el.value_expr) {
+        const v = parseFloat(el.value_expr);
+        if (isNaN(v)) continue;
+        const parent = el.parent_id != null
+          ? model.elements.find(p => p.id === el.parent_id)
+          : null;
+        const context = parent?.name ?? "";
+        const key = el.name.toLowerCase();
+        if (!attrs.has(key)) attrs.set(key, []);
+        attrs.get(key)!.push({ value: v, context });
+      }
+    }
+    return attrs;
+  }, [model]);
 
   return (
     <div>
@@ -685,40 +792,45 @@ function CalcsPanel() {
         </div>
       ) : (
         <>
-          {/* Constraints */}
-          {constraints.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={sectionTitle}>Constraints ({constraints.length})</div>
-              {constraints.map((c) => (
-                <ConstraintCard key={c.name} constraint={c} onResult={(r) => setResults((prev) => [...prev.filter((p) => p.name !== r.name), r])} />
-              ))}
-            </div>
-          )}
+          {/* Mode toggle */}
+          <div style={{
+            display: "flex", gap: 0, marginBottom: 12,
+            borderRadius: 6, overflow: "hidden", border: "1px solid var(--border)",
+          }}>
+            {(["model", "whatif"] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                style={{
+                  flex: 1, padding: "6px 0", border: "none", cursor: "pointer",
+                  fontSize: 10, fontWeight: 700, fontFamily: "var(--font-mono)",
+                  textTransform: "uppercase", letterSpacing: "0.05em",
+                  background: mode === m ? "var(--accent)" : "var(--bg-tertiary)",
+                  color: mode === m ? "#fff" : "var(--text-muted)",
+                }}
+              >
+                {m === "model" ? "Model Analysis" : "What-If"}
+              </button>
+            ))}
+          </div>
 
-          {/* Calculations */}
-          {calcs.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={sectionTitle}>Calculations ({calcs.length})</div>
-              {calcs.map((c) => (
-                <CalcCard key={c.name} calc={c} onResult={(r) => setResults((prev) => [...prev.filter((p) => p.name !== r.name), r])} />
-              ))}
-            </div>
-          )}
-
-          {/* Results */}
-          {results.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <div style={sectionTitle}>Evaluation Results</div>
-              {results.map((r) => (
-                <div key={r.name} style={{
-                  ...card, borderColor: r.success ? "rgba(74,222,128,0.3)" : "rgba(239,68,68,0.3)",
-                }}>
-                  <div style={{ ...monoSmall, fontWeight: 600, color: r.success ? "#4ade80" : "#ef4444" }}>
-                    {r.name}: {r.success ? r.value : r.error}
-                  </div>
+          {mode === "model" ? (
+            <ModelAnalysisView calcs={calcs} constraints={constraints} modelAttrs={modelAttrs} />
+          ) : (
+            <>
+              {calcs.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={sectionTitle}>Calculations ({calcs.length})</div>
+                  {calcs.map((c) => <WhatIfCalcCard key={c.name} calc={c} />)}
                 </div>
-              ))}
-            </div>
+              )}
+              {constraints.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={sectionTitle}>Constraints ({constraints.length})</div>
+                  {constraints.map((c) => <WhatIfConstraintCard key={c.name} constraint={c} />)}
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -726,8 +838,183 @@ function CalcsPanel() {
   );
 }
 
-function ConstraintCard({ constraint, onResult }: { constraint: ConstraintModel; onResult: (r: EvalResult) => void }) {
+// ─── Model Analysis: auto-bind from model attributes ───
+
+type AttrMap = Map<string, { value: number; context: string }[]>;
+
+/**
+ * Resolve a param name to a model attribute value.
+ * Matching priority:
+ *  1. Exact name (case-insensitive)
+ *  2. Param name ends with attribute name (e.g., "vehicleMass" → "mass")
+ *  3. Attribute name ends with param name (e.g., "totalCost" matches param "cost")
+ * When multiple attributes match, uses the first (arbitrary — user can refine via What-If).
+ */
+function resolveParam(paramName: string, attrs: AttrMap): { value: number; matchedAttr: string; context: string } | null {
+  const pLower = paramName.toLowerCase();
+  // 1. Exact match
+  const exact = attrs.get(pLower);
+  if (exact && exact.length > 0) return { value: exact[0].value, matchedAttr: pLower, context: exact[0].context };
+  // 2. Param ends with attr name (e.g., "vehicleMass" → "mass")
+  for (const [attrName, entries] of attrs) {
+    if (pLower.endsWith(attrName) && pLower.length > attrName.length) {
+      return { value: entries[0].value, matchedAttr: attrName, context: entries[0].context };
+    }
+  }
+  // 3. Attr name ends with param name (e.g., attr "totalCost" matches param "cost")
+  for (const [attrName, entries] of attrs) {
+    if (attrName.endsWith(pLower) && attrName.length > pLower.length) {
+      return { value: entries[0].value, matchedAttr: attrName, context: entries[0].context };
+    }
+  }
+  return null;
+}
+
+function ModelAnalysisView({ calcs, constraints, modelAttrs }: {
+  calcs: CalcModel[]; constraints: ConstraintModel[]; modelAttrs: AttrMap;
+}) {
+  const [results, setResults] = useState<Map<string, EvalResult>>(new Map());
+  const [ran, setRan] = useState(false);
+
+  const runAll = useCallback(async () => {
+    const newResults = new Map<string, EvalResult>();
+
+    for (const c of calcs) {
+      const paramBindings: Record<string, number> = {};
+      const inputParams = c.params.filter(p => p.direction !== "Out");
+      const unbound: string[] = [];
+      for (const p of inputParams) {
+        const match = resolveParam(p.name, modelAttrs);
+        if (match) paramBindings[p.name] = match.value;
+        else unbound.push(p.name);
+      }
+      if (unbound.length > 0) {
+        newResults.set(c.name, { name: c.name, success: false, value: "", error: `Unbound: ${unbound.join(", ")}` });
+        continue;
+      }
+      try {
+        newResults.set(c.name, await evaluateCalculation(c.name, paramBindings));
+      } catch {
+        newResults.set(c.name, { name: c.name, success: false, value: "", error: "Evaluation failed" });
+      }
+    }
+    for (const c of constraints) {
+      const paramBindings: Record<string, number> = {};
+      const inputParams = c.params.filter(p => p.direction !== "Out");
+      const unbound: string[] = [];
+      for (const p of inputParams) {
+        const match = resolveParam(p.name, modelAttrs);
+        if (match) paramBindings[p.name] = match.value;
+        else unbound.push(p.name);
+      }
+      if (unbound.length > 0) {
+        newResults.set(c.name, { name: c.name, success: false, value: "", error: `Unbound: ${unbound.join(", ")}` });
+        continue;
+      }
+      try {
+        newResults.set(c.name, await evaluateConstraint(c.name, paramBindings));
+      } catch {
+        newResults.set(c.name, { name: c.name, success: false, value: "", error: "Evaluation failed" });
+      }
+    }
+    setResults(newResults);
+    setRan(true);
+  }, [calcs, constraints, modelAttrs]);
+
+  useEffect(() => { setRan(false); }, [calcs, constraints, modelAttrs]);
+
+  const allItems = [...calcs.map(c => ({ type: "calc" as const, name: c.name, params: c.params, returnType: (c as CalcModel).return_type })),
+                     ...constraints.map(c => ({ type: "constraint" as const, name: c.name, params: c.params, returnType: null }))];
+
+  return (
+    <div>
+      <div style={{ ...monoSmall, fontSize: 10, color: "var(--text-muted)", marginBottom: 8, lineHeight: "16px" }}>
+        Auto-binds parameters to matching model attributes by name.
+      </div>
+
+      <button onClick={runAll} style={{
+        padding: "6px 16px", borderRadius: 6, border: "none", width: "100%",
+        background: "var(--accent)", color: "#fff", fontSize: 11, fontWeight: 600,
+        fontFamily: "var(--font-mono)", cursor: "pointer", marginBottom: 12,
+      }}>
+        Run All Against Model
+      </button>
+
+      {allItems.map((item) => {
+        const result = results.get(item.name);
+        const inputParams = item.params.filter(p => p.direction !== "Out");
+        const resolved = inputParams.map(p => ({ param: p, match: resolveParam(p.name, modelAttrs) }));
+        const boundParams = resolved.filter(r => r.match !== null);
+        const unboundParams = resolved.filter(r => r.match === null);
+        const isCalc = item.type === "calc";
+        const accentColor = isCalc ? "#38bdf8" : "#fb923c";
+
+        return (
+          <div key={item.name} style={{
+            ...card,
+            borderColor: result
+              ? (result.success ? "rgba(74,222,128,0.3)" : "rgba(239,68,68,0.3)")
+              : undefined,
+          }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 4 }}>
+              <span style={{ ...monoSmall, fontWeight: 600, color: accentColor }}>
+                {item.name}
+              </span>
+              {item.returnType && (
+                <span style={{ ...monoSmall, color: "var(--text-muted)", fontSize: 10 }}>: {item.returnType}</span>
+              )}
+              <span style={{
+                ...monoSmall, fontSize: 9, padding: "1px 5px", borderRadius: 3, marginLeft: "auto",
+                background: isCalc ? "rgba(56,189,248,0.1)" : "rgba(251,146,60,0.1)",
+                color: accentColor,
+              }}>
+                {item.type}
+              </span>
+            </div>
+
+            {/* Bound parameters */}
+            {boundParams.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 4 }}>
+                {boundParams.map(({ param: p, match: m }) => (
+                  <span key={p.name} style={{ ...monoSmall, fontSize: 10, color: "var(--text-muted)" }}>
+                    {p.name}
+                    {m!.matchedAttr !== p.name.toLowerCase() && (
+                      <span style={{ color: "var(--text-muted)", fontSize: 9 }}> ({m!.context ? `${m!.context}.` : ""}{m!.matchedAttr})</span>
+                    )}
+                    =<span style={{ color: "#4ade80" }}>{m!.value}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Unbound parameters */}
+            {unboundParams.length > 0 && (
+              <div style={{ ...monoSmall, fontSize: 10, color: "#f59e0b", marginBottom: 4 }}>
+                Unbound: {unboundParams.map(r => r.param.name).join(", ")}
+              </div>
+            )}
+
+            {/* Result */}
+            {ran && result && (
+              <div style={{ ...monoSmall, fontWeight: 600, color: result.success ? "#4ade80" : "#ef4444" }}>
+                = {result.success ? result.value : result.error}
+              </div>
+            )}
+            {ran && !result && (
+              <div style={{ ...monoSmall, color: "var(--text-muted)", fontSize: 10 }}>Not evaluated</div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─── What-If: manual input cards ───
+
+function WhatIfConstraintCard({ constraint }: { constraint: ConstraintModel }) {
   const [bindings, setBindings] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<EvalResult | null>(null);
 
   const evalConstraint = async () => {
     const numBindings: Record<string, number> = {};
@@ -735,12 +1022,11 @@ function ConstraintCard({ constraint, onResult }: { constraint: ConstraintModel;
       const parsed = parseFloat(v);
       if (!isNaN(parsed)) numBindings[k] = parsed;
     }
-    const result = await evaluateConstraint(constraint.name, numBindings);
-    onResult(result);
+    setResult(await evaluateConstraint(constraint.name, numBindings));
   };
 
   return (
-    <div style={card}>
+    <div style={{ ...card, borderColor: result ? (result.success ? "rgba(74,222,128,0.3)" : "rgba(239,68,68,0.3)") : undefined }}>
       <div style={{ ...monoSmall, fontWeight: 600, color: "#fb923c", marginBottom: 6 }}>
         {constraint.name}
       </div>
@@ -750,33 +1036,36 @@ function ConstraintCard({ constraint, onResult }: { constraint: ConstraintModel;
             <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <label style={{ ...monoSmall, color: "var(--text-muted)" }}>{p.name}:</label>
               <input
-                type="number"
-                step="any"
+                type="number" step="any"
                 value={bindings[p.name] ?? ""}
-                onChange={(e) => setBindings({ ...bindings, [p.name]: e.target.value })}
-                style={{
-                  width: 70, padding: "3px 6px", borderRadius: 4, border: "1px solid var(--border)",
-                  background: "var(--bg-primary)", color: "var(--text-primary)",
-                  fontSize: 11, fontFamily: "var(--font-mono)",
-                }}
+                onChange={(e) => { setBindings({ ...bindings, [p.name]: e.target.value }); setResult(null); }}
+                style={paramInput}
               />
             </div>
           ))}
         </div>
       )}
-      <button onClick={evalConstraint} style={{
-        padding: "4px 12px", borderRadius: 6, border: "none",
-        background: "#fb923c", color: "#fff", fontSize: 10, fontWeight: 600,
-        fontFamily: "var(--font-mono)", cursor: "pointer",
-      }}>
-        Evaluate
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button onClick={evalConstraint} style={{
+          padding: "4px 12px", borderRadius: 6, border: "none",
+          background: "#fb923c", color: "#fff", fontSize: 10, fontWeight: 600,
+          fontFamily: "var(--font-mono)", cursor: "pointer",
+        }}>
+          Evaluate
+        </button>
+        {result && (
+          <span style={{ ...monoSmall, fontWeight: 600, color: result.success ? "#4ade80" : "#ef4444" }}>
+            = {result.success ? result.value : result.error}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
 
-function CalcCard({ calc, onResult }: { calc: CalcModel; onResult: (r: EvalResult) => void }) {
+function WhatIfCalcCard({ calc }: { calc: CalcModel }) {
   const [bindings, setBindings] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<EvalResult | null>(null);
 
   const evalCalc = async () => {
     const numBindings: Record<string, number> = {};
@@ -784,12 +1073,11 @@ function CalcCard({ calc, onResult }: { calc: CalcModel; onResult: (r: EvalResul
       const parsed = parseFloat(v);
       if (!isNaN(parsed)) numBindings[k] = parsed;
     }
-    const result = await evaluateCalculation(calc.name, numBindings);
-    onResult(result);
+    setResult(await evaluateCalculation(calc.name, numBindings));
   };
 
   return (
-    <div style={card}>
+    <div style={{ ...card, borderColor: result ? (result.success ? "rgba(74,222,128,0.3)" : "rgba(239,68,68,0.3)") : undefined }}>
       <div style={{ ...monoSmall, fontWeight: 600, color: "#38bdf8", marginBottom: 4 }}>
         {calc.name}
         {calc.return_type && <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> : {calc.return_type}</span>}
@@ -800,30 +1088,38 @@ function CalcCard({ calc, onResult }: { calc: CalcModel; onResult: (r: EvalResul
             <div key={p.name} style={{ display: "flex", alignItems: "center", gap: 4 }}>
               <label style={{ ...monoSmall, color: "var(--text-muted)" }}>{p.name}:</label>
               <input
-                type="number"
-                step="any"
+                type="number" step="any"
                 value={bindings[p.name] ?? ""}
-                onChange={(e) => setBindings({ ...bindings, [p.name]: e.target.value })}
-                style={{
-                  width: 70, padding: "3px 6px", borderRadius: 4, border: "1px solid var(--border)",
-                  background: "var(--bg-primary)", color: "var(--text-primary)",
-                  fontSize: 11, fontFamily: "var(--font-mono)",
-                }}
+                onChange={(e) => { setBindings({ ...bindings, [p.name]: e.target.value }); setResult(null); }}
+                style={paramInput}
               />
             </div>
           ))}
         </div>
       )}
-      <button onClick={evalCalc} style={{
-        padding: "4px 12px", borderRadius: 6, border: "none",
-        background: "#38bdf8", color: "#fff", fontSize: 10, fontWeight: 600,
-        fontFamily: "var(--font-mono)", cursor: "pointer",
-      }}>
-        Calculate
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <button onClick={evalCalc} style={{
+          padding: "4px 12px", borderRadius: 6, border: "none",
+          background: "#38bdf8", color: "#fff", fontSize: 10, fontWeight: 600,
+          fontFamily: "var(--font-mono)", cursor: "pointer",
+        }}>
+          Calculate
+        </button>
+        {result && (
+          <span style={{ ...monoSmall, fontWeight: 600, color: result.success ? "#4ade80" : "#ef4444" }}>
+            = {result.success ? result.value : result.error}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
+
+const paramInput: React.CSSProperties = {
+  width: 70, padding: "3px 6px", borderRadius: 4, border: "1px solid var(--border)",
+  background: "var(--bg-primary)", color: "var(--text-primary)",
+  fontSize: 11, fontFamily: "var(--font-mono)",
+};
 
 // ─── Shared Components ───
 

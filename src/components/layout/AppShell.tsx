@@ -13,6 +13,7 @@ import { DeleteConfirmDialog } from "../dialogs/DeleteConfirmDialog";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
 import { pickFile, readBrowserFile } from "../../lib/tauri-bridge";
+import { SAMPLE_SOURCE } from "../../App";
 
 const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
@@ -83,6 +84,13 @@ function WelcomeScreen() {
           New Model
         </button>
       </div>
+      <button onClick={() => loadSource(SAMPLE_SOURCE, "VehicleSystem.sysml")} style={{
+        ...btnStyle, padding: "8px 20px", fontSize: 12,
+        background: "none", color: "var(--text-muted)",
+        border: "1px solid var(--border)",
+      }}>
+        Load Example (Vehicle System)
+      </button>
     </div>
   );
 }

@@ -2,9 +2,9 @@ import type {
   SysmlModel, SysmlElement, ElementId,
   CompletenessReport, TraceabilityEntry,
   DiagramLayout, ValidationReport, HighlightToken,
-  BomNode, ConstraintModel, CalcModel, EvalResult,
-  StateMachineModel, SimulationState,
-  ActionModel, ActionExecState,
+  BomNode, ConstraintModel, CalcModel, EvalResult, Parameter,
+  StateMachineModel, SimulationState, CoreTransition, SimStep,
+  ActionModel, ActionExecState, ActionExecStep,
 } from "./element-types";
 import {
   browserParse, browserBddLayout, browserStmLayout,
@@ -20,17 +20,20 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-// Cache the latest model for browser-side diagram/MBSE queries
+// Cache the latest model and source for browser-side queries
 let cachedModel: SysmlModel | null = null;
+let cachedSource: string = "";
 
 export async function parseSource(source: string): Promise<SysmlModel> {
   if (isTauri) {
     const model = await tauriInvoke<SysmlModel>("parse_source", { source });
     cachedModel = model;
+    cachedSource = source;
     return model;
   }
   const model = browserParse(source);
   cachedModel = model;
+  cachedSource = source;
   return model;
 }
 
@@ -233,42 +236,163 @@ export async function computeBom(rootName?: string): Promise<BomNode[]> {
 
 export async function listConstraints(): Promise<ConstraintModel[]> {
   if (isTauri) return tauriInvoke<ConstraintModel[]>("list_constraints");
-  return [];
+  return browserListConstraints();
 }
 
 export async function listCalculations(): Promise<CalcModel[]> {
   if (isTauri) return tauriInvoke<CalcModel[]>("list_calculations");
-  return [];
+  return browserListCalcs();
 }
 
 export async function evaluateConstraint(constraintName: string, bindings: Record<string, number>): Promise<EvalResult> {
   if (isTauri) return tauriInvoke<EvalResult>("evaluate_constraint", { constraintName, bindings });
-  return { name: constraintName, success: false, value: "", error: "Not available in browser mode" };
+  return browserEvalExpr(constraintName, bindings, "constraint_def");
 }
 
 export async function evaluateCalculation(calcName: string, bindings: Record<string, number>): Promise<EvalResult> {
   if (isTauri) return tauriInvoke<EvalResult>("evaluate_calculation", { calcName, bindings });
-  return { name: calcName, success: false, value: "", error: "Not available in browser mode" };
+  return browserEvalExpr(calcName, bindings, "calc_def");
 }
 
 export async function listStateMachines(): Promise<StateMachineModel[]> {
   if (isTauri) return tauriInvoke<StateMachineModel[]>("list_state_machines");
-  return [];
+  return browserListStateMachines(cachedModel);
 }
 
 export async function simulateStateMachine(machineName: string, events: string[], maxSteps?: number): Promise<SimulationState> {
   if (isTauri) return tauriInvoke<SimulationState>("simulate_state_machine", { machineName, events, maxSteps: maxSteps ?? null });
-  return { machine_name: machineName, current_state: "", step: 0, env: { bindings: {} }, trace: [], status: "Completed" };
+  return browserSimulateStateMachine(cachedModel, machineName, events, maxSteps);
 }
 
 export async function listActions(): Promise<ActionModel[]> {
   if (isTauri) return tauriInvoke<ActionModel[]>("list_actions");
-  return [];
+  return browserListActions(cachedModel);
 }
 
 export async function executeAction(actionName: string, maxSteps?: number): Promise<ActionExecState> {
   if (isTauri) return tauriInvoke<ActionExecState>("execute_action", { actionName, maxSteps: maxSteps ?? null });
-  return { action_name: actionName, step: 0, env: { bindings: {} }, trace: [], status: "Completed" };
+  return browserExecuteAction(cachedModel, actionName, maxSteps);
+}
+
+// ─── Browser-side state machine extraction ───
+
+function browserListStateMachines(model: SysmlModel | null): StateMachineModel[] {
+  if (!model) return [];
+  const els = model.elements;
+  const stateDefs = els.filter(e => e.kind === "state_def");
+  return stateDefs.map(sd => {
+    const states = els.filter(e => e.kind === "state_usage" && e.parent_id === sd.id);
+    const transitions = els.filter(e => e.kind === "transition_statement" && e.parent_id === sd.id);
+
+    const coreTransitions: CoreTransition[] = transitions.map(t => {
+      const source = t.specializations?.[0] ?? "";
+      const target = t.type_ref ?? "";
+      // Trigger signal stored in value_expr by browser-parser (from "accept <signal>" clause)
+      const trigger: CoreTransition["trigger"] = t.value_expr ? { Signal: t.value_expr } : null;
+      return {
+        name: t.name ?? null, source, target, trigger,
+        guard: null, effect: null,
+        span: { start_row: t.span.start_line, start_col: t.span.start_col, end_row: t.span.end_line, end_col: t.span.end_col, start_byte: t.span.start_byte, end_byte: t.span.end_byte },
+      };
+    });
+
+    return {
+      name: sd.name ?? "<unnamed>",
+      states: states.map(s => ({
+        name: s.name ?? "<unnamed>",
+        entry_action: null, do_action: null, exit_action: null,
+        span: { start_row: s.span.start_line, start_col: s.span.start_col, end_row: s.span.end_line, end_col: s.span.end_col, start_byte: s.span.start_byte, end_byte: s.span.end_byte },
+      })),
+      transitions: coreTransitions,
+      entry_state: states.length > 0 ? (states[0].name ?? null) : null,
+      span: { start_row: sd.span.start_line, start_col: sd.span.start_col, end_row: sd.span.end_line, end_col: sd.span.end_col, start_byte: sd.span.start_byte, end_byte: sd.span.end_byte },
+    };
+  });
+}
+
+function browserSimulateStateMachine(
+  model: SysmlModel | null, machineName: string, events: string[], maxSteps?: number,
+): SimulationState {
+  const machines = browserListStateMachines(model);
+  const machine = machines.find(m => m.name === machineName);
+  if (!machine) return { machine_name: machineName, current_state: "", step: 0, env: { bindings: {} }, trace: [], status: "Completed" };
+
+  let current = machine.entry_state ?? (machine.states[0]?.name ?? "");
+  const trace: SimStep[] = [];
+  const limit = maxSteps ?? 100;
+
+  for (let i = 0; i < events.length && trace.length < limit; i++) {
+    const evt = events[i];
+    // Find a matching transition: source matches current state, trigger signal matches event
+    const trans = machine.transitions.find(t =>
+      t.source === current && (
+        (t.trigger && typeof t.trigger === "object" && "Signal" in t.trigger && t.trigger.Signal === evt) ||
+        t.trigger === null // auto-transition
+      )
+    );
+    if (trans) {
+      trace.push({
+        step: trace.length, from_state: current, transition_name: trans.name ?? null, trigger: evt,
+        guard_result: true, effect: null, to_state: trans.target,
+        exit_action: null, entry_action: null,
+      });
+      current = trans.target;
+    } else {
+      trace.push({
+        step: trace.length, from_state: current, transition_name: null, trigger: evt,
+        guard_result: false, effect: null, to_state: current,
+        exit_action: null, entry_action: null,
+      });
+    }
+  }
+
+  return {
+    machine_name: machineName, current_state: current,
+    step: trace.length, env: { bindings: {} }, trace,
+    status: trace.length >= limit ? "MaxSteps" : "Completed",
+  };
+}
+
+// ─── Browser-side action extraction ───
+
+function browserListActions(model: SysmlModel | null): ActionModel[] {
+  if (!model) return [];
+  const els = model.elements;
+  const actionDefs = els.filter(e => e.kind === "action_def");
+  return actionDefs.map(ad => {
+    const childActions = els.filter(e => e.kind === "action_usage" && e.parent_id === ad.id);
+    const steps = childActions.map(a => ({
+      Action: { name: a.name ?? "<unnamed>", steps: [] },
+    }));
+    return {
+      name: ad.name ?? "<unnamed>",
+      steps,
+      span: { start_row: ad.span.start_line, start_col: ad.span.start_col, end_row: ad.span.end_line, end_col: ad.span.end_col, start_byte: ad.span.start_byte, end_byte: ad.span.end_byte },
+    };
+  });
+}
+
+function browserExecuteAction(
+  model: SysmlModel | null, actionName: string, maxSteps?: number,
+): ActionExecState {
+  const actions = browserListActions(model);
+  const action = actions.find(a => a.name === actionName);
+  if (!action) return { action_name: actionName, step: 0, env: { bindings: {} }, trace: [], status: "Completed" };
+
+  const trace: ActionExecStep[] = [];
+  const limit = maxSteps ?? 1000;
+  for (let i = 0; i < action.steps.length && trace.length < limit; i++) {
+    const step = action.steps[i];
+    const entries = Object.entries(step as Record<string, unknown>);
+    const label = entries.length > 0 ? String((entries[0][1] as { name?: string })?.name ?? entries[0][0]) : "step";
+    trace.push({ step: i, kind: label, description: "executed" });
+  }
+
+  return {
+    action_name: actionName, step: trace.length,
+    env: { bindings: {} }, trace,
+    status: trace.length >= limit ? "MaxSteps" : "Completed",
+  };
 }
 
 /** Simple browser-side BOM builder from model elements */
@@ -291,14 +415,189 @@ function browserBom(model: SysmlModel, rootName?: string): BomNode[] {
       const resolved = child.type_ref ? els.find(e => e.name === child.type_ref && e.kind === "part_def") : undefined;
       children.push(buildNode(resolved && !visited.has(resolved.id) ? resolved : child, cm));
     }
+    // Compute per-unit rollup (own attrs + children), then scale by multiplicity
     const rollups: Record<string, number> = {};
-    for (const a of attrs) if (a.value !== null) rollups[a.name] = (rollups[a.name] ?? 0) + a.value * mult;
+    for (const a of attrs) if (a.value !== null) rollups[a.name] = (rollups[a.name] ?? 0) + a.value;
     for (const c of children) for (const [k, v] of Object.entries(c.rollups)) rollups[k] = (rollups[k] ?? 0) + v;
+    for (const k of Object.keys(rollups)) rollups[k] *= mult;
     const kind = typeof el.kind === "string" ? el.kind : "other";
     return { element_id: el.id, name: el.name ?? "<unnamed>", kind, type_ref: el.type_ref, multiplicity: mult, attributes: attrs, children, rollups };
   }
 
   return roots.map(r => buildNode(r, 1));
+}
+
+// ─── Browser-side calc/constraint extraction ───
+
+/** Extract the source block for a given def element by matching braces from its span */
+function extractDefBlock(name: string, kind: string, source: string): string | null {
+  // Find `calc def Name {` or `constraint def Name {`
+  const keyword = kind === "calc_def" ? "calc" : "constraint";
+  const re = new RegExp(`${keyword}\\s+def\\s+${name}\\s*\\{`);
+  const m = source.match(re);
+  if (!m || m.index === undefined) return null;
+  const start = m.index + m[0].length;
+  let depth = 1;
+  let i = start;
+  while (i < source.length && depth > 0) {
+    if (source[i] === "{") depth++;
+    else if (source[i] === "}") depth--;
+    i++;
+  }
+  return source.substring(start, i - 1);
+}
+
+interface ParsedDef {
+  params: Parameter[];
+  returnExpr: string | null;
+  returnName: string | null;
+  returnType: string | null;
+  expr: string | null; // for constraints: the expression body
+}
+
+/** Parse params, return expr from a calc/constraint def body */
+function parseDefBody(body: string, kind: string): ParsedDef {
+  const params: Parameter[] = [];
+  let returnExpr: string | null = null;
+  let returnName: string | null = null;
+  let returnType: string | null = null;
+  let expr: string | null = null;
+
+  for (const line of body.split("\n")) {
+    const t = line.trim();
+    // param: `in x : Real;` or `out y : Real;` or `inout z : Real;`
+    const paramMatch = t.match(/^(in|out|inout)\s+(\w+)\s*(?::\s*(\w+))?\s*;/);
+    if (paramMatch) {
+      const dir = paramMatch[1] === "inout" ? "InOut" : paramMatch[1] === "out" ? "Out" : "In";
+      params.push({ name: paramMatch[2], type_ref: paramMatch[3] ?? null, direction: dir as Parameter["direction"] });
+      continue;
+    }
+    // return: `return result : Real = expr;`
+    const retMatch = t.match(/^return\s+(\w+)\s*(?::\s*(\w+))?\s*=\s*([^;]+)/);
+    if (retMatch) {
+      returnName = retMatch[1];
+      returnType = retMatch[2] ?? null;
+      returnExpr = retMatch[3].trim();
+      continue;
+    }
+    // constraint expression: `constraint expr;` or bare expression
+    if (kind === "constraint_def" && !t.startsWith("in ") && !t.startsWith("out ") && !t.startsWith("//") && !t.startsWith("doc") && t.length > 1) {
+      const stripped = t.replace(/;$/, "").trim();
+      if (stripped) expr = stripped;
+    }
+  }
+
+  return { params, returnExpr, returnName, returnType, expr };
+}
+
+function browserListCalcs(): CalcModel[] {
+  if (!cachedModel || !cachedSource) return [];
+  const els = cachedModel.elements;
+  const calcDefs = els.filter(e => e.kind === "calc_def");
+  return calcDefs.map(cd => {
+    const name = cd.name ?? "<unnamed>";
+    const block = extractDefBlock(name, "calc_def", cachedSource);
+    const parsed = block ? parseDefBody(block, "calc_def") : { params: [], returnExpr: null, returnName: null, returnType: null, expr: null };
+    return {
+      name,
+      params: parsed.params,
+      return_name: parsed.returnName,
+      return_type: parsed.returnType,
+      return_expr: parsed.returnExpr,
+      local_bindings: [],
+      span: { start_row: cd.span.start_line, start_col: cd.span.start_col, end_row: cd.span.end_line, end_col: cd.span.end_col, start_byte: cd.span.start_byte, end_byte: cd.span.end_byte },
+    };
+  });
+}
+
+function browserListConstraints(): ConstraintModel[] {
+  if (!cachedModel || !cachedSource) return [];
+  const els = cachedModel.elements;
+  const cDefs = els.filter(e => e.kind === "constraint_def");
+  return cDefs.map(cd => {
+    const name = cd.name ?? "<unnamed>";
+    const block = extractDefBlock(name, "constraint_def", cachedSource);
+    const parsed = block ? parseDefBody(block, "constraint_def") : { params: [], returnExpr: null, returnName: null, returnType: null, expr: null };
+    return {
+      name,
+      params: parsed.params,
+      expression: parsed.expr,
+      span: { start_row: cd.span.start_line, start_col: cd.span.start_col, end_row: cd.span.end_line, end_col: cd.span.end_col, start_byte: cd.span.start_byte, end_byte: cd.span.end_byte },
+    };
+  });
+}
+
+/** Simple arithmetic expression evaluator: handles +, -, *, /, parentheses, variables */
+function evalArith(expr: string, vars: Record<string, number>): number {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < expr.length) {
+    if (/\s/.test(expr[i])) { i++; continue; }
+    if ("+-*/()".includes(expr[i])) { tokens.push(expr[i]); i++; continue; }
+    // number or identifier
+    let tok = "";
+    while (i < expr.length && /[\w.]/.test(expr[i])) { tok += expr[i]; i++; }
+    if (tok) tokens.push(tok);
+  }
+
+  let pos = 0;
+  function peek(): string | undefined { return tokens[pos]; }
+  function consume(): string { return tokens[pos++]; }
+
+  function parseExpr(): number {
+    let left = parseTerm();
+    while (peek() === "+" || peek() === "-") {
+      const op = consume();
+      const right = parseTerm();
+      left = op === "+" ? left + right : left - right;
+    }
+    return left;
+  }
+  function parseTerm(): number {
+    let left = parseFactor();
+    while (peek() === "*" || peek() === "/") {
+      const op = consume();
+      const right = parseFactor();
+      left = op === "*" ? left * right : left / right;
+    }
+    return left;
+  }
+  function parseFactor(): number {
+    if (peek() === "(") {
+      consume(); // (
+      const val = parseExpr();
+      if (peek() === ")") consume();
+      return val;
+    }
+    if (peek() === "-") {
+      consume();
+      return -parseFactor();
+    }
+    const tok = consume();
+    if (tok === undefined) return 0;
+    const num = parseFloat(tok);
+    if (!isNaN(num)) return num;
+    // Variable lookup
+    if (tok in vars) return vars[tok];
+    throw new Error(`Unknown variable: ${tok}`);
+  }
+
+  return parseExpr();
+}
+
+function browserEvalExpr(name: string, bindings: Record<string, number>, kind: string): EvalResult {
+  if (!cachedSource) return { name, success: false, value: "", error: "No source loaded" };
+  const block = extractDefBlock(name, kind, cachedSource);
+  if (!block) return { name, success: false, value: "", error: `${name} not found` };
+  const parsed = parseDefBody(block, kind);
+  const expr = kind === "calc_def" ? parsed.returnExpr : parsed.expr;
+  if (!expr) return { name, success: false, value: "", error: "No expression found" };
+  try {
+    const result = evalArith(expr, bindings);
+    return { name, success: true, value: String(result), error: null };
+  } catch (e: unknown) {
+    return { name, success: false, value: "", error: e instanceof Error ? e.message : "Evaluation failed" };
+  }
 }
 
 // Diagram Commands

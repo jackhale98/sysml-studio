@@ -109,17 +109,21 @@ fn build_bom_node(
         ));
     }
 
-    // Rollups: own attributes + children's rollups (scaled by multiplicity)
+    // Rollups: compute per-unit value (own attrs + children), then scale by multiplicity
     let mut rollups: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
     for attr in &attributes {
         if let Some(val) = attr.value {
-            *rollups.entry(attr.name.clone()).or_default() += val * multiplicity;
+            *rollups.entry(attr.name.clone()).or_default() += val;
         }
     }
     for child in &children {
         for (key, &val) in &child.rollups {
             *rollups.entry(key.clone()).or_default() += val;
         }
+    }
+    // Apply this node's multiplicity to the entire rollup
+    for val in rollups.values_mut() {
+        *val *= multiplicity;
     }
 
     BomNode {
@@ -222,7 +226,10 @@ pub fn evaluate_calculation(
 pub fn list_state_machines(state: State<'_, AppState>) -> Result<Vec<StateMachineModel>, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
     if source.is_empty() { return Ok(vec![]); }
-    Ok(sysml_core::sim::state_parser::extract_state_machines("<buffer>", &source))
+    let src = source.clone();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::state_parser::extract_state_machines("<buffer>", &src)
+    })).map_err(|_| "State machine extraction failed".to_string())
 }
 
 /// Returns sysml-core's SimulationState directly
@@ -234,7 +241,11 @@ pub fn simulate_state_machine(
     state: State<'_, AppState>,
 ) -> Result<SimulationState, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
-    let machines = sysml_core::sim::state_parser::extract_state_machines("<buffer>", &source);
+    let src = source.clone();
+    let machines = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::state_parser::extract_state_machines("<buffer>", &src)
+    })).map_err(|_| "State machine extraction failed".to_string())?;
+
     let machine = machines.iter().find(|m| m.name == machine_name)
         .ok_or_else(|| format!("State machine '{}' not found", machine_name))?;
 
@@ -244,7 +255,9 @@ pub fn simulate_state_machine(
         events,
     };
 
-    Ok(sysml_core::sim::state_sim::simulate(machine, &config))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::state_sim::simulate(machine, &config)
+    })).map_err(|_| "State machine simulation crashed".to_string())
 }
 
 // ─── Action Flow Execution (delegates to sysml-core action engine) ───
@@ -254,7 +267,10 @@ pub fn simulate_state_machine(
 pub fn list_actions(state: State<'_, AppState>) -> Result<Vec<ActionModel>, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
     if source.is_empty() { return Ok(vec![]); }
-    Ok(sysml_core::sim::action_parser::extract_actions("<buffer>", &source))
+    let src = source.clone();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::action_parser::extract_actions("<buffer>", &src)
+    })).map_err(|_| "Action extraction failed".to_string())
 }
 
 /// Returns sysml-core's ActionExecState directly
@@ -265,7 +281,11 @@ pub fn execute_action(
     state: State<'_, AppState>,
 ) -> Result<ActionExecState, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
-    let actions = sysml_core::sim::action_parser::extract_actions("<buffer>", &source);
+    let src = source.clone();
+    let actions = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::action_parser::extract_actions("<buffer>", &src)
+    })).map_err(|_| "Action extraction failed".to_string())?;
+
     let action = actions.iter().find(|a| a.name == action_name)
         .ok_or_else(|| format!("Action '{}' not found", action_name))?;
 
@@ -274,7 +294,9 @@ pub fn execute_action(
         initial_env: Env::new(),
     };
 
-    Ok(sysml_core::sim::action_exec::execute_action(action, &config))
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::action_exec::execute_action(action, &config)
+    })).map_err(|_| "Action execution crashed".to_string())
 }
 
 #[cfg(test)]
@@ -374,6 +396,32 @@ mod tests {
 
         assert_eq!(bom.rollups.len(), 1, "Only 'mass' should roll up, not 'label'");
         assert!((bom.rollups["mass"] - 25.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_bom_nested_multiplicity() {
+        // Assembly[4] { SubPart (mass=10) }
+        // Total mass should be 4 * 10 = 40, not 10
+        let elements = vec![
+            make_el(0, ElementKind::Package, "Pkg", None, None, None, None),
+            make_el(1, ElementKind::PartDef, "Assembly", Some(0), None, None, None),
+            make_el(2, ElementKind::PartUsage, "sub", Some(1), Some("SubPart"), None, None),
+            make_el(3, ElementKind::PartDef, "SubPart", Some(0), None, None, None),
+            make_el(4, ElementKind::AttributeUsage, "mass", Some(3), Some("Real"), Some("10.0"), None),
+            // Top with 4x Assembly
+            make_el(5, ElementKind::PartDef, "Top", Some(0), None, None, None),
+            make_el(6, ElementKind::PartUsage, "assemblies", Some(5), Some("Assembly"), None, Some("4")),
+        ];
+
+        let mut visited = std::collections::HashSet::new();
+        let bom = build_bom_node(&elements[5], &elements, 1.0, &mut visited);
+
+        let asm = bom.children.iter().find(|c| c.name == "Assembly").expect("Assembly child");
+        let asm_mass = asm.rollups.get("mass").copied().unwrap_or(0.0);
+        assert!((asm_mass - 40.0).abs() < 0.01, "Assembly[4] with SubPart(mass=10) should roll up to 40, got {}", asm_mass);
+
+        let top_mass = bom.rollups.get("mass").copied().unwrap_or(0.0);
+        assert!((top_mass - 40.0).abs() < 0.01, "Top total mass should be 40, got {}", top_mass);
     }
 
     #[test]

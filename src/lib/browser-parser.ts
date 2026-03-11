@@ -6,7 +6,7 @@
 import type {
   SysmlModel, SysmlElement, ElementId, SourceSpan,
   Category, ParseError, DiagramLayout, DiagramNode, DiagramEdge,
-  CompletenessReport, TraceabilityEntry, TraceLink,
+  Compartment, CompletenessReport, TraceabilityEntry, TraceLink,
   ValidationIssue, ValidationReport,
 } from "./element-types";
 
@@ -48,9 +48,9 @@ const DEF_PATTERNS: [RegExp, string, Category][] = [
 ];
 
 const USAGE_PATTERNS: [RegExp, string, Category][] = [
-  [/^part\s+(\w+)\s*:\s*~?\s*([\w:]+)/, "part_usage", "structure"],
-  [/^attribute\s+(\w+)\s*(?::>|:)\s*~?\s*([\w:]+)/, "attribute_usage", "property"],
-  [/^port\s+(\w+)\s*:\s*~?\s*([\w:]+)/, "port_usage", "interface"],
+  [/^part\s+(\w+)(?:\[[^\]]*\])?\s*:\s*~?\s*([\w:]+)/, "part_usage", "structure"],
+  [/^attribute\s+(\w+)(?:\[[^\]]*\])?\s*(?::>|:)\s*~?\s*([\w:]+)/, "attribute_usage", "property"],
+  [/^port\s+(\w+)(?:\[[^\]]*\])?\s*:\s*~?\s*([\w:]+)/, "port_usage", "interface"],
   [/^connection\s+(\w+)/, "connection_usage", "relationship"],
   [/^action\s+(\w+)/, "action_usage", "behavior"],
   [/^state\s+(\w+)\s*[;{]/, "state_usage", "behavior"],
@@ -65,7 +65,7 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
 ];
 
 const OTHER_PATTERNS: [RegExp, string, Category][] = [
-  [/^transition\s+(?:(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s+then\s+(\w+))?/, "transition_statement", "behavior"],
+  [/^transition\s+(?:(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s*(?:accept\s+(\w+))?\s*then\s+(\w+))?/, "transition_statement", "behavior"],
   [/^satisfy\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "satisfy_statement", "requirement"],
   [/^verify\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "verify_statement", "analysis"],
   [/^(?:public\s+)?import\s+/, "import", "auxiliary"],
@@ -184,6 +184,7 @@ export function browserParse(source: string): SysmlModel {
           let name = m[1] ?? null;
           let typeRef: string | null = null;
           let specializations: string[] = [];
+          let triggerExpr: string | null = null;
 
           if (kind === "satisfy_statement" || kind === "verify_statement") {
             // m[1] = requirement name, m[2] = optional "by" target
@@ -195,8 +196,11 @@ export function browserParse(source: string): SysmlModel {
           } else if (kind === "transition_statement") {
             name = m[1] ?? null;
             // Convention: specializations[0] = source ("first"), type_ref = target ("then")
+            // Groups: m[1]=name, m[2]=source, m[3]=trigger (accept), m[4]=target
             specializations = m[2] ? [m[2]] : [];
-            typeRef = m[3] ?? null;
+            typeRef = m[4] ?? null;
+            // Store trigger signal in value_expr for browser-side state machine extraction
+            triggerExpr = m[3] ?? null;
           }
 
           const qname = ctx.stack.map(s => s.name).concat(name ?? "<unnamed>").join("::");
@@ -204,7 +208,7 @@ export function browserParse(source: string): SysmlModel {
             id: ctx.nextId++, kind: kind as any, name, qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
-            modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: null,
+            modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: triggerExpr,
           };
           ctx.elements.push(el);
           if (parentId !== null) {
@@ -232,8 +236,12 @@ export function browserParse(source: string): SysmlModel {
         const lookAhead = lines[j].trim();
         const firstMatch = lookAhead.match(/first\s+(\w+)/);
         const thenMatch = lookAhead.match(/then\s+(\w+)/);
+        const acceptMatch = lookAhead.match(/accept\s+(\w+)/);
         if (firstMatch) {
           el.specializations = [firstMatch[1]];  // source state
+        }
+        if (acceptMatch && !el.value_expr) {
+          el.value_expr = acceptMatch[1];  // trigger signal
         }
         if (thenMatch) {
           el.type_ref = thenMatch[1];  // target state
@@ -303,9 +311,18 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
     requirement_def: "#ef4444", connection_def: "#f472b6",
   };
 
-  const H = 58, GAP_X = 40, GAP_Y = 120;
+  const BASE_H = 34, GAP_X = 40, GAP_Y = 120;
 
-  type TreeNode = { def: SysmlElement; children: TreeNode[]; usageNames: Map<number, string>; usageMults: Map<number, string | null>; w: number };
+  // SysML v2 stereotype labels
+  const stereoLabel = (kind: string): string => {
+    const map: Record<string, string> = {
+      part_def: "\u00ABpart def\u00BB", item_def: "\u00ABitem def\u00BB",
+      attribute_def: "\u00ABattribute def\u00BB", port_def: "\u00ABport def\u00BB",
+    };
+    return map[kind] ?? "\u00ABblock\u00BB";
+  };
+
+  type TreeNode = { def: SysmlElement; children: TreeNode[]; usageNames: Map<number, string>; usageMults: Map<number, string | null>; w: number; h: number; compartments: Compartment[] };
 
   const defById = new Map(defs.map(d => [d.id, d]));
   const defByName = new Map(defs.map(d => [d.name ?? "", d]));
@@ -389,8 +406,41 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         childTrees.push(buildTree(childDef));
       }
     }
-    const w = Math.max(textWidth(def.name ?? "<unnamed>", 13), 130);
-    return { def, children: childTrees, usageNames, usageMults, w };
+
+    // Build compartments from child attribute and port usages
+    const compartments: Compartment[] = [];
+    const attrs = model.elements.filter(
+      e => e.parent_id === def.id && typeof e.kind === "string" && e.kind === "attribute_usage"
+    ).map(e => {
+      const n = e.name ?? "<unnamed>";
+      const val = e.value_expr ? ` = ${e.value_expr}` : "";
+      return e.type_ref ? `${n} : ${e.type_ref}${val}` : `${n}${val}`;
+    });
+    if (attrs.length > 0) compartments.push({ heading: "attributes", entries: attrs });
+
+    const ports = model.elements.filter(
+      e => e.parent_id === def.id && typeof e.kind === "string" && e.kind === "port_usage"
+    ).map(e => {
+      const n = e.name ?? "<unnamed>";
+      const dir = e.modifiers.find(m => m === "in" || m === "out" || m === "inout");
+      if (e.type_ref && dir) return `${dir} ${n} : ${e.type_ref}`;
+      if (e.type_ref) return `${n} : ${e.type_ref}`;
+      if (dir) return `${dir} ${n}`;
+      return n;
+    });
+    if (ports.length > 0) compartments.push({ heading: "ports", entries: ports });
+
+    // Compute width: max of label, compartment entries
+    const labelW = textWidth(def.name ?? "<unnamed>", 13);
+    const compMaxW = compartments.reduce((max, c) =>
+      Math.max(max, ...c.entries.map(e => textWidth(e, 10))), 0);
+    const w = Math.max(labelW, compMaxW + 20, 130);
+
+    // Compute height: base header + compartments
+    const compH = compartments.reduce((sum, c) => sum + 16 + c.entries.length * 14, 0);
+    const h = Math.max(BASE_H + compH, 50);
+
+    return { def, children: childTrees, usageNames, usageMults, w, h, compartments };
   }
 
   const forest = roots.map(r => buildTree(r));
@@ -408,6 +458,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
 
   function positionTree(tree: TreeNode, x: number, y: number, availableWidth: number) {
     const nodeW = tree.w;
+    const nodeH = tree.h;
     const nodeX = x + (availableWidth - nodeW) / 2;
     const nodeY = y;
     const kind = typeof tree.def.kind === "string" ? tree.def.kind : "";
@@ -416,9 +467,11 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
       element_id: tree.def.id,
       label: tree.def.name ?? "<unnamed>",
       kind: "block",
-      x: nodeX, y: nodeY, width: nodeW, height: H,
+      x: nodeX, y: nodeY, width: nodeW, height: nodeH,
       color: colors[kind] ?? "#94a3b8",
       children: [],
+      stereotype: stereoLabel(kind),
+      compartments: tree.compartments.length > 0 ? tree.compartments : undefined,
     });
 
     if (tree.children.length > 0) {
@@ -430,7 +483,7 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         const child = tree.children[ci];
         const childAvailWidth = childPixelWidths[ci];
 
-        positionTree(child, childX, y + H + GAP_Y, childAvailWidth);
+        positionTree(child, childX, y + nodeH + GAP_Y, childAvailWidth);
 
         const childNodeW = child.w;
         const childNodeX = childX + (childAvailWidth - childNodeW) / 2;
@@ -442,16 +495,16 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         // Edge: vertical from parent bottom center, route to child top center
         const parentCx = nodeX + nodeW / 2;
         const childCx = childNodeX + childNodeW / 2;
-        const midY = nodeY + H + GAP_Y * 0.45;
+        const midY = nodeY + nodeH + GAP_Y * 0.45;
 
         edges.push({
           from_id: tree.def.id, to_id: child.def.id,
           label: edgeLabel, edge_type: "composition",
           points: [
-            [parentCx, nodeY + H],
+            [parentCx, nodeY + nodeH],
             [parentCx, midY],
             [childCx, midY],
-            [childCx, y + H + GAP_Y],
+            [childCx, y + nodeH + GAP_Y],
           ],
         });
 
@@ -475,9 +528,10 @@ export function browserBddLayout(model: SysmlModel): DiagramLayout {
         element_id: d.id,
         label: d.name ?? "<unnamed>",
         kind: "block",
-        x: forestX, y: 30, width: w, height: H,
+        x: forestX, y: 30, width: w, height: 50,
         color: colors[kind] ?? "#94a3b8",
         children: [],
+        stereotype: stereoLabel(kind),
       });
       forestX += w + GAP_X;
     }
@@ -755,10 +809,13 @@ export function browserReqLayout(model: SysmlModel): DiagramLayout {
 
 /** Browser-side Use Case Diagram layout */
 export function browserUcdLayout(model: SysmlModel): DiagramLayout {
-  const useCases = model.elements.filter(e => {
-    const k = typeof e.kind === "string" ? e.kind : "";
-    return k === "use_case_def" || k === "use_case_usage";
-  });
+  // Collect defs first, then usages that don't duplicate a def by name
+  const ucDefs = model.elements.filter(e => typeof e.kind === "string" && e.kind === "use_case_def");
+  const defNames = new Set(ucDefs.map(e => e.name).filter(Boolean));
+  const ucUsages = model.elements.filter(e =>
+    typeof e.kind === "string" && e.kind === "use_case_usage" && !defNames.has(e.name)
+  );
+  const useCases = [...ucDefs, ...ucUsages];
   const actions = useCases.length === 0
     ? model.elements.filter(e => typeof e.kind === "string" && e.kind === "action_def")
     : [];

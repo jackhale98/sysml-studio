@@ -15,6 +15,21 @@ pub struct DiagramNode {
     pub height: f64,
     pub color: String,
     pub children: Vec<DiagramNode>,
+    /// Stereotype text e.g. "«block»", "«requirement»"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stereotype: Option<String>,
+    /// Compartment lines: parts, attributes, ports, etc.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compartments: Vec<Compartment>,
+    /// Extra text for requirement doc, state entry/do/exit, etc.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Compartment {
+    pub heading: String,
+    pub entries: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,6 +57,19 @@ fn estimate_text_width(text: &str, font_size: f64) -> f64 {
     (text.len() as f64 * font_size * 0.6).max(130.0)
 }
 
+/// Shorthand to create a DiagramNode with empty optional fields
+fn make_node(
+    element_id: ElementId, label: String, kind: &str,
+    x: f64, y: f64, width: f64, height: f64, color: &str,
+) -> DiagramNode {
+    DiagramNode {
+        element_id, label, kind: kind.into(),
+        x, y, width, height, color: color.into(),
+        children: vec![], stereotype: None,
+        compartments: vec![], description: None,
+    }
+}
+
 /// BDD child entry: (usage_name, child_id, child_label, multiplicity)
 type BddChildEntry = (String, ElementId, String, Option<String>);
 
@@ -51,9 +79,11 @@ struct BddTreeNode {
     label: String,
     color: String,
     width: f64,
+    height: f64,
     children: Vec<BddTreeNode>,
     usage_names: std::collections::HashMap<ElementId, String>,
     usage_mults: std::collections::HashMap<ElementId, Option<String>>,
+    compartments: Vec<Compartment>,
 }
 
 fn subtree_pixel_width(tree: &BddTreeNode) -> f64 {
@@ -65,6 +95,7 @@ fn subtree_pixel_width(tree: &BddTreeNode) -> f64 {
     tree.width.max(child_widths + gaps)
 }
 
+
 fn position_tree(
     tree: &BddTreeNode,
     x: f64,
@@ -75,15 +106,12 @@ fn position_tree(
 ) {
     let node_x = x + (available_width - tree.width) / 2.0;
     let node_y = y;
+    let h = tree.height;
 
-    nodes.push(DiagramNode {
-        element_id: tree.id,
-        label: tree.label.clone(),
-        kind: "block".into(),
-        x: node_x, y: node_y, width: tree.width, height: NODE_HEIGHT,
-        color: tree.color.clone(),
-        children: vec![],
-    });
+    let mut node = make_node(tree.id, tree.label.clone(), "block", node_x, node_y, tree.width, h, &tree.color);
+    node.stereotype = Some("\u{ab}block\u{bb}".into());
+    node.compartments = tree.compartments.clone();
+    nodes.push(node);
 
     if !tree.children.is_empty() {
         let child_pixel_widths: Vec<f64> = tree.children.iter().map(subtree_pixel_width).collect();
@@ -93,14 +121,13 @@ fn position_tree(
 
         for (ci, child) in tree.children.iter().enumerate() {
             let child_avail = child_pixel_widths[ci];
-            position_tree(child, child_x, y + NODE_HEIGHT + V_SPACING, child_avail, nodes, edges);
+            position_tree(child, child_x, y + h + V_SPACING, child_avail, nodes, edges);
 
-            // Edge from parent to child with waypoints
             let parent_cx = node_x + tree.width / 2.0;
             let child_node_w = child.width;
             let child_node_x = child_x + (child_avail - child_node_w) / 2.0;
             let child_cx = child_node_x + child_node_w / 2.0;
-            let mid_y = node_y + NODE_HEIGHT + V_SPACING * 0.45;
+            let mid_y = node_y + h + V_SPACING * 0.45;
 
             let usage_name = tree.usage_names.get(&child.id).cloned();
             let mult = tree.usage_mults.get(&child.id).and_then(|m| m.clone());
@@ -116,10 +143,10 @@ fn position_tree(
                 label,
                 edge_type: "composition".into(),
                 points: vec![
-                    (parent_cx, node_y + NODE_HEIGHT),
+                    (parent_cx, node_y + h),
                     (parent_cx, mid_y),
                     (child_cx, mid_y),
-                    (child_cx, y + NODE_HEIGHT + V_SPACING),
+                    (child_cx, y + h + V_SPACING),
                 ],
             });
 
@@ -197,16 +224,18 @@ pub fn compute_bdd_layout(
         if el.kind != ElementKind::PartUsage { continue; }
         let Some(parent_id) = el.parent_id else { continue; };
 
-        // Find the parent definition
-        let parent_def_id = if definitions.iter().any(|d| d.id == parent_id) {
-            parent_id
-        } else {
-            model.elements.iter()
-                .find(|p| p.id == parent_id)
-                .and_then(|p| p.parent_id)
-                .filter(|&pid| definitions.iter().any(|d| d.id == pid))
-                .unwrap_or(parent_id)
-        };
+        // Find the nearest ancestor definition (climb up the parent chain)
+        let mut parent_def_id = parent_id;
+        let mut climb_id = Some(parent_id);
+        while let Some(cid) = climb_id {
+            if definitions.iter().any(|d| d.id == cid) {
+                parent_def_id = cid;
+                break;
+            }
+            climb_id = model.elements.iter()
+                .find(|p| p.id == cid)
+                .and_then(|p| p.parent_id);
+        }
         if !definitions.iter().any(|d| d.id == parent_def_id) { continue; }
 
         let usage_name = el.name.clone().unwrap_or_default();
@@ -249,9 +278,9 @@ pub fn compute_bdd_layout(
         children_of: &std::collections::HashMap<ElementId, Vec<BddChildEntry>>,
         def_by_name: &std::collections::HashMap<String, (ElementId, String)>,
         visited: &mut std::collections::HashSet<ElementId>,
+        elements: &[SysmlElement],
     ) -> BddTreeNode {
         visited.insert(id);
-        let width = estimate_text_width(&label, 13.0);
         let kids = children_of.get(&id).cloned().unwrap_or_default();
         let mut usage_names = std::collections::HashMap::new();
         let mut usage_mults = std::collections::HashMap::new();
@@ -263,15 +292,63 @@ pub fn compute_bdd_layout(
                 .unwrap_or_else(|| "#94a3b8".into());
             usage_names.insert(child_id, usage_name);
             usage_mults.insert(child_id, mult);
-            child_trees.push(build_tree(child_id, child_label, child_color, children_of, def_by_name, visited));
+            child_trees.push(build_tree(child_id, child_label, child_color, children_of, def_by_name, visited, elements));
         }
-        BddTreeNode { id, label, color, width, children: child_trees, usage_names, usage_mults }
+
+        // Build compartments from child elements
+        let mut compartments = Vec::new();
+        let attrs: Vec<String> = elements.iter()
+            .filter(|e| e.parent_id == Some(id) && e.kind == ElementKind::AttributeUsage)
+            .map(|e| {
+                let n = e.name.as_deref().unwrap_or("<unnamed>");
+                match &e.type_ref {
+                    Some(t) => format!("{} : {}", n, t),
+                    None => n.to_string(),
+                }
+            })
+            .collect();
+        if !attrs.is_empty() {
+            compartments.push(Compartment { heading: "attributes".into(), entries: attrs });
+        }
+        let ports: Vec<String> = elements.iter()
+            .filter(|e| e.parent_id == Some(id) && e.kind == ElementKind::PortUsage)
+            .map(|e| {
+                let n = e.name.as_deref().unwrap_or("<unnamed>");
+                let dir = e.modifiers.iter().find(|m| *m == "in" || *m == "out" || *m == "inout");
+                match (&e.type_ref, dir) {
+                    (Some(t), Some(d)) => format!("{} {} : {}", d, n, t),
+                    (Some(t), None) => format!("{} : {}", n, t),
+                    (None, Some(d)) => format!("{} {}", d, n),
+                    (None, None) => n.to_string(),
+                }
+            })
+            .collect();
+        if !ports.is_empty() {
+            compartments.push(Compartment { heading: "ports".into(), entries: ports });
+        }
+
+        // Compute width: max of label, compartment entries
+        let label_w = estimate_text_width(&label, 13.0);
+        let comp_max_w: f64 = compartments.iter()
+            .flat_map(|c| c.entries.iter())
+            .map(|e| estimate_text_width(e, 10.0))
+            .fold(0.0_f64, f64::max);
+        let width = label_w.max(comp_max_w + 20.0); // 20px padding
+
+        // Compute height: base header + compartments
+        let base_h = 34.0; // stereotype + name
+        let comp_h: f64 = compartments.iter()
+            .map(|c| 16.0 + c.entries.len() as f64 * 14.0) // heading + entries
+            .sum();
+        let height = (base_h + comp_h).max(NODE_HEIGHT);
+
+        BddTreeNode { id, label, color, width, height, children: child_trees, usage_names, usage_mults, compartments }
     }
 
     let forest: Vec<BddTreeNode> = roots.iter().map(|r| {
         let label = r.name.clone().unwrap_or_else(|| "<unnamed>".into());
         let color = kind_to_color(&r.kind);
-        build_tree(r.id, label, color, &children_of, &def_by_name, &mut visited)
+        build_tree(r.id, label, color, &children_of, &def_by_name, &mut visited, &model.elements)
     }).collect();
 
     let mut nodes = Vec::new();
@@ -290,11 +367,9 @@ pub fn compute_bdd_layout(
         if !visited.contains(&d.id) {
             let label = d.name.clone().unwrap_or_else(|| "<unnamed>".into());
             let w = estimate_text_width(&label, 13.0);
-            nodes.push(DiagramNode {
-                element_id: d.id, label, kind: "block".into(),
-                x: forest_x, y: 30.0, width: w, height: NODE_HEIGHT,
-                color: kind_to_color(&d.kind), children: vec![],
-            });
+            let mut node = make_node(d.id, label, "block", forest_x, 30.0, w, NODE_HEIGHT, &kind_to_color(&d.kind));
+            node.stereotype = Some("\u{ab}block\u{bb}".into());
+            nodes.push(node);
             forest_x += w + H_SPACING;
         }
     }
@@ -358,34 +433,83 @@ pub fn compute_stm_layout(
         .filter(|e| e.kind == ElementKind::TransitionStatement && e.parent_id == Some(state_def.id))
         .collect();
 
-    // Layout states in a circular/grid pattern
+    // Collect entry/do/exit actions for each state
+    let mut state_actions: std::collections::HashMap<ElementId, Vec<String>> = std::collections::HashMap::new();
+    for el in &model.elements {
+        if !matches!(el.kind, ElementKind::ActionUsage) { continue; }
+        if let Some(pid) = el.parent_id {
+            if !states.iter().any(|s| s.id == pid) { continue; }
+            let action_label = el.name.as_deref().unwrap_or("<action>");
+            // Detect entry/do/exit from modifiers or name patterns
+            let prefix = if el.modifiers.iter().any(|m| m == "entry") || action_label.starts_with("entry") {
+                "entry / "
+            } else if el.modifiers.iter().any(|m| m == "exit") || action_label.starts_with("exit") {
+                "exit / "
+            } else {
+                "do / "
+            };
+            state_actions.entry(pid).or_default().push(format!("{}{}", prefix, action_label));
+        }
+    }
+
+    // Layout states in a grid pattern, offset for initial pseudo-state
     let state_count = states.len();
     let cols = ((state_count as f64).sqrt().ceil()) as usize;
 
     let mut nodes = Vec::new();
+    let mut edges = Vec::new();
     let state_colors = ["#64748b", "#f59e0b", "#10b981", "#ef4444", "#3b82f6", "#8b5cf6"];
+    let state_start_y = 80.0; // leave room for initial pseudo-state
+
+    // Initial pseudo-state (filled circle)
+    let initial_id = u32::MAX;
+    let initial_x = 40.0 + (cols.max(1) as f64 * (140.0 + H_SPACING)) / 2.0 - 10.0;
+    nodes.push(make_node(initial_id, String::new(), "initial_state", initial_x, 20.0, 20.0, 20.0, "#475569"));
 
     for (i, s) in states.iter().enumerate() {
         let col = i % cols.max(1);
         let row = i / cols.max(1);
         let x = col as f64 * (140.0 + H_SPACING) + 40.0;
-        let y = row as f64 * (50.0 + V_SPACING) + 40.0;
+        let y = row as f64 * (50.0 + V_SPACING) + state_start_y;
 
-        nodes.push(DiagramNode {
-            element_id: s.id,
-            label: s.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-            kind: "state".into(),
-            x,
-            y,
-            width: 120.0,
-            height: 44.0,
-            color: state_colors[i % state_colors.len()].into(),
-            children: vec![],
-        });
+        let label = s.name.clone().unwrap_or_else(|| "<unnamed>".into());
+        let actions = state_actions.get(&s.id);
+        let desc = actions.map(|a| a.join("\n"));
+        let h = if actions.map_or(0, |a| a.len()) > 0 {
+            44.0 + actions.unwrap().len() as f64 * 14.0
+        } else {
+            44.0
+        };
+
+        let mut node = make_node(s.id, label, "state", x, y, 140.0, h, state_colors[i % state_colors.len()]);
+        node.description = desc;
+        nodes.push(node);
+    }
+
+    // Final pseudo-state (bull's eye)
+    let final_id = u32::MAX - 1;
+    let last_row = if state_count > 0 { (state_count - 1) / cols.max(1) } else { 0 };
+    let final_y = last_row as f64 * (50.0 + V_SPACING) + state_start_y + 50.0 + V_SPACING;
+    nodes.push(make_node(final_id, String::new(), "final_state", initial_x, final_y, 24.0, 24.0, "#475569"));
+
+    // Connect initial pseudo-state to first state
+    if let Some(first_state) = states.first() {
+        let first_node = nodes.iter().find(|n| n.element_id == first_state.id);
+        if let Some(to) = first_node {
+            edges.push(DiagramEdge {
+                from_id: initial_id,
+                to_id: to.element_id,
+                label: None,
+                edge_type: "transition".into(),
+                points: vec![
+                    (initial_x + 10.0, 40.0),
+                    (to.x + to.width / 2.0, to.y),
+                ],
+            });
+        }
     }
 
     // Create edges from transitions using parsed source/target data
-    let mut edges = Vec::new();
     for trans in &transitions {
         let source_name = trans.specializations.first().map(|s| s.as_str());
         let target_name = trans.type_ref.as_deref();
@@ -484,16 +608,10 @@ pub fn compute_req_layout(
     for (i, r) in top_reqs.iter().enumerate() {
         let label = r.name.clone().unwrap_or_else(|| "<unnamed>".into());
         let w = (label.len() as f64 * 8.0).max(160.0);
-        nodes.push(DiagramNode {
-            element_id: r.id,
-            label,
-            kind: "requirement".into(),
-            x: 40.0,
-            y: 30.0 + i as f64 * (req_h + gap_y),
-            width: w, height: req_h,
-            color: "#ef4444".into(),
-            children: vec![],
-        });
+        let mut node = make_node(r.id, label, "requirement", 40.0, 30.0 + i as f64 * (req_h + gap_y), w, req_h, "#ef4444");
+        node.stereotype = Some("\u{ab}requirement\u{bb}".into());
+        node.description = r.doc.clone();
+        nodes.push(node);
     }
 
     // Place nested requirements to the right
@@ -522,14 +640,10 @@ pub fn compute_req_layout(
                 ],
             });
 
-            nodes.push(DiagramNode {
-                element_id: r.id,
-                label,
-                kind: "requirement".into(),
-                x: px, y: ny, width: w, height: req_h,
-                color: "#f87171".into(),
-                children: vec![],
-            });
+            let mut node = make_node(r.id, label, "requirement", px, ny, w, req_h, "#f87171");
+            node.stereotype = Some("\u{ab}requirement\u{bb}".into());
+            node.description = r.doc.clone();
+            nodes.push(node);
         }
     }
 
@@ -557,14 +671,9 @@ pub fn compute_req_layout(
             let w = (label.len() as f64 * 8.0).max(140.0);
             let nx = req_pos.1 + req_pos.3 + gap_x * 2.0;
             let ny = req_pos.2;
-            new_nodes.push(DiagramNode {
-                element_id: impl_el.id,
-                label: label.clone(),
-                kind: "block".into(),
-                x: nx, y: ny, width: w, height: req_h,
-                color: kind_to_color(&impl_el.kind),
-                children: vec![],
-            });
+            let mut node = make_node(impl_el.id, label.clone(), "block", nx, ny, w, req_h, &kind_to_color(&impl_el.kind));
+            node.stereotype = Some("\u{ab}block\u{bb}".into());
+            new_nodes.push(node);
             (impl_el.id, nx, ny, w)
         };
 
@@ -603,9 +712,17 @@ pub fn compute_ucd_layout(
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
     let model = model_lock.as_ref().ok_or("No model loaded")?;
 
-    let use_cases: Vec<&SysmlElement> = model.elements.iter()
-        .filter(|e| matches!(e.kind, ElementKind::UseCaseDef | ElementKind::UseCaseUsage))
+    // Collect use case defs first, then usages that don't duplicate a def by name
+    let uc_defs: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| e.kind == ElementKind::UseCaseDef)
         .collect();
+    let def_names: std::collections::HashSet<&str> = uc_defs.iter()
+        .filter_map(|e| e.name.as_deref())
+        .collect();
+    let uc_usages: Vec<&SysmlElement> = model.elements.iter()
+        .filter(|e| e.kind == ElementKind::UseCaseUsage && !def_names.contains(e.name.as_deref().unwrap_or("")))
+        .collect();
+    let use_cases: Vec<&SysmlElement> = uc_defs.into_iter().chain(uc_usages).collect();
 
     // If no use cases, fall back to action defs
     let actions: Vec<&SysmlElement> = if use_cases.is_empty() {
@@ -661,33 +778,34 @@ pub fn compute_ucd_layout(
 
     // Place actors on the left
     for (i, (label, &id)) in actor_type_names.iter().zip(actor_type_ids.iter()).enumerate() {
-        nodes.push(DiagramNode {
-            element_id: id,
-            label: label.clone(),
-            kind: "actor".into(),
-            x: 30.0,
-            y: 30.0 + i as f64 * (h_actor + gap),
-            width: w_actor, height: h_actor,
-            color: "#94a3b8".into(),
-            children: vec![],
-        });
+        nodes.push(make_node(id, label.clone(), "actor", 30.0, 30.0 + i as f64 * (h_actor + gap), w_actor, h_actor, "#94a3b8"));
     }
 
-    // Place use cases on the right
+    // Place use cases on the right, inside a system boundary box
     let uc_start_x = if actor_type_names.is_empty() { 60.0 } else { 30.0 + w_actor + gap * 2.0 };
+    let uc_padding = 20.0;
+    let mut max_uc_w: f64 = 130.0;
+
     for (i, uc) in all_use_cases.iter().enumerate() {
         let label = uc.name.clone().unwrap_or_else(|| "<unnamed>".into());
         let w = (label.len() as f64 * 8.0).max(130.0);
-        nodes.push(DiagramNode {
-            element_id: uc.id,
-            label,
-            kind: "usecase".into(),
-            x: uc_start_x,
-            y: 30.0 + i as f64 * (h_uc + gap),
-            width: w, height: h_uc,
-            color: "#10b981".into(),
-            children: vec![],
-        });
+        if w > max_uc_w { max_uc_w = w; }
+        nodes.push(make_node(uc.id, label, "usecase",
+            uc_start_x + uc_padding,
+            30.0 + uc_padding + 20.0 + i as f64 * (h_uc + gap),
+            w, h_uc, "#10b981"));
+    }
+
+    // System boundary box around use cases
+    if !all_use_cases.is_empty() {
+        let boundary_w = max_uc_w + uc_padding * 2.0 + 20.0;
+        let boundary_h = all_use_cases.len() as f64 * (h_uc + gap) + uc_padding * 2.0 + 20.0;
+        let boundary_id = u32::MAX - 2;
+        let mut boundary = make_node(boundary_id, "System".into(), "system_boundary",
+            uc_start_x, 30.0, boundary_w, boundary_h, "#334155");
+        boundary.stereotype = Some("\u{ab}system\u{bb}".into());
+        // Insert at beginning so it renders behind use cases
+        nodes.insert(actor_type_names.len(), boundary);
     }
 
     // Connect actors to their use cases based on actor_declarations
@@ -790,9 +908,10 @@ pub fn compute_ibd_layout(
                 )
             })
     } else {
-        // Default: pick the first part_def or part_usage that has child parts/ports
+        // Default: pick the part_def or part_usage with the most children
         model.elements.iter()
-            .find(|e| matches!(e.kind, ElementKind::PartDef | ElementKind::PartUsage) && has_children(e.id))
+            .filter(|e| matches!(e.kind, ElementKind::PartDef | ElementKind::PartUsage) && has_children(e.id))
+            .max_by_key(|e| model.elements.iter().filter(|c| c.parent_id == Some(e.id)).count())
             .or_else(|| model.elements.iter().find(|e| e.kind == ElementKind::PartDef))
     };
 
@@ -828,15 +947,10 @@ pub fn compute_ibd_layout(
     let mut edges = Vec::new();
 
     // Container block
-    nodes.push(DiagramNode {
-        element_id: block.id,
-        label: block.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-        kind: "block_container".into(),
-        x: 20.0, y: 20.0,
-        width: container_w, height: container_h,
-        color: "#3b82f6".into(),
-        children: vec![],
-    });
+    let mut container = make_node(block.id, block.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+        "block_container", 20.0, 20.0, container_w, container_h, "#3b82f6");
+    container.stereotype = Some("\u{ab}block\u{bb}".into());
+    nodes.push(container);
 
     // Child parts
     for (i, child) in children.iter().enumerate() {
@@ -845,14 +959,11 @@ pub fn compute_ibd_layout(
         let x = 20.0 + margin + col as f64 * (part_w + margin);
         let y = 20.0 + 30.0 + margin + row as f64 * (part_h + margin);
 
-        nodes.push(DiagramNode {
-            element_id: child.id,
-            label: child.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-            kind: "part".into(),
-            x, y, width: part_w, height: part_h,
-            color: kind_to_color(&child.kind),
-            children: vec![],
-        });
+        let label = child.name.clone().unwrap_or_else(|| "<unnamed>".into());
+        let mut node = make_node(child.id, label, "part", x, y, part_w, part_h, &kind_to_color(&child.kind));
+        // Show type in description (label must stay as name for connection edge matching)
+        node.description = child.type_ref.clone();
+        nodes.push(node);
     }
 
     // Ports on the container boundary
@@ -860,14 +971,8 @@ pub fn compute_ibd_layout(
         let x = 20.0 + (i as f64 + 1.0) * container_w / (ports.len() as f64 + 1.0) - port_size / 2.0;
         let y = 20.0 + container_h - port_size / 2.0;
 
-        nodes.push(DiagramNode {
-            element_id: port.id,
-            label: port.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-            kind: "port".into(),
-            x, y, width: port_size, height: port_size,
-            color: "#8b5cf6".into(),
-            children: vec![],
-        });
+        nodes.push(make_node(port.id, port.name.clone().unwrap_or_else(|| "<unnamed>".into()),
+            "port", x, y, port_size, port_size, "#8b5cf6"));
     }
 
     // Build lookup sets for matching connection endpoints

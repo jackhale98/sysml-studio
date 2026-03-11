@@ -32,15 +32,19 @@ export function DiagramView() {
     if (!model) return;
     const scopeName = diagramScope?.elementName ?? undefined;
     const scopeKind = diagramScope?.elementKind ?? "";
+    // Diagram node kinds ("block", "state", "part") don't match SysML kinds ("part_def", etc.)
+    // Accept both forms for scope resolution
+    const isScopedDef = scopeKind.endsWith("_def") || scopeKind === "block" || scopeKind === "requirement";
+    const isScopedPart = scopeKind === "part_def" || scopeKind === "part_usage" || scopeKind === "block" || scopeKind === "part";
+    const isScopedState = scopeKind === "state_def" || scopeKind === "state";
     const fetchLayout = async () => {
       try {
         switch (diagramType) {
           case "bdd":
-            setLayout(await computeBddLayout(scopeKind.endsWith("_def") ? scopeName : undefined));
+            setLayout(await computeBddLayout(isScopedDef ? scopeName : undefined));
             break;
           case "stm": {
-            // Use scoped state def, or find the first one
-            let stmName = scopeKind === "state_def" ? scopeName : undefined;
+            let stmName = isScopedState ? scopeName : undefined;
             if (!stmName) {
               const stateDef = model.elements.find(
                 (e) => typeof e.kind === "string" && e.kind === "state_def"
@@ -58,9 +62,7 @@ export function DiagramView() {
             setLayout(await computeUcdLayout());
             break;
           case "ibd":
-            setLayout(await computeIbdLayout(
-              scopeKind === "part_def" || scopeKind === "part_usage" ? scopeName : undefined
-            ));
+            setLayout(await computeIbdLayout(isScopedPart ? scopeName : undefined));
             break;
         }
       } catch {
@@ -100,7 +102,7 @@ export function DiagramView() {
 
     for (let i = layout.nodes.length - 1; i >= 0; i--) {
       const n = layout.nodes[i];
-      if (n.kind === "block_container") continue;
+      if (n.kind === "block_container" || n.kind === "system_boundary" || n.kind === "initial_state" || n.kind === "final_state") continue;
       if (svgX >= n.x && svgX <= n.x + n.width && svgY >= n.y && svgY <= n.y + n.height) {
         setHighlightedNode(n.label);
         return;
@@ -235,6 +237,7 @@ export function DiagramView() {
     draggingRef.current = false;
     setDragging(false);
     lastPos.current = null;
+    (e.target as Element).releasePointerCapture?.(e.pointerId);
   }, []);
 
   // If highlightedNodeId doesn't match any node in current layout, treat as null
@@ -506,6 +509,33 @@ export function DiagramView() {
             {layout?.nodes.map((node) => {
               const isHl = effectiveHl === node.label;
               const { kind } = node;
+              const comps = node.compartments ?? [];
+
+              // Initial pseudo-state: filled circle
+              if (kind === "initial_state") {
+                const cx = node.x + node.width / 2;
+                const cy = node.y + node.height / 2;
+                return (
+                  <g key={node.element_id} opacity={effectiveHl ? 0.25 : 1}>
+                    <circle cx={cx} cy={cy} r={node.width / 2}
+                      fill="#475569" stroke="#64748b" strokeWidth={1.5} />
+                  </g>
+                );
+              }
+
+              // Final pseudo-state: bull's eye
+              if (kind === "final_state") {
+                const cx = node.x + node.width / 2;
+                const cy = node.y + node.height / 2;
+                return (
+                  <g key={node.element_id} opacity={effectiveHl ? 0.25 : 1}>
+                    <circle cx={cx} cy={cy} r={node.width / 2}
+                      fill="none" stroke="#475569" strokeWidth={2} />
+                    <circle cx={cx} cy={cy} r={node.width / 2 - 4}
+                      fill="#475569" />
+                  </g>
+                );
+              }
 
               // Actor: stick figure
               if (kind === "actor") {
@@ -519,25 +549,39 @@ export function DiagramView() {
                     opacity={effectiveHl && !isHl ? 0.25 : 1}
                     filter={isHl ? "url(#glow)" : undefined}
                   >
-                    {/* Head */}
                     <circle cx={cx} cy={topY + 10} r={10}
                       fill="none" stroke={isHl ? "#60a5fa" : "#94a3b8"} strokeWidth={2} />
-                    {/* Body */}
                     <line x1={cx} y1={topY + 20} x2={cx} y2={topY + 45}
                       stroke={isHl ? "#60a5fa" : "#94a3b8"} strokeWidth={2} />
-                    {/* Arms */}
                     <line x1={cx - 18} y1={topY + 30} x2={cx + 18} y2={topY + 30}
                       stroke={isHl ? "#60a5fa" : "#94a3b8"} strokeWidth={2} />
-                    {/* Legs */}
                     <line x1={cx} y1={topY + 45} x2={cx - 14} y2={topY + 62}
                       stroke={isHl ? "#60a5fa" : "#94a3b8"} strokeWidth={2} />
                     <line x1={cx} y1={topY + 45} x2={cx + 14} y2={topY + 62}
                       stroke={isHl ? "#60a5fa" : "#94a3b8"} strokeWidth={2} />
-                    {/* Name */}
                     <text x={cx} y={node.y + node.height - 2}
                       fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"} fontSize="11"
                       fontWeight={600} fontFamily="var(--font-mono)"
                       textAnchor="middle">{node.label}</text>
+                  </g>
+                );
+              }
+
+              // System boundary: dashed rectangle with label
+              if (kind === "system_boundary") {
+                return (
+                  <g key={node.element_id} opacity={effectiveHl ? 0.35 : 1}>
+                    <rect x={node.x} y={node.y} width={node.width} height={node.height}
+                      rx={6} ry={6}
+                      fill="none"
+                      stroke={node.color + "88"}
+                      strokeWidth={1.5} strokeDasharray="6 3" />
+                    <text x={node.x + node.width / 2} y={node.y + 16}
+                      fill={node.color} fontSize="10" fontWeight={700}
+                      fontFamily="var(--font-mono)" textAnchor="middle"
+                      letterSpacing="0.05em">
+                      {node.stereotype ?? node.label}
+                    </text>
                   </g>
                 );
               }
@@ -600,13 +644,16 @@ export function DiagramView() {
                       rx={8} ry={0} fill={node.color + "22"} />
                     <text x={node.x + 12} y={node.y + 15}
                       fill={node.color} fontSize="12" fontWeight={700}
-                      fontFamily="var(--font-mono)">{node.label}</text>
+                      fontFamily="var(--font-mono)">
+                      {node.stereotype ? `${node.stereotype} ${node.label}` : node.label}
+                    </text>
                   </g>
                 );
               }
 
-              // Requirement: rectangle with req stereotype and doc
+              // Requirement: rectangle with stereotype and doc text
               if (kind === "requirement") {
+                const docText = node.description;
                 return (
                   <g
                     key={node.element_id}
@@ -622,22 +669,72 @@ export function DiagramView() {
                       strokeWidth={isHl ? 2.5 : 1.5} />
                     <rect x={node.x} y={node.y} width={node.width} height={4}
                       rx={2} fill={node.color} opacity={0.8} />
-                    <text x={node.x + node.width / 2} y={node.y + 16}
+                    <text x={node.x + node.width / 2} y={node.y + 14}
                       fill={node.color} fontSize="8" fontWeight={700}
                       fontFamily="var(--font-mono)" textAnchor="middle"
                       letterSpacing="0.08em">
-                      {"\u00AB"}requirement{"\u00BB"}
+                      {node.stereotype ?? "\u00ABrequirement\u00BB"}
                     </text>
-                    <text x={node.x + node.width / 2} y={node.y + node.height / 2 + 6}
+                    <text x={node.x + node.width / 2} y={node.y + 30}
                       fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"} fontSize="12"
                       fontWeight={600} fontFamily="var(--font-mono)"
                       textAnchor="middle">{node.label}</text>
+                    {docText && (
+                      <text x={node.x + node.width / 2} y={node.y + 48}
+                        fill="var(--text-muted)" fontSize="8" fontFamily="var(--font-mono)"
+                        textAnchor="middle" fontStyle="italic">
+                        {docText.length > 40 ? docText.slice(0, 37) + "..." : docText}
+                      </text>
+                    )}
                   </g>
                 );
               }
 
-              // Default: block/part rectangle (BDD, STM, IBD parts)
-              const isState = kind === "state";
+              // State: rounded rectangle with entry/do/exit actions
+              if (kind === "state") {
+                const descLines = node.description?.split("\n") ?? [];
+                const nameY = node.y + 20;
+                return (
+                  <g
+                    key={node.element_id}
+                    onClick={() => setHighlightedNode(node.label)}
+                    style={{ cursor: "pointer" }}
+                    opacity={effectiveHl && !isHl ? 0.25 : 1}
+                    filter={isHl ? "url(#glow)" : undefined}
+                  >
+                    <rect
+                      x={node.x} y={node.y} width={node.width} height={node.height}
+                      rx={12} ry={12}
+                      fill={isHl ? node.color + "33" : "var(--bg-tertiary)"}
+                      stroke={isHl ? node.color : node.color + "88"}
+                      strokeWidth={isHl ? 2.5 : 1.5}
+                    />
+                    <text
+                      x={node.x + node.width / 2} y={nameY}
+                      fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"}
+                      fontSize="12" fontWeight={700} fontFamily="var(--font-mono)"
+                      textAnchor="middle"
+                    >
+                      {node.label}
+                    </text>
+                    {descLines.length > 0 && (
+                      <line x1={node.x + 8} y1={nameY + 6} x2={node.x + node.width - 8} y2={nameY + 6}
+                        stroke={node.color + "44"} strokeWidth={1} />
+                    )}
+                    {descLines.map((line, li) => (
+                      <text key={li}
+                        x={node.x + 10} y={nameY + 20 + li * 14}
+                        fill="var(--text-muted)" fontSize="9" fontFamily="var(--font-mono)">
+                        {line}
+                      </text>
+                    ))}
+                  </g>
+                );
+              }
+
+              // Default: block/part rectangle (BDD) with compartments
+              const hasComps = comps.length > 0;
+              const stereo = node.stereotype;
               return (
                 <g
                   key={node.element_id}
@@ -648,38 +745,60 @@ export function DiagramView() {
                 >
                   <rect
                     x={node.x} y={node.y} width={node.width} height={node.height}
-                    rx={isState ? node.height / 2 : 6}
-                    ry={isState ? node.height / 2 : 6}
+                    rx={6} ry={6}
                     fill={isHl ? node.color + "33" : "var(--bg-tertiary)"}
                     stroke={isHl ? node.color : node.color + "88"}
                     strokeWidth={isHl ? 2.5 : 1.5}
                   />
-                  {!isState && (
-                    <rect
-                      x={node.x} y={node.y} width={node.width} height={4}
-                      rx={2} fill={node.color} opacity={0.8}
-                    />
-                  )}
-                  {!isState && kind !== "part" && (
+                  <rect
+                    x={node.x} y={node.y} width={node.width} height={4}
+                    rx={2} fill={node.color} opacity={0.8}
+                  />
+                  {stereo && (
                     <text
-                      x={node.x + node.width / 2} y={node.y + 18}
+                      x={node.x + node.width / 2} y={node.y + 16}
                       fill={node.color} fontSize="8" fontWeight={700}
                       fontFamily="var(--font-mono)" textAnchor="middle"
                       letterSpacing="0.08em"
                     >
-                      {"\u00AB"}block{"\u00BB"}
+                      {stereo}
                     </text>
                   )}
                   <text
                     x={node.x + node.width / 2}
-                    y={isState ? node.y + node.height / 2 : node.y + node.height / 2 + 8}
+                    y={node.y + (stereo ? 30 : 20)}
                     fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"}
-                    fontSize={isState ? 12 : 11}
-                    fontWeight={600} fontFamily="var(--font-mono)"
-                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize="11" fontWeight={600} fontFamily="var(--font-mono)"
+                    textAnchor="middle"
                   >
-                    {node.label}
+                    {kind === "part" && node.description
+                      ? `${node.label} : ${node.description}`
+                      : node.label}
                   </text>
+                  {hasComps && (() => {
+                    let cy = node.y + 38;
+                    return comps.map((comp, ci) => {
+                      const startY = cy;
+                      cy += 16 + comp.entries.length * 14;
+                      return (
+                        <g key={ci}>
+                          <line x1={node.x} y1={startY - 2} x2={node.x + node.width} y2={startY - 2}
+                            stroke={node.color + "44"} strokeWidth={0.5} />
+                          <text x={node.x + 8} y={startY + 10}
+                            fill={node.color} fontSize="8" fontWeight={700}
+                            fontFamily="var(--font-mono)" letterSpacing="0.05em">
+                            {comp.heading}
+                          </text>
+                          {comp.entries.map((entry, ei) => (
+                            <text key={ei} x={node.x + 10} y={startY + 10 + 14 * (ei + 1)}
+                              fill="var(--text-muted)" fontSize="9" fontFamily="var(--font-mono)">
+                              {entry}
+                            </text>
+                          ))}
+                        </g>
+                      );
+                    });
+                  })()}
                 </g>
               );
             })}

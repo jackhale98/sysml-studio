@@ -20,14 +20,22 @@ pub struct AppState {
 pub fn parse_source(source: String, state: State<'_, AppState>) -> Result<SysmlModel, String> {
     let start = std::time::Instant::now();
 
-    // Parse with sysml-core
-    let mut core_model = sysml_core::parser::parse_file("<buffer>", &source);
-    sysml_core::model::qualify_model(&mut core_model);
+    // Parse with sysml-core (catch panics to prevent app crash)
+    let source_clone = source.clone();
+    let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut core_model = sysml_core::parser::parse_file("<buffer>", &source_clone);
+        sysml_core::model::qualify_model(&mut core_model);
+        core_model
+    }));
+    let core_model = parse_result.map_err(|_| "Parser crashed on this input — please check for syntax errors".to_string())?;
 
     let parse_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    // Convert to Studio model format
-    let model = adapter::convert_model(&core_model, parse_time_ms);
+    // Convert to Studio model format (catch panics)
+    let convert_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        adapter::convert_model(&core_model, parse_time_ms)
+    }));
+    let model = convert_result.map_err(|_| "Model conversion failed — please report this bug".to_string())?;
 
     // Build relationship graph for MBSE features
     let graph = ElementGraph::build_from_model(&model.elements);
@@ -198,17 +206,20 @@ pub fn get_validation(
 
     let mut report = query::validate_model(&model.elements, graph);
 
-    // Add sysml-core lint check results
+    // Add sysml-core lint check results (catch panics)
     let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
     if let Some(ref core_model) = *core_lock {
-        let core_issues = adapter::run_core_checks(core_model);
-        for issue in core_issues {
-            match issue.severity.as_str() {
-                "error" => report.summary.errors += 1,
-                "warning" => report.summary.warnings += 1,
-                _ => report.summary.infos += 1,
+        if let Ok(core_issues) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            adapter::run_core_checks(core_model)
+        })) {
+            for issue in core_issues {
+                match issue.severity.as_str() {
+                    "error" => report.summary.errors += 1,
+                    "warning" => report.summary.warnings += 1,
+                    _ => report.summary.infos += 1,
+                }
+                report.issues.push(issue);
             }
-            report.issues.push(issue);
         }
     }
 
