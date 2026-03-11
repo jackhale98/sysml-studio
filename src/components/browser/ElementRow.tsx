@@ -16,7 +16,7 @@ interface ElementRowProps {
 }
 
 const ACTION_W = 64;
-const DEAD_ZONE = 18;
+const DEAD_ZONE = 22;
 const SNAP_THRESHOLD = 48;
 const INDENT_PX = 16;
 
@@ -51,13 +51,30 @@ export function ElementRow({ element, depth, hasChildren, expanded, onToggle, se
     el.style.transform = `translateX(${x}px)`;
     currentX.current = x;
 
+    // Smooth progressive reveal: opacity ramps with swipe distance
     if (actionsLeftRef.current) {
-      actionsLeftRef.current.style.display = x > 2 ? "flex" : "none";
+      if (x > 0 && maxRight > 0) {
+        const progress = Math.min(x / maxRight, 1);
+        const opacity = Math.min(progress * 1.5, 1);
+        actionsLeftRef.current.style.opacity = String(opacity);
+        actionsLeftRef.current.style.pointerEvents = progress > 0.5 ? "auto" : "none";
+      } else {
+        actionsLeftRef.current.style.opacity = "0";
+        actionsLeftRef.current.style.pointerEvents = "none";
+      }
     }
     if (actionsRightRef.current) {
-      actionsRightRef.current.style.display = x < -2 ? "flex" : "none";
+      if (x < 0 && maxLeft > 0) {
+        const progress = Math.min(Math.abs(x) / maxLeft, 1);
+        const opacity = Math.min(progress * 1.5, 1);
+        actionsRightRef.current.style.opacity = String(opacity);
+        actionsRightRef.current.style.pointerEvents = progress > 0.5 ? "auto" : "none";
+      } else {
+        actionsRightRef.current.style.opacity = "0";
+        actionsRightRef.current.style.pointerEvents = "none";
+      }
     }
-  }, []);
+  }, [maxLeft, maxRight]);
 
   const snapTo = useCallback((target: number) => {
     setOffset(target, true);
@@ -146,12 +163,14 @@ export function ElementRow({ element, depth, hasChildren, expanded, onToggle, se
           ref={actionsRightRef}
           onClick={() => { snapTo(0); onDelete(element); }}
           style={{
-            display: "none",
+            display: "flex",
             position: "absolute", right: 0, top: 0, bottom: 0,
             width: ACTION_W, background: "var(--error)",
             alignItems: "center", justifyContent: "center",
             color: "#fff", fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
             cursor: "pointer",
+            opacity: 0, pointerEvents: "none",
+            transition: "opacity 0.15s ease",
           }}
         >
           Delete
@@ -162,8 +181,10 @@ export function ElementRow({ element, depth, hasChildren, expanded, onToggle, se
       <div
         ref={actionsLeftRef}
         style={{
-          display: "none",
+          display: "flex",
           position: "absolute", left: 0, top: 0, bottom: 0,
+          opacity: 0, pointerEvents: "none",
+          transition: "opacity 0.15s ease",
         }}
       >
         {onAdd && (
@@ -203,12 +224,13 @@ export function ElementRow({ element, depth, hasChildren, expanded, onToggle, se
         style={{
           display: "flex", alignItems: "center", gap: 6, width: "100%",
           padding: `8px 14px 8px ${14 + depth * INDENT_PX}px`,
-          background: selected ? "var(--bg-elevated)" : "transparent",
+          background: selected ? "var(--bg-elevated)" : "var(--bg-primary, #1e1e2e)",
           border: "none", borderBottom: "1px solid var(--border)", cursor: "pointer",
           textAlign: "left",
           borderLeft: selected ? "3px solid var(--accent)" : "3px solid transparent",
           minHeight: 40,
           willChange: "transform",
+          position: "relative", zIndex: 1,
         }}
       >
         {/* Expand/collapse toggle */}
