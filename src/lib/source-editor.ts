@@ -17,16 +17,58 @@ export function generateElementSource(opts: {
   flowItemType?: string;
   flowSource?: string;
   flowTarget?: string;
+  calcParams?: { name: string; type: string; direction: "in" | "out" | "inout" }[];
+  calcReturnExpr?: string;
+  calcReturnType?: string;
+  constraintExpr?: string;
+  connEndTypes?: string[];
 }): string {
   const { kind, name, typeRef, doc, children, specializes, multiplicity,
-          shortName, flowItemType, flowSource, flowTarget } = opts;
+          shortName, flowItemType, flowSource, flowTarget,
+          calcParams, calcReturnExpr, calcReturnType, constraintExpr, connEndTypes } = opts;
   const alias = shortName ? ` <${shortName}>` : "";
   const lines: string[] = [];
 
   // Map kind to SysML keyword syntax
   const keyword = kindToKeyword(kind);
 
-  if (isDefinition(kind)) {
+  if (kind === "calc_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (calcParams) {
+      for (const p of calcParams) {
+        lines.push(`  ${p.direction} ${p.name} : ${p.type || "Real"};`);
+      }
+    }
+    if (calcReturnExpr) {
+      lines.push(`  return result : ${calcReturnType || "Real"} = ${calcReturnExpr};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "constraint_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (calcParams) {
+      for (const p of calcParams) {
+        lines.push(`  ${p.direction} ${p.name} : ${p.type || "Real"};`);
+      }
+    }
+    if (constraintExpr) lines.push(`  ${constraintExpr};`);
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "connection_def" || kind === "interface_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (connEndTypes && connEndTypes.length >= 2) {
+      lines.push(`  end source : ${connEndTypes[0]};`);
+      lines.push(`  end target : ${connEndTypes[1]};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (isDefinition(kind)) {
     const spec = specializes ? ` :> ${specializes}` : "";
     lines.push(`${keyword} ${name}${alias}${spec} {`);
     if (doc) {
@@ -392,6 +434,7 @@ export const CREATE_OPTIONS = [
   {
     category: "Constraint & Analysis",
     items: [
+      { kind: "calc_def", label: "Calculation" },
       { kind: "constraint_def", label: "Constraint Definition" },
       { kind: "constraint_usage", label: "Constraint Usage" },
       { kind: "analysis_case_def", label: "Analysis Case" },

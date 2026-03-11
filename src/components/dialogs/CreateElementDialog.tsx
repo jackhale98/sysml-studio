@@ -80,6 +80,15 @@ export function CreateElementDialog() {
   const [flowTarget, setFlowTarget] = useState("");
   const [shortName, setShortName] = useState("");
 
+  // Calc/constraint params
+  const [calcParams, setCalcParams] = useState<{ name: string; type: string; direction: "in" | "out" | "inout" }[]>([]);
+  const [calcReturnExpr, setCalcReturnExpr] = useState("");
+  const [calcReturnType, setCalcReturnType] = useState("Real");
+  const [constraintExpr, setConstraintExpr] = useState("");
+  // Connection/interface end types
+  const [connEndSource, setConnEndSource] = useState("");
+  const [connEndTarget, setConnEndTarget] = useState("");
+
   // Child entries
   const [children, setChildren] = useState<ChildEntry[]>([]);
   const [addingChild, setAddingChild] = useState<ChildType | null>(null);
@@ -97,6 +106,10 @@ export function CreateElementDialog() {
   const isTransition = selectedKind === "transition_statement";
   const isFlowUsage = selectedKind === "flow_usage";
   const isUsageKind = selectedKind.endsWith("_usage") && !isFlowUsage;
+  const isCalcDef = selectedKind === "calc_def";
+  const isConstraintDef = selectedKind === "constraint_def";
+  const isCalcOrConstraint = isCalcDef || isConstraintDef;
+  const isConnectionOrInterface = selectedKind === "connection_def" || selectedKind === "interface_def";
 
   const targets = useMemo(() => model ? getInsertTargets(model) : [], [model]);
 
@@ -114,6 +127,12 @@ export function CreateElementDialog() {
     setShortName("");
     setName("");
     setTypeRef("");
+    setCalcParams([]);
+    setCalcReturnExpr("");
+    setCalcReturnType("Real");
+    setConstraintExpr("");
+    setConnEndSource("");
+    setConnEndTarget("");
   }
 
   // ─── Item lists ───
@@ -387,6 +406,12 @@ export function CreateElementDialog() {
       typeRef: (needsType || isSatisfyOrVerify) && typeRef.trim() ? typeRef.trim() : undefined,
       specializes: isDef && specializes.trim() ? specializes.trim() : undefined,
       multiplicity: isUsageKind && multiplicity.trim() ? multiplicity.trim() : undefined,
+      calcParams: isCalcOrConstraint && calcParams.length > 0 ? calcParams : undefined,
+      calcReturnExpr: isCalcDef && calcReturnExpr.trim() ? calcReturnExpr.trim() : undefined,
+      calcReturnType: isCalcDef && calcReturnType.trim() ? calcReturnType.trim() : undefined,
+      constraintExpr: isConstraintDef && constraintExpr.trim() ? constraintExpr.trim() : undefined,
+      connEndTypes: isConnectionOrInterface && connEndSource.trim() && connEndTarget.trim()
+        ? [connEndSource.trim(), connEndTarget.trim()] : undefined,
     };
   }
 
@@ -621,8 +646,161 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 5. Default: name + optional short name + type + specialization + multiplicity */}
-        {!isConnectStatement && !isSatisfyOrVerify && !isTransition && !isFlowUsage && (
+        {/* 5. Calc/Constraint definition: name + params + return/expression */}
+        {isCalcOrConstraint && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder={isCalcDef ? "MyCalculation" : "MyConstraint"}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+
+            {/* Parameters */}
+            <label style={labelStyle}>Parameters</label>
+            {calcParams.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <select
+                  value={p.direction}
+                  onChange={(e) => {
+                    const next = [...calcParams];
+                    next[i] = { ...next[i], direction: e.target.value as "in" | "out" | "inout" };
+                    setCalcParams(next);
+                  }}
+                  style={{ ...inputStyle, width: 70, padding: "6px 4px", minHeight: 36, fontSize: 11 }}
+                >
+                  <option value="in">in</option>
+                  <option value="out">out</option>
+                  <option value="inout">inout</option>
+                </select>
+                <input
+                  style={{ ...inputStyle, flex: 1, minHeight: 36, padding: "6px 8px" }}
+                  placeholder="paramName"
+                  value={p.name}
+                  onChange={(e) => {
+                    const next = [...calcParams];
+                    next[i] = { ...next[i], name: e.target.value };
+                    setCalcParams(next);
+                  }}
+                  autoCapitalize="none"
+                />
+                <input
+                  style={{ ...inputStyle, width: 80, minHeight: 36, padding: "6px 8px" }}
+                  placeholder="Real"
+                  value={p.type}
+                  onChange={(e) => {
+                    const next = [...calcParams];
+                    next[i] = { ...next[i], type: e.target.value };
+                    setCalcParams(next);
+                  }}
+                  autoCapitalize="none"
+                />
+                <button
+                  onClick={() => setCalcParams(calcParams.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setCalcParams([...calcParams, { name: "", type: "Real", direction: "in" }])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Parameter
+            </button>
+
+            {/* Return expression (calc) or constraint expression */}
+            {isCalcDef && (
+              <>
+                <label style={labelStyle}>Return Type</label>
+                <input
+                  style={inputStyle}
+                  placeholder="Real"
+                  value={calcReturnType}
+                  onChange={(e) => setCalcReturnType(e.target.value)}
+                  autoCapitalize="none"
+                />
+                <div style={{ height: 10 }} />
+                <label style={labelStyle}>Return Expression</label>
+                <input
+                  style={inputStyle}
+                  placeholder="e.g. mass + passengerCount * passengerMass"
+                  value={calcReturnExpr}
+                  onChange={(e) => setCalcReturnExpr(e.target.value)}
+                  autoCapitalize="none"
+                />
+                <div style={{ height: 10 }} />
+              </>
+            )}
+            {isConstraintDef && (
+              <>
+                <label style={labelStyle}>Constraint Expression</label>
+                <input
+                  style={inputStyle}
+                  placeholder="e.g. speed <= maxSpeed"
+                  value={constraintExpr}
+                  onChange={(e) => setConstraintExpr(e.target.value)}
+                  autoCapitalize="none"
+                />
+                <div style={{ height: 10 }} />
+              </>
+            )}
+          </>
+        )}
+
+        {/* 6. Connection/Interface definition: name + end types */}
+        {isConnectionOrInterface && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder={selectedKind === "connection_def" ? "MyConnection" : "MyInterface"}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Source End Type</label>
+            <SearchSelect
+              items={typeItems}
+              value={connEndSource}
+              onChange={setConnEndSource}
+              placeholder="Select source type..."
+              title="Source End Type"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Target End Type</label>
+            <SearchSelect
+              items={typeItems}
+              value={connEndTarget}
+              onChange={setConnEndTarget}
+              placeholder="Select target type..."
+              title="Target End Type"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Specializes (optional)</label>
+            <SearchSelect
+              items={specializationItems}
+              value={specializes}
+              onChange={setSpecializes}
+              placeholder="Select supertype..."
+              title="Specializes"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 7. Default: name + optional short name + type + specialization + multiplicity */}
+        {!isConnectStatement && !isSatisfyOrVerify && !isTransition && !isFlowUsage && !isCalcOrConstraint && !isConnectionOrInterface && (
           <>
             <label style={labelStyle}>Name</label>
             <input
