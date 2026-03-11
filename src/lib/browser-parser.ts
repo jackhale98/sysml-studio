@@ -71,6 +71,21 @@ const OTHER_PATTERNS: [RegExp, string, Category][] = [
   [/^(?:public\s+)?import\s+/, "import", "auxiliary"],
   [/^connect\s+([\w.:]+)\s+to\s+([\w.:]+)/, "connect_statement", "relationship"],
   [/^include\s+(?:use\s+case\s+)?(\w+)/, "include_statement", "behavior"],
+  [/^fork\s+(\w+)/, "fork_node", "behavior"],
+  [/^join\s+(\w+)/, "join_node", "behavior"],
+  [/^decide\s+(\w+)/, "decide_node", "behavior"],
+  [/^merge\s+(\w+)/, "merge_node", "behavior"],
+  // "first X then fork Y" — succession to a fork node (captures source + fork name)
+  [/^first\s+(\w+)\s+then\s+fork\s+(\w+)/, "succession_to_fork", "behavior"],
+  [/^first\s+(\w+)\s+then\s+join\s+(\w+)/, "succession_to_join", "behavior"],
+  [/^first\s+(\w+)\s+then\s+(\w+)/, "succession_usage", "behavior"],
+  [/^then\s+fork\s+(\w+)/, "fork_node", "behavior"],
+  [/^then\s+join\s+(\w+)/, "join_node", "behavior"],
+  [/^then\s+decide\s+(\w+)/, "decide_node", "behavior"],
+  [/^then\s+merge\s+(\w+)/, "merge_node", "behavior"],
+  [/^then\s+(\w+)\s*;/, "succession_branch", "behavior"],
+  [/^send\s+(.+?)\s+to\s+(\w+)/, "send_action", "behavior"],
+  [/^accept\s+(\w+)/, "accept_action", "behavior"],
 ];
 
 function makeSpan(line: number, col: number, endCol: number): SourceSpan {
@@ -181,7 +196,7 @@ export function browserParse(source: string): SysmlModel {
         const m = matchLine.match(pat);
         if (m) {
           const parentId = ctx.stack.length > 0 ? ctx.stack[ctx.stack.length - 1].id : null;
-          let name = m[1] ?? null;
+          let name: string | null = m[1] ?? null;
           let typeRef: string | null = null;
           let specializations: string[] = [];
           let triggerExpr: string | null = null;
@@ -201,11 +216,42 @@ export function browserParse(source: string): SysmlModel {
             typeRef = m[4] ?? null;
             // Store trigger signal in value_expr for browser-side state machine extraction
             triggerExpr = m[3] ?? null;
+          } else if (kind === "succession_to_fork" || kind === "succession_to_join") {
+            // "first X then fork Y" — create succession (X → Y) + fork/join node (Y)
+            const nodeKind = kind === "succession_to_fork" ? "fork_node" : "join_node";
+            const nodeName = m[2];
+            // Create the fork/join node first
+            const nodeQname = ctx.stack.map(s => s.name).concat(nodeName).join("::");
+            const nodeEl: SysmlElement = {
+              id: ctx.nextId++, kind: nodeKind as any, name: nodeName, qualified_name: nodeQname,
+              category: category as Category, parent_id: parentId, children_ids: [],
+              span: makeSpan(i, 0, lines[i].length), type_ref: null, specializations: [],
+              modifiers: [], multiplicity: null, doc: null, short_name: null, value_expr: null,
+            };
+            ctx.elements.push(nodeEl);
+            if (parentId !== null) {
+              const parent = ctx.elements.find(e => e.id === parentId);
+              if (parent) parent.children_ids.push(nodeEl.id);
+            }
+            // Now set up the succession element
+            name = null;
+            specializations = [m[1]];
+            typeRef = nodeName;
+          } else if (kind === "succession_usage") {
+            // first A then B — specializations[0] = source, type_ref = target
+            name = null;
+            specializations = [m[1]];
+            typeRef = m[2];
+          } else if (kind === "send_action") {
+            name = m[1]; // payload
+            typeRef = m[2]; // target
           }
 
+          // Normalize compound kinds to their base kind for the succession element
+          const elementKind = (kind === "succession_to_fork" || kind === "succession_to_join") ? "succession_usage" : kind;
           const qname = ctx.stack.map(s => s.name).concat(name ?? "<unnamed>").join("::");
           const el: SysmlElement = {
-            id: ctx.nextId++, kind: kind as any, name, qualified_name: qname,
+            id: ctx.nextId++, kind: elementKind as any, name, qualified_name: qname,
             category: category as Category, parent_id: parentId, children_ids: [],
             span: makeSpan(i, 0, lines[i].length), type_ref: typeRef, specializations,
             modifiers: [], multiplicity: null, doc: null, short_name: shortName, value_expr: triggerExpr,

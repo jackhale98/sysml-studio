@@ -140,6 +140,7 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     enum hydrogen;
   }
 
+  // Sequential driving procedure with explicit succession (SysML v2 §7.13)
   action def Drive {
     action startEngine;
     action checkMirrors;
@@ -149,14 +150,72 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     action decelerate;
     action applyBrake;
     action stopEngine;
+
+    first startEngine then checkMirrors;
+    first checkMirrors then releaseBrake;
+    first releaseBrake then accelerate;
+    first accelerate then cruise;
+    first cruise then decelerate;
+    first decelerate then applyBrake;
+    first applyBrake then stopEngine;
   }
 
+  // Parallel workflow with fork/join (adapted from SysML v2 Annex A — TransportPassenger)
+  action def TransportPassenger {
+    // Declare action steps
+    action driverGetIn;
+    action passengerGetIn;
+    action checkSafety;
+    action driveToDestination;
+    action providePower;
+    action monitorSystems;
+    action driverGetOut;
+    action passengerGetOut;
+
+    // Declare control flow nodes
+    join joinBoard;
+    join joinDrive;
+    join joinExit;
+
+    // Phase 1: Boarding — driver and passenger board in parallel
+    first start then fork forkBoard;
+      then driverGetIn;
+      then passengerGetIn;
+    first driverGetIn then joinBoard;
+    first passengerGetIn then joinBoard;
+
+    // Phase 2: Safety check, then 3 concurrent driving activities
+    first joinBoard then checkSafety;
+    first checkSafety then fork forkDrive;
+      then driveToDestination;
+      then providePower;
+      then monitorSystems;
+    first driveToDestination then joinDrive;
+    first providePower then joinDrive;
+    first monitorSystems then joinDrive;
+
+    // Phase 3: Disembark — driver and passenger exit in parallel
+    first joinDrive then fork forkExit;
+      then driverGetOut;
+      then passengerGetOut;
+    first driverGetOut then joinExit;
+    first passengerGetOut then joinExit;
+
+    first joinExit then done;
+  }
+
+  // Emergency response: strictly sequential critical path
   action def EmergencyStop {
     action detectObstacle;
     action activateABS;
     action applyFullBrake;
     action activateHazardLights;
     action callEmergencyServices;
+
+    first detectObstacle then activateABS;
+    first activateABS then applyFullBrake;
+    first applyFullBrake then activateHazardLights;
+    first activateHazardLights then callEmergencyServices;
   }
 
   calc def GrossVehicleMass {

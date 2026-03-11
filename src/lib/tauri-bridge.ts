@@ -355,15 +355,145 @@ function browserSimulateStateMachine(
 
 // ─── Browser-side action extraction ───
 
-function browserListActions(model: SysmlModel | null): ActionModel[] {
+// Build action steps from parsed elements, including control flow graph
+export function browserListActions(model: SysmlModel | null): ActionModel[] {
   if (!model) return [];
   const els = model.elements;
   const actionDefs = els.filter(e => e.kind === "action_def");
   return actionDefs.map(ad => {
-    const childActions = els.filter(e => e.kind === "action_usage" && e.parent_id === ad.id);
-    const steps = childActions.map(a => ({
-      Action: { name: a.name ?? "<unnamed>", steps: [] },
-    }));
+    const children = els.filter(e => e.parent_id === ad.id);
+    const actions = children.filter(e => e.kind === "action_usage");
+    const forks = children.filter(e => e.kind === "fork_node");
+    const joins = children.filter(e => e.kind === "join_node");
+    const successions = children.filter(e => e.kind === "succession_usage");
+    const branches = children.filter(e => e.kind === "succession_branch");
+    const accepts = children.filter(e => e.kind === "accept_action");
+    const sends = children.filter(e => e.kind === "send_action");
+
+    // Build steps: interleave actions with control flow nodes
+    const steps: unknown[] = [];
+
+    // If we have successions (first...then), build a proper flow graph
+    if (successions.length > 0 || forks.length > 0) {
+      // Collect all node names for ordering
+      const forkNames = new Set(forks.map(f => f.name));
+      const joinNames = new Set(joins.map(j => j.name));
+      const actionNames = new Map(actions.map(a => [a.name, a]));
+
+      // Build adjacency: source → targets
+      const adj = new Map<string, string[]>();
+      for (const s of successions) {
+        const src = s.specializations[0];
+        const tgt = s.type_ref;
+        if (src && tgt) {
+          const list = adj.get(src) ?? [];
+          list.push(tgt);
+          adj.set(src, list);
+        }
+      }
+
+      // Fork branches: `then actionName;` lines following a fork
+      // Associate each branch with its nearest preceding fork by source order
+      const sortedForks = [...forks].sort((a, b) => a.span.start_line - b.span.start_line);
+      const sortedBranches = [...branches].sort((a, b) => a.span.start_line - b.span.start_line);
+      for (const b of sortedBranches) {
+        // Find the last fork that appears before this branch
+        let ownerFork: typeof sortedForks[0] | null = null;
+        for (const f of sortedForks) {
+          if (f.span.start_line < b.span.start_line) ownerFork = f;
+          else break;
+        }
+        if (ownerFork) {
+          const list = adj.get(ownerFork.name ?? "") ?? [];
+          list.push(b.name ?? "");
+          adj.set(ownerFork.name ?? "", list);
+        }
+      }
+
+      // Build ordered execution from "start" node
+      const visited = new Set<string>();
+      function buildSteps(node: string): unknown[] {
+        if (visited.has(node) || node === "done") return [];
+        visited.add(node);
+        const result: unknown[] = [];
+        const targets = adj.get(node) ?? [];
+
+        if (forkNames.has(node)) {
+          // Fork: execute all targets in parallel
+          const branchSteps = targets.map(t => {
+            const chain: unknown[] = [];
+            let cur = t;
+            while (cur && !joinNames.has(cur) && !visited.has(cur) && cur !== "done") {
+              visited.add(cur);
+              if (actionNames.has(cur)) {
+                chain.push({ Action: { name: cur, steps: [] } });
+              } else if (forkNames.has(cur)) {
+                chain.push(...buildSteps(cur));
+              }
+              const next = adj.get(cur);
+              cur = next?.[0] ?? "";
+            }
+            return chain.length === 1 ? chain[0] : { Sequence: { steps: chain } };
+          });
+          result.push({ Fork: { name: node, branches: branchSteps } });
+          // Find the join that follows
+          for (const t of targets) {
+            let cur = t;
+            while (cur && !joinNames.has(cur)) {
+              const next = adj.get(cur);
+              cur = next?.[0] ?? "";
+            }
+            if (joinNames.has(cur) && !visited.has(cur)) {
+              visited.add(cur);
+              const afterJoin = adj.get(cur) ?? [];
+              result.push({ Join: { name: cur } });
+              for (const aj of afterJoin) {
+                result.push(...buildSteps(aj));
+              }
+              break;
+            }
+          }
+        } else if (actionNames.has(node)) {
+          result.push({ Action: { name: node, steps: [] } });
+          for (const t of targets) {
+            result.push(...buildSteps(t));
+          }
+        } else if (joinNames.has(node)) {
+          result.push({ Join: { name: node } });
+          for (const t of targets) {
+            result.push(...buildSteps(t));
+          }
+        }
+        return result;
+      }
+
+      // Find starting point from "first start then X" succession
+      const startSucc = successions.find(s => s.specializations[0] === "start");
+      if (startSucc?.type_ref) {
+        steps.push(...buildSteps(startSucc.type_ref));
+      } else {
+        // Fallback: just list actions
+        for (const a of actions) steps.push({ Action: { name: a.name ?? "<unnamed>", steps: [] } });
+      }
+
+      // Include any accept/send as steps
+      for (const ac of accepts) {
+        if (!visited.has(ac.name ?? "")) {
+          steps.push({ Accept: { signal: ac.name } });
+        }
+      }
+      for (const sn of sends) {
+        if (!visited.has(sn.name ?? "")) {
+          steps.push({ Send: { payload: sn.name, to: sn.type_ref } });
+        }
+      }
+    } else {
+      // Simple sequential action — no explicit successions
+      for (const a of actions) steps.push({ Action: { name: a.name ?? "<unnamed>", steps: [] } });
+      for (const ac of accepts) steps.push({ Accept: { signal: ac.name } });
+      for (const sn of sends) steps.push({ Send: { payload: sn.name, to: sn.type_ref } });
+    }
+
     return {
       name: ad.name ?? "<unnamed>",
       steps,
@@ -372,7 +502,8 @@ function browserListActions(model: SysmlModel | null): ActionModel[] {
   });
 }
 
-function browserExecuteAction(
+// Simulate action execution with fork/join parallelism and critical path tracking
+export function browserExecuteAction(
   model: SysmlModel | null, actionName: string, maxSteps?: number,
 ): ActionExecState {
   const actions = browserListActions(model);
@@ -381,16 +512,119 @@ function browserExecuteAction(
 
   const trace: ActionExecStep[] = [];
   const limit = maxSteps ?? 1000;
-  for (let i = 0; i < action.steps.length && trace.length < limit; i++) {
-    const step = action.steps[i];
+  let elapsed = 0;
+  let sequentialTime = 0; // total time if everything were sequential
+  let parallelBranches = 0;
+
+  trace.push({ step: 0, kind: "Start", description: `Begin ${actionName}` });
+
+  function execStep(step: unknown, depth: number): number {
+    if (trace.length >= limit) return 0;
+    const indent = "  ".repeat(depth);
     const entries = Object.entries(step as Record<string, unknown>);
-    const label = entries.length > 0 ? String((entries[0][1] as { name?: string })?.name ?? entries[0][0]) : "step";
-    trace.push({ step: i, kind: label, description: "executed" });
+    if (entries.length === 0) return 0;
+    const [kind, data] = entries[0];
+    const d = data as Record<string, unknown>;
+
+    if (kind === "Fork") {
+      const forkName = (d.name as string) ?? "fork";
+      const branches = (d.branches as unknown[]) ?? [];
+      parallelBranches += branches.length;
+      trace.push({ step: trace.length, kind: "Fork", description: `${indent}[t=${elapsed}] Fork "${forkName}" → ${branches.length} parallel branches` });
+
+      // Execute branches "in parallel" — track max time across branches
+      const forkStart = elapsed;
+      let maxBranchTime = 0;
+      let totalBranchTime = 0;
+      for (let bi = 0; bi < branches.length; bi++) {
+        const branchStart = forkStart;
+        elapsed = forkStart; // reset to fork point for each branch
+        const branchTime = execStep(branches[bi], depth + 1);
+        const branchDuration = elapsed - branchStart;
+        totalBranchTime += branchDuration;
+        maxBranchTime = Math.max(maxBranchTime, branchDuration);
+        trace.push({ step: trace.length, kind: "Fork", description: `${indent}  Branch ${bi + 1}: ${branchDuration} time units` });
+      }
+      // Parallel: elapsed advances by max branch time (critical path)
+      elapsed = forkStart + maxBranchTime;
+      sequentialTime += totalBranchTime;
+      return maxBranchTime;
+    }
+
+    if (kind === "Join") {
+      const joinName = (d.name as string) ?? "join";
+      trace.push({ step: trace.length, kind: "Join", description: `${indent}[t=${elapsed}] Join "${joinName}" — all branches synchronized` });
+      return 0;
+    }
+
+    if (kind === "Sequence") {
+      const steps = (d.steps as unknown[]) ?? [];
+      let total = 0;
+      for (const s of steps) {
+        total += execStep(s, depth);
+      }
+      return total;
+    }
+
+    if (kind === "Action") {
+      const name = (d.name as string) ?? "action";
+      elapsed += 1;
+      trace.push({ step: trace.length, kind: "Action", description: `${indent}[t=${elapsed}] Execute: ${name}` });
+      return 1;
+    }
+
+    if (kind === "Accept") {
+      const signal = (d.signal as string) ?? "event";
+      elapsed += 1;
+      trace.push({ step: trace.length, kind: "Accept", description: `${indent}[t=${elapsed}] Wait for: ${signal}` });
+      return 1;
+    }
+
+    if (kind === "Send") {
+      const payload = (d.payload as string) ?? "signal";
+      const to = (d.to as string) ?? "";
+      elapsed += 1;
+      trace.push({ step: trace.length, kind: "Send", description: `${indent}[t=${elapsed}] Send: ${payload}${to ? " → " + to : ""}` });
+      return 1;
+    }
+
+    if (kind === "Decide") {
+      const decideName = (d.name as string) ?? "decide";
+      trace.push({ step: trace.length, kind: "Decide", description: `${indent}[t=${elapsed}] Decision: ${decideName}` });
+      return 0;
+    }
+
+    // Unknown step kind — treat as action
+    elapsed += 1;
+    trace.push({ step: trace.length, kind, description: `${indent}[t=${elapsed}] ${kind}` });
+    return 1;
+  }
+
+  // Execute all top-level steps
+  for (const step of action.steps) {
+    execStep(step, 0);
+    if (trace.length >= limit) break;
+  }
+
+  elapsed += 1;
+  trace.push({ step: trace.length, kind: "End", description: `[t=${elapsed}] ${actionName} completed` });
+
+  // Calculate analysis results
+  const actionCount = trace.filter(t => t.kind === "Action").length;
+  const parallelSavings = sequentialTime > 0 ? sequentialTime - (elapsed - 2) : 0; // subtract start/end
+  const bindings: Record<string, unknown> = {
+    total_actions: actionCount,
+    critical_path_time: elapsed - 1, // subtract final increment
+    parallel_branches: parallelBranches,
+  };
+  if (parallelSavings > 0) {
+    bindings.sequential_time = sequentialTime + (actionCount - sequentialTime); // total if all sequential
+    bindings.parallel_savings = parallelSavings;
   }
 
   return {
     action_name: actionName, step: trace.length,
-    env: { bindings: {} }, trace,
+    env: { bindings }, trace,
     status: trace.length >= limit ? "MaxSteps" : "Completed",
   };
 }

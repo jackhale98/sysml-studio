@@ -1,6 +1,6 @@
 [package]
 name = "sysml-studio"
-version = "0.4.1"
+version = "0.4.2"
 description = "SysML v2 Studio - Parse, Browse, and Visualize SysML Models"
 authors = ["Jack Hale"]
 edition = "2021"

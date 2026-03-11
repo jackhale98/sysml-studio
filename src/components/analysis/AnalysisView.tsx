@@ -58,7 +58,7 @@ export function AnalysisView() {
         ))}
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", padding: 14 }}>
+      <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: 14 }}>
         {panel === "bom" && <BomPanel />}
         {panel === "stm" && <StateMachinePanel />}
         {panel === "action" && <ActionFlowPanel />}
@@ -207,9 +207,11 @@ function BomPanel() {
       )}
 
       {/* BOM tree */}
-      {bom.map((node) => (
-        <BomTreeNode key={node.element_id} node={node} depth={0} isLast={true} rollupKey={rollupKey} />
-      ))}
+      <div style={{ overflow: "hidden" }}>
+        {bom.map((node) => (
+          <BomTreeNode key={node.element_id} node={node} depth={0} isLast={true} rollupKey={rollupKey} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -257,7 +259,7 @@ function BomTreeNode({ node, depth, isLast, rollupKey }: { node: BomNode; depth:
       <div
         onClick={() => hasChildren && setExpanded(!expanded)}
         style={{
-          display: "flex", alignItems: "center", gap: 4,
+          display: "flex", alignItems: "center", gap: 4, minWidth: 0,
           marginLeft: depth * connectorW + 4, padding: "3px 8px", borderRadius: 4,
           cursor: hasChildren ? "pointer" : "default",
           background: depth === 0 ? "var(--bg-tertiary)" : "transparent",
@@ -571,18 +573,38 @@ function describeSteps(steps: unknown[], prefix = ""): { label: string; kind: st
   const result: { label: string; kind: string }[] = [];
   for (const step of steps) {
     if (step && typeof step === "object") {
-      // sysml-core ActionStep is a tagged enum — extract the variant
       const entries = Object.entries(step as Record<string, unknown>);
-      if (entries.length > 0) {
-        const [kind, data] = entries[0];
-        if (data && typeof data === "object" && "name" in (data as Record<string, unknown>)) {
-          result.push({ kind, label: `${prefix}${(data as { name: string }).name}` });
-        } else {
-          result.push({ kind, label: `${prefix}${kind}` });
+      if (entries.length === 0) continue;
+      const [kind, data] = entries[0];
+      const d = data as Record<string, unknown>;
+
+      if (kind === "Fork") {
+        const name = (d?.name as string) ?? "fork";
+        const branches = (d?.branches as unknown[]) ?? [];
+        result.push({ kind: "Fork", label: `${prefix}fork ${name} → ${branches.length} branches` });
+        for (let bi = 0; bi < branches.length; bi++) {
+          result.push({ kind: "Fork", label: `${prefix}  ── branch ${bi + 1}:` });
+          result.push(...describeSteps([branches[bi]], prefix + "    "));
         }
+      } else if (kind === "Join") {
+        result.push({ kind: "Join", label: `${prefix}join ${(d?.name as string) ?? ""}` });
+      } else if (kind === "Sequence") {
+        const seqSteps = (d?.steps as unknown[]) ?? [];
+        result.push(...describeSteps(seqSteps, prefix));
+      } else if (kind === "Accept") {
+        result.push({ kind: "Accept", label: `${prefix}accept ${(d?.signal as string) ?? ""}` });
+      } else if (kind === "Send") {
+        const to = (d?.to as string) ? ` → ${d.to}` : "";
+        result.push({ kind: "Send", label: `${prefix}send ${(d?.payload as string) ?? ""}${to}` });
+      } else if (kind === "Decide") {
+        result.push({ kind: "Decide", label: `${prefix}decide ${(d?.name as string) ?? ""}` });
+      } else {
+        // Action or other step types
+        const name = (d?.name as string) ?? kind;
+        result.push({ kind, label: `${prefix}${name}` });
         // Recurse into sub-steps if present
-        if (data && typeof data === "object" && "steps" in (data as Record<string, unknown>)) {
-          const sub = (data as { steps: unknown[] }).steps;
+        if (d && "steps" in d) {
+          const sub = d.steps as unknown[];
           if (Array.isArray(sub)) {
             result.push(...describeSteps(sub, prefix + "  "));
           }
@@ -626,6 +648,7 @@ function ActionFlowPanel() {
     Assign: "#f59e0b", If: "#fb923c", While: "#fb923c",
     For: "#fb923c", Merge: "#64748b", Fork: "#64748b",
     Join: "#64748b", Decide: "#fb923c", Succession: "var(--text-muted)",
+    Start: "#10b981", End: "#10b981",
   };
 
   return (
@@ -712,31 +735,59 @@ function ActionFlowPanel() {
                   : result.status === "Error" ? "#ef4444"
                   : "#f59e0b"
                 } />
-                {Object.keys(result.env.bindings).length > 0 && (
-                  <StatusBadge
-                    label={`Env: ${Object.entries(result.env.bindings).map(([k, v]) => `${k}=${v}`).join(", ")}`}
-                    color="#38bdf8"
-                  />
-                )}
               </div>
 
+              {/* Environment bindings */}
+              {Object.keys(result.env.bindings).length > 0 && (
+                <div style={{ ...card, marginBottom: 8, borderLeft: "3px solid #38bdf8" }}>
+                  <div style={{ ...monoSmall, fontWeight: 600, color: "#38bdf8", marginBottom: 4 }}>
+                    Simulation Results
+                  </div>
+                  {Object.entries(result.env.bindings).map(([k, v]) => (
+                    <div key={k} style={{ ...monoSmall, padding: "2px 0", color: "var(--text-secondary)" }}>
+                      <span style={{ color: "var(--text-muted)" }}>{k.replace(/_/g, " ")}:</span>{" "}
+                      <span style={{ color: "var(--text-primary)", fontWeight: 600 }}>{String(v)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {result.trace.length > 0 && (
-                <div style={card}>
-                  <div style={{ ...monoSmall, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 6 }}>
-                    Execution Trace ({result.trace.length} steps)
+                <div style={{ ...card, borderLeft: "3px solid #10b981" }}>
+                  <div style={{ ...monoSmall, fontWeight: 700, color: "#10b981", marginBottom: 6 }}>
+                    Execution Timeline ({result.trace.length} events)
                   </div>
                   <div style={{ maxHeight: 300, overflowY: "auto" }}>
-                    {result.trace.map((t: ActionExecStep, i: number) => (
-                      <div key={i} style={{
-                        ...monoSmall, padding: "3px 0",
-                        borderBottom: i < result.trace.length - 1 ? "1px solid var(--border)" : "none",
-                        color: "var(--text-primary)",
-                      }}>
-                        <span style={{ color: "var(--text-muted)" }}>#{t.step}</span>{" "}
-                        <span style={{ color: stepKindColors[t.kind] ?? "#c084fc", fontWeight: 600 }}>{t.kind}</span>{" "}
-                        {t.description}
-                      </div>
-                    ))}
+                    {result.trace.map((t: ActionExecStep, i: number) => {
+                      const isLifecycle = t.kind === "Start" || t.kind === "End";
+                      const isSubStep = t.description.includes("  "); // indented sub-step
+                      return (
+                        <div key={i} style={{
+                          ...monoSmall,
+                          padding: isLifecycle ? "4px 6px" : "3px 6px",
+                          marginBottom: 1,
+                          borderRadius: isLifecycle ? 4 : 0,
+                          background: isLifecycle ? "rgba(16, 185, 129, 0.08)" : "transparent",
+                          borderBottom: !isLifecycle && i < result.trace.length - 1 ? "1px solid var(--border)" : "none",
+                          color: "var(--text-primary)",
+                          paddingLeft: isSubStep ? 24 : 6,
+                        }}>
+                          <span style={{
+                            display: "inline-block", width: 8, height: 8, borderRadius: "50%",
+                            background: stepKindColors[t.kind] ?? "#c084fc",
+                            marginRight: 6, verticalAlign: "middle",
+                          }} />
+                          <span style={{
+                            color: stepKindColors[t.kind] ?? "#c084fc",
+                            fontWeight: isLifecycle ? 700 : 600,
+                            minWidth: 48, display: "inline-block",
+                          }}>{t.kind}</span>{" "}
+                          <span style={{ color: isLifecycle ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                            {t.description}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}
