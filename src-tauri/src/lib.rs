@@ -1,9 +1,8 @@
-mod parser;
+mod adapter;
 mod model;
 mod commands;
 
 use commands::parse_commands::AppState;
-use parser::sysml_parser::SysmlParser;
 use std::sync::Mutex;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -12,13 +11,12 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
-            parser: Mutex::new(SysmlParser::new()),
             current_model: Mutex::new(None),
             current_graph: Mutex::new(None),
+            core_model: Mutex::new(None),
         })
         .invoke_handler(tauri::generate_handler![
             commands::parse_commands::parse_source,
-            commands::parse_commands::reparse_source,
             commands::parse_commands::open_file,
             commands::parse_commands::save_file,
             commands::parse_commands::filter_elements,

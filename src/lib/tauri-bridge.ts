@@ -170,27 +170,19 @@ export async function getValidation(): Promise<ValidationReport> {
   return { issues: [], summary: { errors: 0, warnings: 0, infos: 0 } };
 }
 
-/** Reparse source incrementally (Tauri only; browser falls back to full parse) */
+/** Reparse source — delegates to full parse (sysml-core backend is fast enough) */
 export async function reparseSource(
   source: string,
-  startByte: number,
-  oldEndByte: number,
-  newEndByte: number,
-  startLine: number,
-  startCol: number,
-  oldEndLine: number,
-  oldEndCol: number,
-  newEndLine: number,
-  newEndCol: number,
+  _startByte: number,
+  _oldEndByte: number,
+  _newEndByte: number,
+  _startLine: number,
+  _startCol: number,
+  _oldEndLine: number,
+  _oldEndCol: number,
+  _newEndLine: number,
+  _newEndCol: number,
 ): Promise<SysmlModel> {
-  if (isTauri) {
-    const model = await tauriInvoke<SysmlModel>("reparse_source", {
-      source, startByte, oldEndByte, newEndByte,
-      startLine, startCol, oldEndLine, oldEndCol, newEndLine, newEndCol,
-    });
-    cachedModel = model;
-    return model;
-  }
   return parseSource(source);
 }
 

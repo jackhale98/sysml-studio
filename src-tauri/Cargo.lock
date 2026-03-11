@@ -2741,6 +2741,7 @@ version = "1.0.149"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "83fc039473c5595ace860d8c4fafa220ff474b3fc6bfdb4293327f1a37e94d86"
 dependencies = [
+ "indexmap 2.13.0",
  "itoa",
  "memchr",
  "serde",
@@ -3042,18 +3043,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "sysml-core"
+version = "0.3.0"
+source = "git+https://github.com/jackhale98/sysml-cli?branch=main#f89cafba7b9a59009cade0a1a69bd077b288a40a"
+dependencies = [
+ "cc",
+ "serde",
+ "serde_json",
+ "tree-sitter",
+]
+
+[[package]]
 name = "sysml-studio"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sysml-core",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-fs",
  "tempfile",
- "tree-sitter",
- "tree-sitter-sysml",
 ]
 
 [[package]]
@@ -3720,13 +3731,14 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter"
-version = "0.24.7"
+version = "0.26.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a5387dffa7ffc7d2dae12b50c6f7aab8ff79d6210147c6613561fc3d474c6f75"
+checksum = "13f456d2108c3fef07342ba4689a8503ec1fb5beed245e2b9be93096ef394848"
 dependencies = [
  "cc",
  "regex",
  "regex-syntax",
+ "serde_json",
  "streaming-iterator",
  "tree-sitter-language",
 ]
@@ -3736,15 +3748,6 @@ name = "tree-sitter-language"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
-
-[[package]]
-name = "tree-sitter-sysml"
-version = "0.0.1"
-source = "git+https://github.com/jackhale98/tree-sitter-sysml?branch=main#b0135bbc0be6cc76c65d8850d296112af2ebab9e"
-dependencies = [
- "cc",
- "tree-sitter",
-]
 
 [[package]]
 name = "try-lock"
