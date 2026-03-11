@@ -22,10 +22,24 @@ export function generateElementSource(opts: {
   calcReturnType?: string;
   constraintExpr?: string;
   connEndTypes?: string[];
+  valueExpr?: string;
+  portDirection?: "in" | "out" | "inout";
+  reqShallText?: string;
+  subRequirements?: string[];
+  actors?: string[];
+  includeUseCases?: string[];
+  actionSteps?: string[];
+  initialStates?: string[];
+  allocSource?: string;
+  allocTarget?: string;
+  verifyRequirements?: string[];
 }): string {
   const { kind, name, typeRef, doc, children, specializes, multiplicity,
           shortName, flowItemType, flowSource, flowTarget,
-          calcParams, calcReturnExpr, calcReturnType, constraintExpr, connEndTypes } = opts;
+          calcParams, calcReturnExpr, calcReturnType, constraintExpr, connEndTypes,
+          valueExpr, portDirection, reqShallText, subRequirements, actors,
+          includeUseCases, actionSteps, initialStates, allocSource, allocTarget,
+          verifyRequirements } = opts;
   const alias = shortName ? ` <${shortName}>` : "";
   const lines: string[] = [];
 
@@ -68,6 +82,63 @@ export function generateElementSource(opts: {
     }
     if (children) for (const child of children) lines.push(`  ${child}`);
     lines.push(`}`);
+  } else if (kind === "requirement_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    const shallDoc = reqShallText || doc;
+    if (shallDoc) lines.push(`  doc /* ${shallDoc} */`);
+    if (subRequirements) {
+      for (const r of subRequirements) lines.push(`  requirement ${r};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "use_case_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (actors) {
+      for (const a of actors) lines.push(`  actor ${a.includes(":") ? a : `${a.toLowerCase()} : ${a}`};`);
+    }
+    if (includeUseCases) {
+      for (const uc of includeUseCases) lines.push(`  include use case ${uc};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "action_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (actionSteps) {
+      for (const step of actionSteps) lines.push(`  action ${step};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "state_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (initialStates) {
+      for (const s of initialStates) lines.push(`  state ${s};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "allocation_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (allocSource) lines.push(`  end source : ${allocSource};`);
+    if (allocTarget) lines.push(`  end target : ${allocTarget};`);
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "verification_case_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (verifyRequirements) {
+      for (const r of verifyRequirements) lines.push(`  verify ${r};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
   } else if (isDefinition(kind)) {
     const spec = specializes ? ` :> ${specializes}` : "";
     lines.push(`${keyword} ${name}${alias}${spec} {`);
@@ -90,12 +161,14 @@ export function generateElementSource(opts: {
     lines.push(parts.join(" ") + ";");
   } else if (isUsage(kind)) {
     const mult = multiplicity ? `[${multiplicity}]` : "";
+    const dir = portDirection && kind === "port_usage" ? `${portDirection} ` : "";
+    const val = valueExpr && kind === "attribute_usage" ? ` = ${valueExpr}` : "";
     if (typeRef) {
-      lines.push(`${keyword} ${name}${alias} : ${typeRef}${mult};`);
-    } else if (mult) {
-      lines.push(`${keyword} ${name}${alias} ${mult};`);
+      lines.push(`${dir}${keyword} ${name}${alias} : ${typeRef}${mult}${val};`);
+    } else if (mult || val) {
+      lines.push(`${dir}${keyword} ${name}${alias}${mult ? " " + mult : ""}${val};`);
     } else {
-      lines.push(`${keyword} ${name}${alias};`);
+      lines.push(`${dir}${keyword} ${name}${alias};`);
     }
   } else if (kind === "connect_statement") {
     // name = source endpoint, typeRef = target endpoint

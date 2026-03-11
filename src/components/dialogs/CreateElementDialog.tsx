@@ -88,6 +88,25 @@ export function CreateElementDialog() {
   // Connection/interface end types
   const [connEndSource, setConnEndSource] = useState("");
   const [connEndTarget, setConnEndTarget] = useState("");
+  // Attribute value expression
+  const [valueExpr, setValueExpr] = useState("");
+  // Port direction
+  const [portDirection, setPortDirection] = useState<"" | "in" | "out" | "inout">("");
+  // Requirement shall text + sub-requirements
+  const [reqShallText, setReqShallText] = useState("");
+  const [subRequirements, setSubRequirements] = useState<string[]>([]);
+  // Use case actors + includes
+  const [useCaseActors, setUseCaseActors] = useState<string[]>([]);
+  const [useCaseIncludes, setUseCaseIncludes] = useState<string[]>([]);
+  // Action steps
+  const [actionSteps, setActionSteps] = useState<string[]>([]);
+  // State def initial states
+  const [initialStates, setInitialStates] = useState<string[]>([]);
+  // Allocation source/target
+  const [allocSource, setAllocSource] = useState("");
+  const [allocTarget, setAllocTarget] = useState("");
+  // Verification requirements
+  const [verifyReqs, setVerifyReqs] = useState<string[]>([]);
 
   // Child entries
   const [children, setChildren] = useState<ChildEntry[]>([]);
@@ -110,6 +129,17 @@ export function CreateElementDialog() {
   const isConstraintDef = selectedKind === "constraint_def";
   const isCalcOrConstraint = isCalcDef || isConstraintDef;
   const isConnectionOrInterface = selectedKind === "connection_def" || selectedKind === "interface_def";
+  const isAttributeUsage = selectedKind === "attribute_usage";
+  const isPortUsage = selectedKind === "port_usage";
+  const isRequirementDef = selectedKind === "requirement_def";
+  const isUseCaseDef = selectedKind === "use_case_def";
+  const isActionDef = selectedKind === "action_def";
+  const isStateDef = selectedKind === "state_def";
+  const isAllocationDef = selectedKind === "allocation_def";
+  const isVerificationDef = selectedKind === "verification_case_def";
+  const hasSpecializedForm = isConnectStatement || isSatisfyOrVerify || isTransition || isFlowUsage
+    || isCalcOrConstraint || isConnectionOrInterface || isAttributeUsage || isPortUsage
+    || isRequirementDef || isUseCaseDef || isActionDef || isStateDef || isAllocationDef || isVerificationDef;
 
   const targets = useMemo(() => model ? getInsertTargets(model) : [], [model]);
 
@@ -133,6 +163,17 @@ export function CreateElementDialog() {
     setConstraintExpr("");
     setConnEndSource("");
     setConnEndTarget("");
+    setValueExpr("");
+    setPortDirection("");
+    setReqShallText("");
+    setSubRequirements([]);
+    setUseCaseActors([]);
+    setUseCaseIncludes([]);
+    setActionSteps([]);
+    setInitialStates([]);
+    setAllocSource("");
+    setAllocTarget("");
+    setVerifyReqs([]);
   }
 
   // ─── Item lists ───
@@ -293,6 +334,54 @@ export function CreateElementDialog() {
     return items;
   }, [model, parentId]);
 
+  // Actor items for use case defs (part defs that could serve as actors)
+  const actorItems: SearchSelectItem[] = useMemo(() => {
+    if (!model) return [];
+    return model.elements
+      .filter(e => {
+        const k = typeof e.kind === "string" ? e.kind : "";
+        return (k === "part_def" || k === "item_def") && e.name;
+      })
+      .map(e => ({
+        id: e.name!,
+        label: e.name!,
+        badge: (typeof e.kind === "string" ? e.kind : "").replace(/_/g, " "),
+        badgeColor: kindBadgeColor(typeof e.kind === "string" ? e.kind : ""),
+      }));
+  }, [model]);
+
+  // Use case items for include statements
+  const useCaseItems: SearchSelectItem[] = useMemo(() => {
+    if (!model) return [];
+    return model.elements
+      .filter(e => {
+        const k = typeof e.kind === "string" ? e.kind : "";
+        return (k === "use_case_def" || k === "use_case_usage") && e.name;
+      })
+      .map(e => ({
+        id: e.name!,
+        label: e.name!,
+        badge: (typeof e.kind === "string" ? e.kind : "").replace(/_/g, " "),
+        badgeColor: kindBadgeColor(typeof e.kind === "string" ? e.kind : ""),
+      }));
+  }, [model]);
+
+  // Allocation target items (any definition or usage)
+  const allocItems: SearchSelectItem[] = useMemo(() => {
+    if (!model) return [];
+    return model.elements
+      .filter(e => {
+        const k = typeof e.kind === "string" ? e.kind : "";
+        return (k.endsWith("_def") || k === "part_usage" || k === "action_usage") && e.name;
+      })
+      .map(e => ({
+        id: e.name!,
+        label: e.name!,
+        badge: (typeof e.kind === "string" ? e.kind : "").replace(/_/g, " "),
+        badgeColor: kindBadgeColor(typeof e.kind === "string" ? e.kind : ""),
+      }));
+  }, [model]);
+
   function selectedParentId(): number | null {
     if (parentId === "root") return null;
     return Number(parentId);
@@ -412,6 +501,17 @@ export function CreateElementDialog() {
       constraintExpr: isConstraintDef && constraintExpr.trim() ? constraintExpr.trim() : undefined,
       connEndTypes: isConnectionOrInterface && connEndSource.trim() && connEndTarget.trim()
         ? [connEndSource.trim(), connEndTarget.trim()] : undefined,
+      valueExpr: isAttributeUsage && valueExpr.trim() ? valueExpr.trim() : undefined,
+      portDirection: isPortUsage && portDirection ? portDirection : undefined,
+      reqShallText: isRequirementDef && reqShallText.trim() ? reqShallText.trim() : undefined,
+      subRequirements: isRequirementDef && subRequirements.length > 0 ? subRequirements : undefined,
+      actors: isUseCaseDef && useCaseActors.length > 0 ? useCaseActors : undefined,
+      includeUseCases: isUseCaseDef && useCaseIncludes.length > 0 ? useCaseIncludes : undefined,
+      actionSteps: isActionDef && actionSteps.length > 0 ? actionSteps : undefined,
+      initialStates: isStateDef && initialStates.length > 0 ? initialStates : undefined,
+      allocSource: isAllocationDef && allocSource.trim() ? allocSource.trim() : undefined,
+      allocTarget: isAllocationDef && allocTarget.trim() ? allocTarget.trim() : undefined,
+      verifyRequirements: isVerificationDef && verifyReqs.length > 0 ? verifyReqs : undefined,
     };
   }
 
@@ -799,8 +899,431 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 7. Default: name + optional short name + type + specialization + multiplicity */}
-        {!isConnectStatement && !isSatisfyOrVerify && !isTransition && !isFlowUsage && !isCalcOrConstraint && !isConnectionOrInterface && (
+        {/* 7. Attribute Usage: name + type + value + multiplicity */}
+        {isAttributeUsage && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="myAttribute"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Type</label>
+            <SearchSelect
+              items={typeItems}
+              value={typeRef}
+              onChange={setTypeRef}
+              placeholder="Search types (e.g. Real, Integer)..."
+              title="Select Type"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Default Value (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. 180, 3.14, true"
+              value={valueExpr}
+              onChange={(e) => setValueExpr(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Multiplicity (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. 4, 0..*, 1..5"
+              value={multiplicity}
+              onChange={(e) => setMultiplicity(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 8. Port Usage: direction + name + type + multiplicity */}
+        {isPortUsage && (
+          <>
+            <label style={labelStyle}>Direction</label>
+            <select
+              value={portDirection}
+              onChange={(e) => setPortDirection(e.target.value as "" | "in" | "out" | "inout")}
+              style={{ ...inputStyle, minHeight: 44 }}
+            >
+              <option value="">(none)</option>
+              <option value="in">in</option>
+              <option value="out">out</option>
+              <option value="inout">inout</option>
+            </select>
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="myPort"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Type</label>
+            <SearchSelect
+              items={typeItems}
+              value={typeRef}
+              onChange={setTypeRef}
+              placeholder="Search port types..."
+              title="Select Type"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Multiplicity (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. 2, 0..*, 1..4"
+              value={multiplicity}
+              onChange={(e) => setMultiplicity(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 9. Requirement Definition: shall text + sub-requirements */}
+        {isRequirementDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="MaxSpeed"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Shall Statement</label>
+            <input
+              style={inputStyle}
+              placeholder="The system shall achieve a top speed of 200 km/h"
+              value={reqShallText}
+              onChange={(e) => setReqShallText(e.target.value)}
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Sub-Requirements</label>
+            {subRequirements.map((r, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <input
+                  style={{ ...inputStyle, flex: 1, minHeight: 36, padding: "6px 8px" }}
+                  value={r}
+                  onChange={(e) => {
+                    const next = [...subRequirements];
+                    next[i] = e.target.value;
+                    setSubRequirements(next);
+                  }}
+                  placeholder="subReqName"
+                  autoCapitalize="none"
+                />
+                <button
+                  onClick={() => setSubRequirements(subRequirements.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setSubRequirements([...subRequirements, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Sub-Requirement
+            </button>
+            <label style={labelStyle}>Specializes (optional)</label>
+            <SearchSelect
+              items={specializationItems}
+              value={specializes}
+              onChange={setSpecializes}
+              placeholder="Select parent requirement..."
+              title="Specializes"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 10. Use Case Definition: actors + includes */}
+        {isUseCaseDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="DriveVehicle"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Actors</label>
+            {useCaseActors.map((a, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <div style={{ flex: 1 }}>
+                  <SearchSelect
+                    items={actorItems}
+                    value={a}
+                    onChange={(v) => {
+                      const next = [...useCaseActors];
+                      next[i] = v;
+                      setUseCaseActors(next);
+                    }}
+                    placeholder="Select actor type..."
+                    title="Actor"
+                    allowCustom
+                  />
+                </div>
+                <button
+                  onClick={() => setUseCaseActors(useCaseActors.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setUseCaseActors([...useCaseActors, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Actor
+            </button>
+            <label style={labelStyle}>Include Use Cases</label>
+            {useCaseIncludes.map((uc, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <div style={{ flex: 1 }}>
+                  <SearchSelect
+                    items={useCaseItems}
+                    value={uc}
+                    onChange={(v) => {
+                      const next = [...useCaseIncludes];
+                      next[i] = v;
+                      setUseCaseIncludes(next);
+                    }}
+                    placeholder="Select use case..."
+                    title="Include Use Case"
+                    allowCustom
+                  />
+                </div>
+                <button
+                  onClick={() => setUseCaseIncludes(useCaseIncludes.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setUseCaseIncludes([...useCaseIncludes, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Include Use Case
+            </button>
+          </>
+        )}
+
+        {/* 11. Action Definition: step builder */}
+        {isActionDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="Drive"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Action Steps</label>
+            {actionSteps.map((step, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <span style={{ ...labelStyle, marginBottom: 0, width: 20, textAlign: "right" }}>{i + 1}.</span>
+                <input
+                  style={{ ...inputStyle, flex: 1, minHeight: 36, padding: "6px 8px" }}
+                  value={step}
+                  onChange={(e) => {
+                    const next = [...actionSteps];
+                    next[i] = e.target.value;
+                    setActionSteps(next);
+                  }}
+                  placeholder="stepName"
+                  autoCapitalize="none"
+                />
+                <button
+                  onClick={() => setActionSteps(actionSteps.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setActionSteps([...actionSteps, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Step
+            </button>
+            <label style={labelStyle}>Specializes (optional)</label>
+            <SearchSelect
+              items={specializationItems}
+              value={specializes}
+              onChange={setSpecializes}
+              placeholder="Select supertype..."
+              title="Specializes"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 12. State Definition: initial states */}
+        {isStateDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="EngineStates"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>States</label>
+            {initialStates.map((s, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <input
+                  style={{ ...inputStyle, flex: 1, minHeight: 36, padding: "6px 8px" }}
+                  value={s}
+                  onChange={(e) => {
+                    const next = [...initialStates];
+                    next[i] = e.target.value;
+                    setInitialStates(next);
+                  }}
+                  placeholder="stateName"
+                  autoCapitalize="none"
+                />
+                <button
+                  onClick={() => setInitialStates(initialStates.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setInitialStates([...initialStates, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add State
+            </button>
+            <label style={labelStyle}>Specializes (optional)</label>
+            <SearchSelect
+              items={specializationItems}
+              value={specializes}
+              onChange={setSpecializes}
+              placeholder="Select supertype..."
+              title="Specializes"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 13. Allocation Definition: source + target */}
+        {isAllocationDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="MyAllocation"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Source (allocated from)</label>
+            <SearchSelect
+              items={allocItems}
+              value={allocSource}
+              onChange={setAllocSource}
+              placeholder="Select source element..."
+              title="Source"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Target (allocated to)</label>
+            <SearchSelect
+              items={allocItems}
+              value={allocTarget}
+              onChange={setAllocTarget}
+              placeholder="Select target element..."
+              title="Target"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 14. Verification Case: requirement picker */}
+        {isVerificationDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="VerifyMaxSpeed"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Requirements to Verify</label>
+            {verifyReqs.map((r, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <div style={{ flex: 1 }}>
+                  <SearchSelect
+                    items={requirementItems}
+                    value={r}
+                    onChange={(v) => {
+                      const next = [...verifyReqs];
+                      next[i] = v;
+                      setVerifyReqs(next);
+                    }}
+                    placeholder="Select requirement..."
+                    title="Verify Requirement"
+                    allowCustom
+                  />
+                </div>
+                <button
+                  onClick={() => setVerifyReqs(verifyReqs.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setVerifyReqs([...verifyReqs, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Requirement
+            </button>
+          </>
+        )}
+
+        {/* 15. Default: name + optional short name + type + specialization + multiplicity */}
+        {!hasSpecializedForm && (
           <>
             <label style={labelStyle}>Name</label>
             <input
