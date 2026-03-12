@@ -65,11 +65,22 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
 ];
 
 const OTHER_PATTERNS: [RegExp, string, Category][] = [
-  [/^transition\s+(?:(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s*(?:accept\s+(\w+))?\s*then\s+(\w+))?/, "transition_statement", "behavior"],
+  [/^transition\s+(?:(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s*(?:accept\s+(\w+))?\s*(?:if\s+(.+?)\s+)?(?:do\s+(\w+)\s+)?then\s+(\w+))?/, "transition_statement", "behavior"],
   [/^satisfy\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "satisfy_statement", "requirement"],
   [/^verify\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "verify_statement", "analysis"],
   [/^(?:public\s+)?import\s+/, "import", "auxiliary"],
+  [/^binding\s+([\w.:]+)\s*=\s*([\w.:]+)/, "binding_usage", "relationship"],
+  [/^dependency\s+(?:(\w+)\s+)?from\s+([\w.:]+)\s+to\s+([\w.:]+)/, "dependency_statement", "relationship"],
   [/^connect\s+([\w.:]+)\s+to\s+([\w.:]+)/, "connect_statement", "relationship"],
+  [/^assert\s+constraint\s+(\w+)(?:\s*:\s*([\w:]+))?/, "constraint_usage", "constraint"],
+  [/^perform\s+(?:action\s+)?(\w+)(?:\s*:\s*([\w:]+))?/, "perform_statement", "behavior"],
+  [/^exhibit\s+(?:state\s+)?(\w+)(?:\s*:\s*([\w:]+))?/, "exhibit_statement", "behavior"],
+  [/^entry\s+action\s*\{/, "entry_action", "behavior"],
+  [/^do\s+action\s*\{/, "do_action", "behavior"],
+  [/^exit\s+action\s*\{/, "exit_action", "behavior"],
+  [/^if\s+(.+?)\s*\{/, "if_action", "behavior"],
+  [/^while\s+(.+?)\s*\{/, "while_action", "behavior"],
+  [/^for\s+(\w+)(?:\s*:\s*(\w+))?\s+in\s+(\w+)/, "for_action", "behavior"],
   [/^include\s+(?:use\s+case\s+)?(\w+)/, "include_statement", "behavior"],
   [/^fork\s+(\w+)/, "fork_node", "behavior"],
   [/^join\s+(\w+)/, "join_node", "behavior"],
@@ -84,8 +95,8 @@ const OTHER_PATTERNS: [RegExp, string, Category][] = [
   [/^then\s+decide\s+(\w+)/, "decide_node", "behavior"],
   [/^then\s+merge\s+(\w+)/, "merge_node", "behavior"],
   [/^then\s+(\w+)\s*;/, "succession_branch", "behavior"],
-  [/^send\s+(.+?)\s+to\s+(\w+)/, "send_action", "behavior"],
-  [/^accept\s+(\w+)/, "accept_action", "behavior"],
+  [/^send\s+(.+?)\s+(?:via|to)\s+(\w+)/, "send_action", "behavior"],
+  [/^accept\s+(\w+)(?:\s*:\s*([\w:]+))?/, "accept_action", "behavior"],
 ];
 
 function makeSpan(line: number, col: number, endCol: number): SourceSpan {
@@ -211,9 +222,9 @@ export function browserParse(source: string): SysmlModel {
           } else if (kind === "transition_statement") {
             name = m[1] ?? null;
             // Convention: specializations[0] = source ("first"), type_ref = target ("then")
-            // Groups: m[1]=name, m[2]=source, m[3]=trigger (accept), m[4]=target
+            // Groups: m[1]=name, m[2]=source, m[3]=trigger (accept), m[4]=guard (if), m[5]=effect (do), m[6]=target
             specializations = m[2] ? [m[2]] : [];
-            typeRef = m[4] ?? null;
+            typeRef = m[6] ?? null;
             // Store trigger signal in value_expr for browser-side state machine extraction
             triggerExpr = m[3] ?? null;
           } else if (kind === "succession_to_fork" || kind === "succession_to_join") {
@@ -244,7 +255,31 @@ export function browserParse(source: string): SysmlModel {
             typeRef = m[2];
           } else if (kind === "send_action") {
             name = m[1]; // payload
-            typeRef = m[2]; // target
+            typeRef = m[2]; // target (via)
+          } else if (kind === "binding_usage") {
+            name = m[1];
+            typeRef = m[2];
+          } else if (kind === "dependency_statement") {
+            name = m[1] ?? null;
+            // m[2] = client, m[3] = supplier
+            specializations = m[2] ? [m[2]] : [];
+            typeRef = m[3] ?? null;
+          } else if (kind === "constraint_usage" && matchLine.startsWith("assert")) {
+            name = m[1];
+            typeRef = m[2] ?? null;
+          } else if (kind === "perform_statement" || kind === "exhibit_statement") {
+            name = m[1];
+            typeRef = m[2] ?? null;
+          } else if (kind === "accept_action") {
+            name = m[1];
+            typeRef = m[2] ?? null;
+          } else if (kind === "if_action") {
+            name = m[1]; // condition
+          } else if (kind === "while_action") {
+            name = m[1]; // condition
+          } else if (kind === "for_action") {
+            name = m[1]; // item
+            typeRef = m[2] ?? null; // type
           }
 
           // Normalize compound kinds to their base kind for the succession element

@@ -184,6 +184,212 @@ describe("generateElementSource", () => {
     expect(result).toBe("some unknown kind Foo : Bar;");
   });
 
+  // ─── Conjugated port ───
+
+  it("generates a conjugated port usage", () => {
+    const result = generateElementSource({
+      kind: "port_usage",
+      name: "fuelIn",
+      typeRef: "FuelPort",
+      isConjugated: true,
+    });
+    expect(result).toBe("~port fuelIn : FuelPort;");
+  });
+
+  // ─── Transition guard and effect ───
+
+  it("generates a transition with guard", () => {
+    const result = generateElementSource({
+      kind: "transition_statement",
+      name: "idle",
+      typeRef: "running",
+      transitionGuard: "speed > 60",
+    });
+    expect(result).toBe("transition first idle if speed > 60 then running;");
+  });
+
+  it("generates a transition with effect", () => {
+    const result = generateElementSource({
+      kind: "transition_statement",
+      name: "idle",
+      typeRef: "running",
+      transitionEffect: "logEvent",
+    });
+    expect(result).toBe("transition first idle do logEvent then running;");
+  });
+
+  it("generates a transition with guard and effect", () => {
+    const result = generateElementSource({
+      kind: "transition_statement",
+      name: "S1",
+      typeRef: "S2",
+      transitionGuard: "temp > 100",
+      transitionEffect: "alarm",
+    });
+    expect(result).toBe("transition first S1 if temp > 100 do alarm then S2;");
+  });
+
+  // ─── State entry/do/exit actions ───
+
+  it("generates a state def with entry, do, and exit actions", () => {
+    const result = generateElementSource({
+      kind: "state_def",
+      name: "Running",
+      stateEntryAction: "initialize()",
+      stateDoAction: "monitor()",
+      stateExitAction: "cleanup()",
+    });
+    expect(result).toBe(
+      "state def Running {\n  entry action { initialize() }\n  do action { monitor() }\n  exit action { cleanup() }\n}"
+    );
+  });
+
+  // ─── Redefines and subsets ───
+
+  it("generates a usage with redefines", () => {
+    const result = generateElementSource({
+      kind: "part_usage",
+      name: "x",
+      typeRef: "Type",
+      redefines: "y",
+    });
+    expect(result).toBe("part x : Type :>> y;");
+  });
+
+  it("generates a usage with subsets", () => {
+    const result = generateElementSource({
+      kind: "part_usage",
+      name: "x",
+      typeRef: "Type",
+      subsetsFeature: "y",
+    });
+    expect(result).toBe("part x : Type :> y;");
+  });
+
+  // ─── Action def with parameters ───
+
+  it("generates an action def with parameters", () => {
+    const result = generateElementSource({
+      kind: "action_def",
+      name: "Drive",
+      calcParams: [
+        { name: "speed", type: "Real", direction: "in" },
+        { name: "distance", type: "Real", direction: "out" },
+      ],
+    });
+    expect(result).toBe(
+      "action def Drive {\n  in speed : Real;\n  out distance : Real;\n}"
+    );
+  });
+
+  // ─── Binding connector ───
+
+  it("generates a binding connector", () => {
+    const result = generateElementSource({
+      kind: "binding_usage",
+      name: "a.x",
+      bindTarget: "b.y",
+    });
+    expect(result).toBe("binding a.x = b.y;");
+  });
+
+  // ─── Dependency ───
+
+  it("generates a dependency statement", () => {
+    const result = generateElementSource({
+      kind: "dependency_statement",
+      name: "dep1",
+      depClient: "ComponentA",
+      depSupplier: "ComponentB",
+    });
+    expect(result).toBe("dependency dep1 from ComponentA to ComponentB;");
+  });
+
+  // ─── Assert constraint ───
+
+  it("generates an assert constraint usage", () => {
+    const result = generateElementSource({
+      kind: "constraint_usage",
+      name: "safeSpeed",
+      typeRef: "SpeedConstraint",
+      isAssert: true,
+    });
+    expect(result).toBe("assert constraint safeSpeed : SpeedConstraint;");
+  });
+
+  // ─── Control flow actions ───
+
+  it("generates an if action", () => {
+    const result = generateElementSource({
+      kind: "if_action",
+      name: "speed > 100",
+      ifBody: "action brake;",
+      elseBody: "action cruise;",
+    });
+    expect(result).toBe("if speed > 100 {\n  action brake;\n} else {\n  action cruise;\n}");
+  });
+
+  it("generates a while action", () => {
+    const result = generateElementSource({
+      kind: "while_action",
+      name: "fuel > 0",
+      whileBody: "action consume;",
+    });
+    expect(result).toBe("while fuel > 0 {\n  action consume;\n}");
+  });
+
+  it("generates a for action", () => {
+    const result = generateElementSource({
+      kind: "for_action",
+      name: "for",
+      forItem: "w",
+      forType: "Wheel",
+      forCollection: "wheels",
+      forBody: "action inspect;",
+    });
+    expect(result).toBe("for w : Wheel in wheels {\n  action inspect;\n}");
+  });
+
+  // ─── Send/Accept actions ───
+
+  it("generates a send action with via", () => {
+    const result = generateElementSource({
+      kind: "send_action",
+      name: "StartSignal",
+      sendVia: "controlPort",
+    });
+    expect(result).toBe("send StartSignal via controlPort;");
+  });
+
+  it("generates an accept action via generic fallback", () => {
+    const result = generateElementSource({
+      kind: "accept_action",
+      name: "StopSignal",
+      typeRef: "SignalType",
+    });
+    expect(result).toBe("accept StopSignal : SignalType;");
+  });
+
+  // ─── Perform/Exhibit statements ───
+
+  it("generates a perform statement via generic fallback", () => {
+    const result = generateElementSource({
+      kind: "perform_statement",
+      name: "doWork",
+      typeRef: "WorkAction",
+    });
+    expect(result).toBe("perform action doWork : WorkAction;");
+  });
+
+  it("generates an exhibit statement via generic fallback", () => {
+    const result = generateElementSource({
+      kind: "exhibit_statement",
+      name: "showState",
+      typeRef: "DisplayState",
+    });
+    expect(result).toBe("exhibit state showState : DisplayState;");
+  });
+
   // ─── Specialization (:>) ───
 
   it("generates a definition with specialization", () => {

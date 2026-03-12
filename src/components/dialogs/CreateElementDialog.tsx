@@ -45,6 +45,28 @@ function kindBadgeColor(kind: string): string {
   return TYPE_COLORS[kind]?.fg ?? "var(--text-muted)";
 }
 
+function AdvancedSection({ children }: { children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button
+        onClick={() => setOpen(!open)}
+        type="button"
+        style={{
+          background: "none", border: "none", cursor: "pointer",
+          color: "var(--text-muted)", fontSize: 11, fontWeight: 600,
+          fontFamily: "var(--font-mono)", padding: "4px 0",
+          display: "flex", alignItems: "center", gap: 4,
+        }}
+      >
+        <span style={{ display: "inline-block", transform: open ? "rotate(90deg)" : "none", transition: "transform 0.15s" }}>▸</span>
+        Advanced Options
+      </button>
+      {open && <div style={{ paddingTop: 8 }}>{children}</div>}
+    </div>
+  );
+}
+
 const CHILD_COLORS: Record<string, string> = {
   attribute: "#f59e0b",
   port: "#8b5cf6",
@@ -113,6 +135,31 @@ export function CreateElementDialog() {
   const [renderAs, setRenderAs] = useState("");
   // Viewpoint definition
   const [viewpointConcerns, setViewpointConcerns] = useState<string[]>([]);
+  // Phase 1: Enhanced forms
+  const [isConjugated, setIsConjugated] = useState(false);
+  const [transitionGuard, setTransitionGuard] = useState("");
+  const [transitionEffect, setTransitionEffect] = useState("");
+  const [stateEntryAction, setStateEntryAction] = useState("");
+  const [stateDoAction, setStateDoAction] = useState("");
+  const [stateExitAction, setStateExitAction] = useState("");
+  const [redefinesVal, setRedefinesVal] = useState("");
+  const [subsetsVal, setSubsetsVal] = useState("");
+  // Phase 2: New relationships
+  const [isAssert, setIsAssert] = useState(false);
+  const [depClient, setDepClient] = useState("");
+  const [depSupplier, setDepSupplier] = useState("");
+  const [bindTarget, setBindTarget] = useState("");
+  // Phase 3: New element fields
+  const [ifCondition, setIfCondition] = useState("");
+  const [ifBody, setIfBody] = useState("");
+  const [elseBody, setElseBody] = useState("");
+  const [whileCondition, setWhileCondition] = useState("");
+  const [whileBody, setWhileBody] = useState("");
+  const [forItem, setForItem] = useState("");
+  const [forType, setForType] = useState("");
+  const [forCollection, setForCollection] = useState("");
+  const [forBody, setForBody] = useState("");
+  const [sendVia, setSendVia] = useState("");
 
   // Child entries
   const [children, setChildren] = useState<ChildEntry[]>([]);
@@ -145,10 +192,18 @@ export function CreateElementDialog() {
   const isVerificationDef = selectedKind === "verification_case_def";
   const isViewDef = selectedKind === "view_def";
   const isViewpointDef = selectedKind === "viewpoint_def";
+  const isConstraintUsage = selectedKind === "constraint_usage";
+  const isBindingUsage = selectedKind === "binding_usage";
+  const isDependency = selectedKind === "dependency_statement";
+  const isIfAction = selectedKind === "if_action";
+  const isWhileAction = selectedKind === "while_action";
+  const isForAction = selectedKind === "for_action";
+  const isSendAction = selectedKind === "send_action";
   const hasSpecializedForm = isConnectStatement || isSatisfyOrVerify || isTransition || isFlowUsage
     || isCalcOrConstraint || isConnectionOrInterface || isAttributeUsage || isPortUsage
     || isRequirementDef || isUseCaseDef || isActionDef || isStateDef || isAllocationDef || isVerificationDef
-    || isViewDef || isViewpointDef;
+    || isViewDef || isViewpointDef || isBindingUsage || isDependency
+    || isIfAction || isWhileAction || isForAction || isSendAction;
 
   const targets = useMemo(() => model ? getInsertTargets(model) : [], [model]);
 
@@ -187,6 +242,28 @@ export function CreateElementDialog() {
     setKindFilters([]);
     setRenderAs("");
     setViewpointConcerns([]);
+    setIsConjugated(false);
+    setTransitionGuard("");
+    setTransitionEffect("");
+    setStateEntryAction("");
+    setStateDoAction("");
+    setStateExitAction("");
+    setRedefinesVal("");
+    setSubsetsVal("");
+    setIsAssert(false);
+    setDepClient("");
+    setDepSupplier("");
+    setBindTarget("");
+    setIfCondition("");
+    setIfBody("");
+    setElseBody("");
+    setWhileCondition("");
+    setWhileBody("");
+    setForItem("");
+    setForType("");
+    setForCollection("");
+    setForBody("");
+    setSendVia("");
   }
 
   // ─── Item lists ───
@@ -439,8 +516,14 @@ export function CreateElementDialog() {
   const canCreate = (() => {
     if (!selectedKind) return false;
     if (isConnectStatement) return !!(connSource.trim() && connTarget.trim());
+    if (isBindingUsage) return !!(connSource.trim() && connTarget.trim());
     if (isTransition) return !!(name.trim() && typeRef.trim());
     if (isFlowUsage) return !!name.trim();
+    if (isDependency) return !!(depClient.trim() && depSupplier.trim());
+    if (isIfAction) return !!ifCondition.trim();
+    if (isWhileAction) return !!whileCondition.trim();
+    if (isForAction) return !!forItem.trim();
+    if (isSendAction) return !!name.trim();
     return !!name.trim();
   })();
 
@@ -514,11 +597,28 @@ export function CreateElementDialog() {
         typeRef: connTarget.trim(),
       };
     }
+    if (isBindingUsage) {
+      return {
+        kind: selectedKind,
+        name: connSource.trim(),
+        bindTarget: connTarget.trim(),
+      };
+    }
+    if (isDependency) {
+      return {
+        kind: selectedKind,
+        name: name.trim() || "dep",
+        depClient: depClient.trim(),
+        depSupplier: depSupplier.trim(),
+      };
+    }
     if (isTransition) {
       return {
         kind: selectedKind,
         name: name.trim(),
         typeRef: typeRef.trim() || undefined,
+        transitionGuard: transitionGuard.trim() || undefined,
+        transitionEffect: transitionEffect.trim() || undefined,
       };
     }
     if (isFlowUsage) {
@@ -531,6 +631,40 @@ export function CreateElementDialog() {
         flowTarget: flowTarget.trim() || undefined,
       };
     }
+    if (isIfAction) {
+      return {
+        kind: selectedKind,
+        name: "if",
+        ifCondition: ifCondition.trim(),
+        ifBody: ifBody.trim() || undefined,
+        elseBody: elseBody.trim() || undefined,
+      };
+    }
+    if (isWhileAction) {
+      return {
+        kind: selectedKind,
+        name: "while",
+        whileCondition: whileCondition.trim(),
+        whileBody: whileBody.trim() || undefined,
+      };
+    }
+    if (isForAction) {
+      return {
+        kind: selectedKind,
+        name: "for",
+        forItem: forItem.trim(),
+        forType: forType.trim() || undefined,
+        forCollection: forCollection.trim() || undefined,
+        forBody: forBody.trim() || undefined,
+      };
+    }
+    if (isSendAction) {
+      return {
+        kind: selectedKind,
+        name: name.trim(),
+        sendVia: sendVia.trim() || undefined,
+      };
+    }
     return {
       kind: selectedKind,
       name: name.trim(),
@@ -538,7 +672,7 @@ export function CreateElementDialog() {
       typeRef: (needsType || isSatisfyOrVerify) && typeRef.trim() ? typeRef.trim() : undefined,
       specializes: isDef && specializes.trim() ? specializes.trim() : undefined,
       multiplicity: isUsageKind && multiplicity.trim() ? multiplicity.trim() : undefined,
-      calcParams: isCalcOrConstraint && calcParams.length > 0 ? calcParams : undefined,
+      calcParams: (isCalcOrConstraint || isActionDef) && calcParams.length > 0 ? calcParams : undefined,
       calcReturnExpr: isCalcDef && calcReturnExpr.trim() ? calcReturnExpr.trim() : undefined,
       calcReturnType: isCalcDef && calcReturnType.trim() ? calcReturnType.trim() : undefined,
       constraintExpr: isConstraintDef && constraintExpr.trim() ? constraintExpr.trim() : undefined,
@@ -546,12 +680,16 @@ export function CreateElementDialog() {
         ? [connEndSource.trim(), connEndTarget.trim()] : undefined,
       valueExpr: isAttributeUsage && valueExpr.trim() ? valueExpr.trim() : undefined,
       portDirection: isPortUsage && portDirection ? portDirection : undefined,
+      isConjugated: isPortUsage && isConjugated ? true : undefined,
       reqShallText: isRequirementDef && reqShallText.trim() ? reqShallText.trim() : undefined,
       subRequirements: isRequirementDef && subRequirements.length > 0 ? subRequirements : undefined,
       actors: isUseCaseDef && useCaseActors.length > 0 ? useCaseActors : undefined,
       includeUseCases: isUseCaseDef && useCaseIncludes.length > 0 ? useCaseIncludes : undefined,
       actionSteps: isActionDef && actionSteps.length > 0 ? actionSteps : undefined,
       initialStates: isStateDef && initialStates.length > 0 ? initialStates : undefined,
+      stateEntryAction: isStateDef && stateEntryAction.trim() ? stateEntryAction.trim() : undefined,
+      stateDoAction: isStateDef && stateDoAction.trim() ? stateDoAction.trim() : undefined,
+      stateExitAction: isStateDef && stateExitAction.trim() ? stateExitAction.trim() : undefined,
       allocSource: isAllocationDef && allocSource.trim() ? allocSource.trim() : undefined,
       allocTarget: isAllocationDef && allocTarget.trim() ? allocTarget.trim() : undefined,
       verifyRequirements: isVerificationDef && verifyReqs.length > 0 ? verifyReqs : undefined,
@@ -559,6 +697,9 @@ export function CreateElementDialog() {
       kindFilters: isViewDef && kindFilters.filter(f => f.trim()).length > 0 ? kindFilters.filter(f => f.trim()) : undefined,
       renderAs: isViewDef && renderAs.trim() ? renderAs.trim() : undefined,
       viewpointConcerns: isViewpointDef && viewpointConcerns.filter(c => c.trim()).length > 0 ? viewpointConcerns.filter(c => c.trim()) : undefined,
+      redefines: isUsageKind && redefinesVal.trim() ? redefinesVal.trim() : undefined,
+      subsetsFeature: isUsageKind && subsetsVal.trim() ? subsetsVal.trim() : undefined,
+      isAssert: isConstraintUsage && isAssert ? true : undefined,
     };
   }
 
@@ -711,7 +852,7 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 3. Transition: source and target state pickers */}
+        {/* 3. Transition: source and target state pickers + guard/effect */}
         {isTransition && (
           <>
             <label style={labelStyle}>Source State (first)</label>
@@ -734,6 +875,25 @@ export function CreateElementDialog() {
               allowCustom
             />
             <div style={{ height: 10 }} />
+            <AdvancedSection>
+              <label style={labelStyle}>Guard Condition (if)</label>
+              <input
+                style={inputStyle}
+                placeholder="e.g. speed > 60"
+                value={transitionGuard}
+                onChange={(e) => setTransitionGuard(e.target.value)}
+                autoCapitalize="none"
+              />
+              <div style={{ height: 10 }} />
+              <label style={labelStyle}>Effect (do)</label>
+              <input
+                style={inputStyle}
+                placeholder="e.g. logEvent"
+                value={transitionEffect}
+                onChange={(e) => setTransitionEffect(e.target.value)}
+                autoCapitalize="none"
+              />
+            </AdvancedSection>
           </>
         )}
 
@@ -946,7 +1106,7 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 7. Attribute Usage: name + type + value + multiplicity */}
+        {/* 7. Attribute Usage: name + type + value + multiplicity + redefines/subsets */}
         {isAttributeUsage && (
           <>
             <label style={labelStyle}>Name</label>
@@ -987,10 +1147,31 @@ export function CreateElementDialog() {
               autoCapitalize="none"
             />
             <div style={{ height: 10 }} />
+            <AdvancedSection>
+              <label style={labelStyle}>Redefines (:&gt;&gt;)</label>
+              <SearchSelect
+                items={typeItems}
+                value={redefinesVal}
+                onChange={setRedefinesVal}
+                placeholder="Select feature to redefine..."
+                title="Redefines"
+                allowCustom
+              />
+              <div style={{ height: 6 }} />
+              <label style={labelStyle}>Subsets (:&gt;)</label>
+              <SearchSelect
+                items={typeItems}
+                value={subsetsVal}
+                onChange={setSubsetsVal}
+                placeholder="Select feature to subset..."
+                title="Subsets"
+                allowCustom
+              />
+            </AdvancedSection>
           </>
         )}
 
-        {/* 8. Port Usage: direction + name + type + multiplicity */}
+        {/* 8. Port Usage: direction + name + type + multiplicity + conjugation */}
         {isPortUsage && (
           <>
             <label style={labelStyle}>Direction</label>
@@ -1034,6 +1215,37 @@ export function CreateElementDialog() {
               autoCapitalize="none"
             />
             <div style={{ height: 10 }} />
+            <AdvancedSection>
+              <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={isConjugated}
+                  onChange={(e) => setIsConjugated(e.target.checked)}
+                  style={{ width: 16, height: 16 }}
+                />
+                Conjugated (~)
+              </label>
+              <div style={{ height: 6 }} />
+              <label style={labelStyle}>Redefines (:&gt;&gt;)</label>
+              <SearchSelect
+                items={typeItems}
+                value={redefinesVal}
+                onChange={setRedefinesVal}
+                placeholder="Select feature to redefine..."
+                title="Redefines"
+                allowCustom
+              />
+              <div style={{ height: 6 }} />
+              <label style={labelStyle}>Subsets (:&gt;)</label>
+              <SearchSelect
+                items={typeItems}
+                value={subsetsVal}
+                onChange={setSubsetsVal}
+                placeholder="Select feature to subset..."
+                title="Subsets"
+                allowCustom
+              />
+            </AdvancedSection>
           </>
         )}
 
@@ -1177,7 +1389,7 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 11. Action Definition: step builder */}
+        {/* 11. Action Definition: step builder + parameters */}
         {isActionDef && (
           <>
             <label style={labelStyle}>Name</label>
@@ -1190,6 +1402,58 @@ export function CreateElementDialog() {
               autoCorrect="off"
             />
             <div style={{ height: 10 }} />
+            <label style={labelStyle}>Parameters</label>
+            {calcParams.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <select
+                  value={p.direction}
+                  onChange={(e) => {
+                    const next = [...calcParams];
+                    next[i] = { ...next[i], direction: e.target.value as "in" | "out" | "inout" };
+                    setCalcParams(next);
+                  }}
+                  style={{ ...inputStyle, width: 70, padding: "6px 4px", minHeight: 36, fontSize: 11 }}
+                >
+                  <option value="in">in</option>
+                  <option value="out">out</option>
+                  <option value="inout">inout</option>
+                </select>
+                <input
+                  style={{ ...inputStyle, flex: 1, minHeight: 36, padding: "6px 8px" }}
+                  placeholder="paramName"
+                  value={p.name}
+                  onChange={(e) => {
+                    const next = [...calcParams];
+                    next[i] = { ...next[i], name: e.target.value };
+                    setCalcParams(next);
+                  }}
+                  autoCapitalize="none"
+                />
+                <input
+                  style={{ ...inputStyle, width: 80, minHeight: 36, padding: "6px 8px" }}
+                  placeholder="Real"
+                  value={p.type}
+                  onChange={(e) => {
+                    const next = [...calcParams];
+                    next[i] = { ...next[i], type: e.target.value };
+                    setCalcParams(next);
+                  }}
+                  autoCapitalize="none"
+                />
+                <button
+                  onClick={() => setCalcParams(calcParams.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setCalcParams([...calcParams, { name: "", type: "Real", direction: "in" }])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Parameter
+            </button>
             <label style={labelStyle}>Action Steps</label>
             {actionSteps.map((step, i) => (
               <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
@@ -1232,7 +1496,7 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 12. State Definition: initial states */}
+        {/* 12. State Definition: initial states + entry/do/exit actions */}
         {isStateDef && (
           <>
             <label style={labelStyle}>Name</label>
@@ -1283,6 +1547,34 @@ export function CreateElementDialog() {
               allowCustom
             />
             <div style={{ height: 10 }} />
+            <AdvancedSection>
+              <label style={labelStyle}>Entry Action</label>
+              <input
+                style={inputStyle}
+                placeholder="e.g. initialize()"
+                value={stateEntryAction}
+                onChange={(e) => setStateEntryAction(e.target.value)}
+                autoCapitalize="none"
+              />
+              <div style={{ height: 6 }} />
+              <label style={labelStyle}>Do Action</label>
+              <input
+                style={inputStyle}
+                placeholder="e.g. monitor()"
+                value={stateDoAction}
+                onChange={(e) => setStateDoAction(e.target.value)}
+                autoCapitalize="none"
+              />
+              <div style={{ height: 6 }} />
+              <label style={labelStyle}>Exit Action</label>
+              <input
+                style={inputStyle}
+                placeholder="e.g. cleanup()"
+                value={stateExitAction}
+                onChange={(e) => setStateExitAction(e.target.value)}
+                autoCapitalize="none"
+              />
+            </AdvancedSection>
           </>
         )}
 
@@ -1423,7 +1715,195 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 17. Default: name + optional short name + type + specialization + multiplicity */}
+        {/* 17a. Binding (=): source/target endpoint pickers */}
+        {isBindingUsage && (
+          <>
+            <label style={labelStyle}>Source</label>
+            <SearchSelect
+              items={endpointItems}
+              value={connSource}
+              onChange={setConnSource}
+              placeholder="Select source endpoint..."
+              title="Source"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Target (=)</label>
+            <SearchSelect
+              items={endpointItems}
+              value={connTarget}
+              onChange={setConnTarget}
+              placeholder="Select target endpoint..."
+              title="Target"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 17b. Dependency: client/supplier pickers */}
+        {isDependency && (
+          <>
+            <label style={labelStyle}>Name (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="myDependency"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Client (from)</label>
+            <SearchSelect
+              items={allocItems}
+              value={depClient}
+              onChange={setDepClient}
+              placeholder="Select client element..."
+              title="Client"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Supplier (to)</label>
+            <SearchSelect
+              items={allocItems}
+              value={depSupplier}
+              onChange={setDepSupplier}
+              placeholder="Select supplier element..."
+              title="Supplier"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 17c. If Action */}
+        {isIfAction && (
+          <>
+            <label style={labelStyle}>Condition</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. speed > 100"
+              value={ifCondition}
+              onChange={(e) => setIfCondition(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Then Body (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. action brake;"
+              value={ifBody}
+              onChange={(e) => setIfBody(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Else Body (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. action accelerate;"
+              value={elseBody}
+              onChange={(e) => setElseBody(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 17d. While Loop */}
+        {isWhileAction && (
+          <>
+            <label style={labelStyle}>Condition</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. fuel > 0"
+              value={whileCondition}
+              onChange={(e) => setWhileCondition(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Body (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. action consume;"
+              value={whileBody}
+              onChange={(e) => setWhileBody(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 17e. For Loop */}
+        {isForAction && (
+          <>
+            <label style={labelStyle}>Item Variable</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. wheel"
+              value={forItem}
+              onChange={(e) => setForItem(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Item Type (optional)</label>
+            <SearchSelect
+              items={typeItems}
+              value={forType}
+              onChange={setForType}
+              placeholder="Select type..."
+              title="Item Type"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Collection (in)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. wheels"
+              value={forCollection}
+              onChange={(e) => setForCollection(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Body (optional)</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. action inspect;"
+              value={forBody}
+              onChange={(e) => setForBody(e.target.value)}
+              autoCapitalize="none"
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 17f. Send Action */}
+        {isSendAction && (
+          <>
+            <label style={labelStyle}>Payload</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. StartSignal"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Via Port (optional)</label>
+            <SearchSelect
+              items={endpointItems}
+              value={sendVia}
+              onChange={setSendVia}
+              placeholder="Select port..."
+              title="Via Port"
+              allowCustom
+            />
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 18. Default: name + optional short name + type + specialization + multiplicity */}
         {!hasSpecializedForm && (
           <>
             <label style={labelStyle}>Name</label>
@@ -1495,6 +1975,45 @@ export function CreateElementDialog() {
                 />
                 <div style={{ height: 10 }} />
               </>
+            )}
+
+            {/* Advanced options for usages in default form */}
+            {isUsageKind && (
+              <AdvancedSection>
+                {isConstraintUsage && (
+                  <>
+                    <label style={{ ...labelStyle, display: "flex", alignItems: "center", gap: 8 }}>
+                      <input
+                        type="checkbox"
+                        checked={isAssert}
+                        onChange={(e) => setIsAssert(e.target.checked)}
+                        style={{ width: 16, height: 16 }}
+                      />
+                      Assert Constraint
+                    </label>
+                    <div style={{ height: 6 }} />
+                  </>
+                )}
+                <label style={labelStyle}>Redefines (:&gt;&gt;)</label>
+                <SearchSelect
+                  items={typeItems}
+                  value={redefinesVal}
+                  onChange={setRedefinesVal}
+                  placeholder="Select feature to redefine..."
+                  title="Redefines"
+                  allowCustom
+                />
+                <div style={{ height: 6 }} />
+                <label style={labelStyle}>Subsets (:&gt;)</label>
+                <SearchSelect
+                  items={typeItems}
+                  value={subsetsVal}
+                  onChange={setSubsetsVal}
+                  placeholder="Select feature to subset..."
+                  title="Subsets"
+                  allowCustom
+                />
+              </AdvancedSection>
             )}
           </>
         )}

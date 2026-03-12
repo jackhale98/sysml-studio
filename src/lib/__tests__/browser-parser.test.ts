@@ -88,3 +88,84 @@ package VehicleBOM {
     expect(wheelMass?.value_expr).toBe("12.5");
   });
 });
+
+describe("browserParse new element patterns", () => {
+  it("parses binding connectors", () => {
+    const model = browserParse("binding a.x = b.y;");
+    const el = model.elements.find(e => e.kind === "binding_usage");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("a.x");
+    expect(el!.type_ref).toBe("b.y");
+  });
+
+  it("parses dependency statements", () => {
+    const model = browserParse("dependency dep1 from ComponentA to ComponentB;");
+    const el = model.elements.find(e => e.kind === "dependency_statement");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("dep1");
+    expect(el!.specializations).toContain("ComponentA");
+    expect(el!.type_ref).toBe("ComponentB");
+  });
+
+  it("parses perform statements", () => {
+    const model = browserParse("perform action doWork : WorkAction;");
+    const el = model.elements.find(e => e.kind === "perform_statement");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("doWork");
+    expect(el!.type_ref).toBe("WorkAction");
+  });
+
+  it("parses exhibit statements", () => {
+    const model = browserParse("exhibit state showState : DisplayState;");
+    const el = model.elements.find(e => e.kind === "exhibit_statement");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("showState");
+    expect(el!.type_ref).toBe("DisplayState");
+  });
+
+  it("parses assert constraint as constraint_usage", () => {
+    const model = browserParse("assert constraint safeSpeed : SpeedConstraint;");
+    const el = model.elements.find(e => e.name === "safeSpeed");
+    expect(el).toBeDefined();
+    expect(el!.kind).toBe("constraint_usage");
+    expect(el!.type_ref).toBe("SpeedConstraint");
+  });
+
+  it("parses send action with via", () => {
+    const model = browserParse("send StartSignal via controlPort;");
+    const el = model.elements.find(e => e.kind === "send_action");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("StartSignal");
+    expect(el!.type_ref).toBe("controlPort");
+  });
+
+  it("parses accept action with type", () => {
+    const model = browserParse("accept StopSignal : SignalType;");
+    const el = model.elements.find(e => e.kind === "accept_action");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("StopSignal");
+    expect(el!.type_ref).toBe("SignalType");
+  });
+
+  it("parses if action", () => {
+    const model = browserParse("if speed > 100 {\n  action brake;\n}");
+    const el = model.elements.find(e => e.kind === "if_action");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("speed > 100");
+  });
+
+  it("parses while action", () => {
+    const model = browserParse("while fuel > 0 {\n  action consume;\n}");
+    const el = model.elements.find(e => e.kind === "while_action");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("fuel > 0");
+  });
+
+  it("parses for action", () => {
+    const model = browserParse("for w : Wheel in wheels {\n  action inspect;\n}");
+    const el = model.elements.find(e => e.kind === "for_action");
+    expect(el).toBeDefined();
+    expect(el!.name).toBe("w");
+    expect(el!.type_ref).toBe("Wheel");
+  });
+});

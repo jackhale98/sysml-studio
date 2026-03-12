@@ -37,6 +37,31 @@ export function generateElementSource(opts: {
   kindFilters?: string[];
   renderAs?: string;
   viewpointConcerns?: string[];
+  // Phase 1: Enhanced forms
+  isConjugated?: boolean;
+  transitionGuard?: string;
+  transitionEffect?: string;
+  stateEntryAction?: string;
+  stateDoAction?: string;
+  stateExitAction?: string;
+  redefines?: string;
+  subsetsFeature?: string;
+  isAssert?: boolean;
+  // Phase 2: New relationships
+  bindTarget?: string;
+  depClient?: string;
+  depSupplier?: string;
+  // Phase 3: New elements
+  ifCondition?: string;
+  ifBody?: string;
+  elseBody?: string;
+  whileCondition?: string;
+  whileBody?: string;
+  forItem?: string;
+  forType?: string;
+  forCollection?: string;
+  forBody?: string;
+  sendVia?: string;
 }): string {
   const { kind, name, typeRef, doc, children, specializes, multiplicity,
           shortName, flowItemType, flowSource, flowTarget,
@@ -44,7 +69,14 @@ export function generateElementSource(opts: {
           valueExpr, portDirection, reqShallText, subRequirements, actors,
           includeUseCases, actionSteps, initialStates, allocSource, allocTarget,
           verifyRequirements, exposePatterns, kindFilters, renderAs,
-          viewpointConcerns } = opts;
+          viewpointConcerns, isConjugated, transitionGuard, transitionEffect,
+          stateEntryAction, stateDoAction, stateExitAction,
+          redefines, subsetsFeature, isAssert,
+          bindTarget, depClient, depSupplier,
+          ifCondition, ifBody, elseBody,
+          whileCondition, whileBody,
+          forItem, forType, forCollection, forBody,
+          sendVia } = opts;
   const alias = shortName ? ` <${shortName}>` : "";
   const lines: string[] = [];
 
@@ -113,6 +145,11 @@ export function generateElementSource(opts: {
     const spec = specializes ? ` :> ${specializes}` : "";
     lines.push(`${keyword} ${name}${alias}${spec} {`);
     if (doc) lines.push(`  doc /* ${doc} */`);
+    if (calcParams) {
+      for (const p of calcParams) {
+        lines.push(`  ${p.direction} ${p.name} : ${p.type || "Real"};`);
+      }
+    }
     if (actionSteps) {
       for (const step of actionSteps) lines.push(`  action ${step};`);
     }
@@ -122,6 +159,9 @@ export function generateElementSource(opts: {
     const spec = specializes ? ` :> ${specializes}` : "";
     lines.push(`${keyword} ${name}${alias}${spec} {`);
     if (doc) lines.push(`  doc /* ${doc} */`);
+    if (stateEntryAction) lines.push(`  entry action { ${stateEntryAction} }`);
+    if (stateDoAction) lines.push(`  do action { ${stateDoAction} }`);
+    if (stateExitAction) lines.push(`  exit action { ${stateExitAction} }`);
     if (initialStates) {
       for (const s of initialStates) lines.push(`  state ${s};`);
     }
@@ -186,16 +226,26 @@ export function generateElementSource(opts: {
       parts.push(`from ${flowSource} to ${flowTarget}`);
     }
     lines.push(parts.join(" ") + ";");
+  } else if (kind === "binding_usage") {
+    if (bindTarget) {
+      lines.push(`binding ${name} = ${bindTarget};`);
+    } else {
+      lines.push(`binding ${name};`);
+    }
   } else if (isUsage(kind)) {
     const mult = multiplicity ? `[${multiplicity}]` : "";
     const dir = portDirection && kind === "port_usage" ? `${portDirection} ` : "";
+    const conj = isConjugated && kind === "port_usage" ? "~" : "";
     const val = valueExpr && kind === "attribute_usage" ? ` = ${valueExpr}` : "";
+    const subset = subsetsFeature ? ` :> ${subsetsFeature}` : "";
+    const redef = redefines ? ` :>> ${redefines}` : "";
+    const assertPfx = isAssert && kind === "constraint_usage" ? "assert " : "";
     if (typeRef) {
-      lines.push(`${dir}${keyword} ${name}${alias} : ${typeRef}${mult}${val};`);
-    } else if (mult || val) {
-      lines.push(`${dir}${keyword} ${name}${alias}${mult ? " " + mult : ""}${val};`);
+      lines.push(`${assertPfx}${dir}${conj}${keyword} ${name}${alias} : ${typeRef}${mult}${subset}${redef}${val};`);
+    } else if (mult || val || subsetsFeature || redefines) {
+      lines.push(`${assertPfx}${dir}${conj}${keyword} ${name}${alias}${subset}${redef}${mult ? " " + mult : ""}${val};`);
     } else {
-      lines.push(`${dir}${keyword} ${name}${alias};`);
+      lines.push(`${assertPfx}${dir}${conj}${keyword} ${name}${alias};`);
     }
   } else if (kind === "connect_statement") {
     // name = source endpoint, typeRef = target endpoint
@@ -207,7 +257,9 @@ export function generateElementSource(opts: {
   } else if (kind === "transition_statement") {
     // name = source state, typeRef = target state
     if (typeRef) {
-      lines.push(`transition first ${name} then ${typeRef};`);
+      const guard = transitionGuard ? ` if ${transitionGuard}` : "";
+      const effect = transitionEffect ? ` do ${transitionEffect}` : "";
+      lines.push(`transition first ${name}${guard}${effect} then ${typeRef};`);
     } else {
       lines.push(`transition ${name};`);
     }
@@ -215,6 +267,38 @@ export function generateElementSource(opts: {
     lines.push(`satisfy ${name};`);
   } else if (kind === "verify_statement") {
     lines.push(`verify ${name};`);
+  } else if (kind === "dependency_statement") {
+    const parts = ["dependency"];
+    if (name) parts.push(name);
+    if (depClient && depSupplier) {
+      parts.push(`from ${depClient} to ${depSupplier}`);
+    }
+    lines.push(parts.join(" ") + ";");
+  } else if (kind === "send_action") {
+    const parts = [`send ${name}`];
+    if (sendVia) parts.push(`via ${sendVia}`);
+    lines.push(parts.join(" ") + ";");
+  } else if (kind === "if_action") {
+    const cond = ifCondition || name;
+    lines.push(`if ${cond} {`);
+    if (ifBody) lines.push(`  ${ifBody}`);
+    if (elseBody) {
+      lines.push(`} else {`);
+      lines.push(`  ${elseBody}`);
+    }
+    lines.push(`}`);
+  } else if (kind === "while_action") {
+    const cond = whileCondition || name;
+    lines.push(`while ${cond} {`);
+    if (whileBody) lines.push(`  ${whileBody}`);
+    lines.push(`}`);
+  } else if (kind === "for_action") {
+    const item = forItem || name;
+    const typ = forType ? ` : ${forType}` : "";
+    const coll = forCollection ? ` in ${forCollection}` : "";
+    lines.push(`for ${item}${typ}${coll} {`);
+    if (forBody) lines.push(`  ${forBody}`);
+    lines.push(`}`);
   } else {
     // Generic fallback
     if (typeRef) {
@@ -424,6 +508,15 @@ function kindToKeyword(kind: string): string {
     transition_statement: "transition",
     satisfy_statement: "satisfy",
     verify_statement: "verify",
+    binding_usage: "binding",
+    dependency_statement: "dependency",
+    perform_statement: "perform action",
+    exhibit_statement: "exhibit state",
+    send_action: "send",
+    accept_action: "accept",
+    if_action: "if",
+    while_action: "while",
+    for_action: "for",
   };
   return map[kind] ?? kind.replace(/_/g, " ");
 }
@@ -490,6 +583,7 @@ export const CREATE_OPTIONS = [
       { kind: "part_usage", label: "Part Usage", needsType: true },
       { kind: "item_def", label: "Item Definition" },
       { kind: "item_usage", label: "Item Usage", needsType: true },
+      { kind: "occurrence_def", label: "Occurrence Definition" },
       { kind: "package", label: "Package" },
     ],
   },
@@ -502,6 +596,13 @@ export const CREATE_OPTIONS = [
       { kind: "state_usage", label: "State Usage" },
       { kind: "transition_statement", label: "Transition" },
       { kind: "use_case_def", label: "Use Case Definition" },
+      { kind: "if_action", label: "If Action" },
+      { kind: "while_action", label: "While Loop" },
+      { kind: "for_action", label: "For Loop" },
+      { kind: "send_action", label: "Send Action" },
+      { kind: "accept_action", label: "Accept Action" },
+      { kind: "perform_statement", label: "Perform Action", needsType: true },
+      { kind: "exhibit_statement", label: "Exhibit State", needsType: true },
     ],
   },
   {
@@ -539,6 +640,7 @@ export const CREATE_OPTIONS = [
       { kind: "constraint_usage", label: "Constraint Usage" },
       { kind: "analysis_case_def", label: "Analysis Case" },
       { kind: "verification_case_def", label: "Verification Case" },
+      { kind: "metadata_def", label: "Metadata Definition" },
     ],
   },
   {
@@ -546,6 +648,8 @@ export const CREATE_OPTIONS = [
     items: [
       { kind: "allocation_def", label: "Allocation Definition" },
       { kind: "connect_statement", label: "Connect (port-to-port)" },
+      { kind: "binding_usage", label: "Binding (=)" },
+      { kind: "dependency_statement", label: "Dependency" },
       { kind: "satisfy_statement", label: "Satisfy" },
       { kind: "verify_statement", label: "Verify" },
     ],

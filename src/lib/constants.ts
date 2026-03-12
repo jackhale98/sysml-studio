@@ -57,6 +57,20 @@ export const TYPE_COLORS: Record<string, TypeColorSet> = {
   use_case_usage: { bg: "#042f2e", fg: "#5eead4", border: "#14b8a6" },
   verification_case_def: { bg: "#172554", fg: "#93c5fd", border: "#3b82f6" },
   analysis_case_def: { bg: "#1a2e2e", fg: "#67e8f9", border: "#06b6d4" },
+  // New element types
+  binding_usage: { bg: "#1e1e2e", fg: "#f472b6", border: "#db2777" },
+  dependency_statement: { bg: "#1e1e2e", fg: "#f9a8d4", border: "#ec4899" },
+  send_action: { bg: "#042f2e", fg: "#2dd4bf", border: "#0d9488" },
+  accept_action: { bg: "#042f2e", fg: "#2dd4bf", border: "#0d9488" },
+  if_action: { bg: "#042f2e", fg: "#2dd4bf", border: "#0d9488" },
+  while_action: { bg: "#042f2e", fg: "#2dd4bf", border: "#0d9488" },
+  for_action: { bg: "#042f2e", fg: "#2dd4bf", border: "#0d9488" },
+  perform_statement: { bg: "#042f2e", fg: "#5eead4", border: "#14b8a6" },
+  exhibit_statement: { bg: "#0c2d48", fg: "#38bdf8", border: "#0284c7" },
+  metadata_def: { bg: "#1e293b", fg: "#94a3b8", border: "#475569" },
+  metadata_usage: { bg: "#1e293b", fg: "#94a3b8", border: "#475569" },
+  occurrence_def: { bg: "#1e3a5f", fg: "#60a5fa", border: "#2563eb" },
+  occurrence_usage: { bg: "#1e3a5f", fg: "#60a5fa", border: "#2563eb" },
 };
 
 export function getTypeColor(kind: string): TypeColorSet {
@@ -123,6 +137,19 @@ export function getKindLabel(kind: string): string {
     alias: "Alias",
     comment: "Comment",
     doc_comment: "Doc",
+    binding_usage: "Binding",
+    dependency_statement: "Dependency",
+    send_action: "Send",
+    accept_action: "Accept",
+    if_action: "If",
+    while_action: "While",
+    for_action: "For Loop",
+    perform_statement: "Perform",
+    exhibit_statement: "Exhibit",
+    metadata_def: "Meta Def",
+    metadata_usage: "Metadata",
+    calc_def: "Calc Def",
+    calc_usage: "Calc",
   };
   return labels[kind] ?? kind.replace(/_/g, " ");
 }
