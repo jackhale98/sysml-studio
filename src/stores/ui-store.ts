@@ -3,6 +3,7 @@ import type { ElementId } from "../lib/element-types";
 
 export type TabId = "browser" | "diagram" | "editor" | "mbse" | "analysis";
 export type DiagramType = "bdd" | "stm" | "req" | "ucd" | "ibd";
+export type ViewMode = DiagramType | "custom";
 export type ThemeMode = "dark" | "light";
 
 export type DialogType = "create" | "edit" | "delete" | null;
@@ -18,6 +19,8 @@ interface UIState {
   selectedElementId: ElementId | null;
   showDetailSheet: boolean;
   diagramType: DiagramType;
+  viewMode: ViewMode;
+  selectedViewName: string | null;
   diagramScope: DiagramScope | null;
   highlightedNodeId: string | null;
   activeDialog: DialogType;
@@ -29,6 +32,7 @@ interface UIState {
   selectElement: (id: ElementId | null) => void;
   setShowDetail: (show: boolean) => void;
   setDiagramType: (type: DiagramType) => void;
+  setViewMode: (mode: ViewMode, viewName?: string | null) => void;
   setDiagramScope: (scope: DiagramScope | null) => void;
   setHighlightedNode: (id: string | null) => void;
   navigateToDiagram: (elementName: string, targetDiagramType?: DiagramType, scope?: DiagramScope | null) => void;
@@ -45,6 +49,8 @@ export const useUIStore = create<UIState>((set) => ({
   selectedElementId: null,
   showDetailSheet: false,
   diagramType: "bdd",
+  viewMode: "bdd" as ViewMode,
+  selectedViewName: null,
   diagramScope: null,
   highlightedNodeId: null,
   activeDialog: null,
@@ -64,6 +70,15 @@ export const useUIStore = create<UIState>((set) => ({
 
   setDiagramType: (type) => set({
     diagramType: type,
+    viewMode: type,
+    selectedViewName: null,
+    highlightedNodeId: null,
+  }),
+
+  setViewMode: (mode, viewName) => set({
+    viewMode: mode,
+    selectedViewName: viewName ?? null,
+    diagramType: mode !== "custom" ? mode as DiagramType : undefined as any,
     highlightedNodeId: null,
   }),
 

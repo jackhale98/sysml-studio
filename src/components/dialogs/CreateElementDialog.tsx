@@ -107,6 +107,12 @@ export function CreateElementDialog() {
   const [allocTarget, setAllocTarget] = useState("");
   // Verification requirements
   const [verifyReqs, setVerifyReqs] = useState<string[]>([]);
+  // View definition
+  const [exposePatterns, setExposePatterns] = useState<string[]>([]);
+  const [kindFilters, setKindFilters] = useState<string[]>([]);
+  const [renderAs, setRenderAs] = useState("");
+  // Viewpoint definition
+  const [viewpointConcerns, setViewpointConcerns] = useState<string[]>([]);
 
   // Child entries
   const [children, setChildren] = useState<ChildEntry[]>([]);
@@ -137,9 +143,12 @@ export function CreateElementDialog() {
   const isStateDef = selectedKind === "state_def";
   const isAllocationDef = selectedKind === "allocation_def";
   const isVerificationDef = selectedKind === "verification_case_def";
+  const isViewDef = selectedKind === "view_def";
+  const isViewpointDef = selectedKind === "viewpoint_def";
   const hasSpecializedForm = isConnectStatement || isSatisfyOrVerify || isTransition || isFlowUsage
     || isCalcOrConstraint || isConnectionOrInterface || isAttributeUsage || isPortUsage
-    || isRequirementDef || isUseCaseDef || isActionDef || isStateDef || isAllocationDef || isVerificationDef;
+    || isRequirementDef || isUseCaseDef || isActionDef || isStateDef || isAllocationDef || isVerificationDef
+    || isViewDef || isViewpointDef;
 
   const targets = useMemo(() => model ? getInsertTargets(model) : [], [model]);
 
@@ -174,6 +183,10 @@ export function CreateElementDialog() {
     setAllocSource("");
     setAllocTarget("");
     setVerifyReqs([]);
+    setExposePatterns([]);
+    setKindFilters([]);
+    setRenderAs("");
+    setViewpointConcerns([]);
   }
 
   // ─── Item lists ───
@@ -512,6 +525,10 @@ export function CreateElementDialog() {
       allocSource: isAllocationDef && allocSource.trim() ? allocSource.trim() : undefined,
       allocTarget: isAllocationDef && allocTarget.trim() ? allocTarget.trim() : undefined,
       verifyRequirements: isVerificationDef && verifyReqs.length > 0 ? verifyReqs : undefined,
+      exposePatterns: isViewDef && exposePatterns.filter(p => p.trim()).length > 0 ? exposePatterns.filter(p => p.trim()) : undefined,
+      kindFilters: isViewDef && kindFilters.filter(f => f.trim()).length > 0 ? kindFilters.filter(f => f.trim()) : undefined,
+      renderAs: isViewDef && renderAs.trim() ? renderAs.trim() : undefined,
+      viewpointConcerns: isViewpointDef && viewpointConcerns.filter(c => c.trim()).length > 0 ? viewpointConcerns.filter(c => c.trim()) : undefined,
     };
   }
 
@@ -1322,7 +1339,140 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 15. Default: name + optional short name + type + specialization + multiplicity */}
+        {/* 15. View Definition */}
+        {isViewDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="StructureOverview"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Expose Patterns</label>
+            <span style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", display: "block", marginBottom: 4 }}>
+              Qualified name patterns — use ::* (one level) or ::** (recursive)
+            </span>
+            {exposePatterns.map((p, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <input
+                  style={{ ...inputStyle, flex: 1 }}
+                  placeholder="e.g. VehicleSystem::**"
+                  value={p}
+                  onChange={(e) => {
+                    const next = [...exposePatterns];
+                    next[i] = e.target.value;
+                    setExposePatterns(next);
+                  }}
+                />
+                <button
+                  onClick={() => setExposePatterns(exposePatterns.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setExposePatterns([...exposePatterns, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Expose Pattern
+            </button>
+
+            <label style={labelStyle}>Kind Filters</label>
+            <span style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", display: "block", marginBottom: 4 }}>
+              SysML element types to include (e.g. PartDef, Requirement)
+            </span>
+            {kindFilters.map((f, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <input
+                  style={{ ...inputStyle, flex: 1 }}
+                  placeholder="e.g. PartDef"
+                  value={f}
+                  onChange={(e) => {
+                    const next = [...kindFilters];
+                    next[i] = e.target.value;
+                    setKindFilters(next);
+                  }}
+                />
+                <button
+                  onClick={() => setKindFilters(kindFilters.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setKindFilters([...kindFilters, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Kind Filter
+            </button>
+
+            <label style={labelStyle}>Render As (optional)</label>
+            <select
+              style={{ ...inputStyle, appearance: "auto" }}
+              value={renderAs}
+              onChange={(e) => setRenderAs(e.target.value)}
+            >
+              <option value="">Default</option>
+              <option value="asTreeDiagram">Tree Diagram</option>
+              <option value="asTableDiagram">Table</option>
+              <option value="asInterconnectionDiagram">Interconnection Diagram</option>
+            </select>
+            <div style={{ height: 10 }} />
+          </>
+        )}
+
+        {/* 16. Viewpoint Definition */}
+        {isViewpointDef && (
+          <>
+            <label style={labelStyle}>Name</label>
+            <input
+              style={inputStyle}
+              placeholder="StructuralViewpoint"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 10 }} />
+            <label style={labelStyle}>Frame Concerns</label>
+            {viewpointConcerns.map((c, i) => (
+              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <input
+                  style={{ ...inputStyle, flex: 1 }}
+                  placeholder="e.g. SystemStructure"
+                  value={c}
+                  onChange={(e) => {
+                    const next = [...viewpointConcerns];
+                    next[i] = e.target.value;
+                    setViewpointConcerns(next);
+                  }}
+                />
+                <button
+                  onClick={() => setViewpointConcerns(viewpointConcerns.filter((_, j) => j !== i))}
+                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+                >
+                  X
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => setViewpointConcerns([...viewpointConcerns, ""])}
+              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+            >
+              + Add Concern
+            </button>
+          </>
+        )}
+
+        {/* 17. Default: name + optional short name + type + specialization + multiplicity */}
         {!hasSpecializedForm && (
           <>
             <label style={labelStyle}>Name</label>

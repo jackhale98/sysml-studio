@@ -115,6 +115,7 @@ pub enum ElementKind {
     TerminateStatement,
     SuccessionUsage,
     SuccessionFlowUsage,
+    SuccessionBranch,
     BindingUsage,
     BooleanExpressionUsage,
     InvariantUsage,
@@ -184,6 +185,15 @@ pub struct SourceSpan {
     pub end_byte: u32,
 }
 
+/// A parsed view definition with its expose/filter/render clauses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewData {
+    pub name: String,
+    pub exposes: Vec<String>,
+    pub kind_filters: Vec<String>,
+    pub render_as: Option<String>,
+}
+
 /// The complete parsed model
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SysmlModel {
@@ -191,6 +201,7 @@ pub struct SysmlModel {
     pub elements: Vec<SysmlElement>,
     pub errors: Vec<ParseError>,
     pub stats: ModelStats,
+    pub views: Vec<ViewData>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,7 +251,7 @@ impl ElementKind {
             ElementKind::SnapshotUsage | ElementKind::TimesliceUsage | ElementKind::TransitionStatement |
             ElementKind::BindingUsage | ElementKind::BooleanExpressionUsage |
             ElementKind::InvariantUsage | ElementKind::SuccessionUsage |
-            ElementKind::SuccessionFlowUsage
+            ElementKind::SuccessionFlowUsage | ElementKind::SuccessionBranch
         )
     }
 
@@ -336,6 +347,7 @@ impl ElementKind {
             ElementKind::TerminateStatement => "Terminate",
             ElementKind::SuccessionUsage => "Succession",
             ElementKind::SuccessionFlowUsage => "Succession Flow",
+            ElementKind::SuccessionBranch => "Then Branch",
             ElementKind::BindingUsage => "Binding Usage",
             ElementKind::BooleanExpressionUsage => "Boolean Expr",
             ElementKind::InvariantUsage => "Invariant",

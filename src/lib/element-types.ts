@@ -94,11 +94,19 @@ export interface ModelStats {
   parse_time_ms: number;
 }
 
+export interface ViewData {
+  name: string;
+  exposes: string[];
+  kind_filters: string[];
+  render_as: string | null;
+}
+
 export interface SysmlModel {
   file_path: string | null;
   elements: SysmlElement[];
   errors: ParseError[];
   stats: ModelStats;
+  views: ViewData[];
 }
 
 // MBSE Types

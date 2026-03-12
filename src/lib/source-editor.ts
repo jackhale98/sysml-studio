@@ -33,13 +33,18 @@ export function generateElementSource(opts: {
   allocSource?: string;
   allocTarget?: string;
   verifyRequirements?: string[];
+  exposePatterns?: string[];
+  kindFilters?: string[];
+  renderAs?: string;
+  viewpointConcerns?: string[];
 }): string {
   const { kind, name, typeRef, doc, children, specializes, multiplicity,
           shortName, flowItemType, flowSource, flowTarget,
           calcParams, calcReturnExpr, calcReturnType, constraintExpr, connEndTypes,
           valueExpr, portDirection, reqShallText, subRequirements, actors,
           includeUseCases, actionSteps, initialStates, allocSource, allocTarget,
-          verifyRequirements } = opts;
+          verifyRequirements, exposePatterns, kindFilters, renderAs,
+          viewpointConcerns } = opts;
   const alias = shortName ? ` <${shortName}>` : "";
   const lines: string[] = [];
 
@@ -136,6 +141,28 @@ export function generateElementSource(opts: {
     if (doc) lines.push(`  doc /* ${doc} */`);
     if (verifyRequirements) {
       for (const r of verifyRequirements) lines.push(`  verify ${r};`);
+    }
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "view_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (exposePatterns) {
+      for (const p of exposePatterns) lines.push(`  expose ${p};`);
+    }
+    if (kindFilters) {
+      for (const f of kindFilters) lines.push(`  filter @SysML::${f};`);
+    }
+    if (renderAs) lines.push(`  render ${renderAs};`);
+    if (children) for (const child of children) lines.push(`  ${child}`);
+    lines.push(`}`);
+  } else if (kind === "viewpoint_def") {
+    const spec = specializes ? ` :> ${specializes}` : "";
+    lines.push(`${keyword} ${name}${alias}${spec} {`);
+    if (doc) lines.push(`  doc /* ${doc} */`);
+    if (viewpointConcerns) {
+      for (const c of viewpointConcerns) lines.push(`  frame concern ${c};`);
     }
     if (children) for (const child of children) lines.push(`  ${child}`);
     lines.push(`}`);
@@ -521,6 +548,13 @@ export const CREATE_OPTIONS = [
       { kind: "connect_statement", label: "Connect (port-to-port)" },
       { kind: "satisfy_statement", label: "Satisfy" },
       { kind: "verify_statement", label: "Verify" },
+    ],
+  },
+  {
+    category: "View",
+    items: [
+      { kind: "view_def", label: "View Definition" },
+      { kind: "viewpoint_def", label: "Viewpoint Definition" },
     ],
   },
 ] as const;

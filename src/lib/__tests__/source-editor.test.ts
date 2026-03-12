@@ -57,6 +57,7 @@ function makeModel(elements: SysmlElement[]): SysmlModel {
       errors: 0,
       parse_time_ms: 0,
     },
+    views: [],
   };
 }
 

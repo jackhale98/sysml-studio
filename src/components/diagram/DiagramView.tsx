@@ -1,12 +1,16 @@
-import React, { useState, useRef, useCallback, useEffect } from "react";
+import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
 import { computeBddLayout, computeStmLayout, computeReqLayout, computeUcdLayout, computeIbdLayout } from "../../lib/tauri-bridge";
-import type { DiagramLayout, DiagramNode } from "../../lib/element-types";
+import type { DiagramLayout, DiagramNode, ViewData, SysmlElement, ElementKind } from "../../lib/element-types";
+import { evaluateView, mergeViewData } from "../../lib/view-evaluator";
 
 export function DiagramView() {
   const diagramType = useUIStore((s) => s.diagramType);
   const setDiagramType = useUIStore((s) => s.setDiagramType);
+  const viewMode = useUIStore((s) => s.viewMode);
+  const setViewMode = useUIStore((s) => s.setViewMode);
+  const selectedViewName = useUIStore((s) => s.selectedViewName);
   const diagramScope = useUIStore((s) => s.diagramScope);
   const setDiagramScope = useUIStore((s) => s.setDiagramScope);
   const highlightedNodeId = useUIStore((s) => s.highlightedNodeId);
@@ -14,6 +18,35 @@ export function DiagramView() {
   const openDialog = useUIStore((s) => s.openDialog);
   const navigateToEditor = useUIStore((s) => s.navigateToEditor);
   const model = useModelStore((s) => s.model);
+
+  // User-defined views from the model (deduplicated by name)
+  const customViews = useMemo(() => {
+    if (!model) return [];
+    const seen = new Set<string>();
+    return (model.views ?? []).filter(v => {
+      if (seen.has(v.name)) return false;
+      seen.add(v.name);
+      return true;
+    });
+  }, [model]);
+
+  // Resolve the active custom view's matched elements
+  const customViewResult = useMemo(() => {
+    if (viewMode !== "custom" || !selectedViewName || !model) return null;
+    const vd = customViews.find(v => v.name === selectedViewName);
+    if (!vd) return null;
+    // Check if this view specializes another (look up via element type_ref)
+    const viewEl = model.elements.find(e =>
+      (e.kind === "view_def" || e.kind === "view_usage") && e.name === selectedViewName
+    );
+    let resolved = vd;
+    if (viewEl?.type_ref) {
+      const parentView = customViews.find(v => v.name === viewEl.type_ref);
+      if (parentView) resolved = mergeViewData(vd, parentView);
+    }
+    const matched = evaluateView(resolved, model.elements);
+    return { view: resolved, elements: matched };
+  }, [viewMode, selectedViewName, model, customViews]);
 
   const [layout, setLayout] = useState<DiagramLayout | null>(null);
   const [zoom, setZoom] = useState(0.85);
@@ -248,34 +281,45 @@ export function DiagramView() {
 
   return (
     <>
-      {/* Diagram type toggle */}
+      {/* View selector dropdown */}
       <div style={{
-        display: "flex", gap: 5, padding: "8px 10px",
+        display: "flex", alignItems: "center", gap: 8, padding: "8px 10px",
         background: "var(--bg-secondary)", borderBottom: "1px solid var(--border)",
-        overflowX: "auto", WebkitOverflowScrolling: "touch",
       }}>
-        {([
-          ["bdd", "BDD"],
-          ["stm", "STM"],
-          ["req", "REQ"],
-          ["ucd", "UCD"],
-          ["ibd", "IBD"],
-        ] as const).map(([type, label]) => (
-          <button
-            key={type}
-            onClick={() => setDiagramType(type)}
-            style={{
-              padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 600,
-              fontFamily: "var(--font-mono)", cursor: "pointer", whiteSpace: "nowrap",
-              border: diagramType === type ? "1.5px solid var(--accent)" : "1.5px solid var(--border)",
-              background: diagramType === type ? "rgba(59,130,246,0.13)" : "var(--bg-tertiary)",
-              color: diagramType === type ? "var(--accent-hover)" : "var(--text-muted)",
-              transition: "all 0.15s", minHeight: 36, flexShrink: 0,
-            }}
-          >
-            {label}
-          </button>
-        ))}
+        <select
+          value={viewMode === "custom" ? `custom:${selectedViewName}` : viewMode}
+          onChange={(e) => {
+            const val = e.target.value;
+            if (val.startsWith("custom:")) {
+              setViewMode("custom", val.slice(7));
+            } else {
+              setDiagramType(val as any);
+            }
+          }}
+          style={{
+            flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+            fontFamily: "var(--font-mono)", cursor: "pointer",
+            border: "1.5px solid var(--border)", background: "var(--bg-primary)",
+            color: "var(--text-primary)", appearance: "auto", minHeight: 38,
+          }}
+        >
+          <optgroup label="Diagrams">
+            <option value="bdd">Block Definition Diagram</option>
+            <option value="stm">State Machine Diagram</option>
+            <option value="req">Requirements Diagram</option>
+            <option value="ucd">Use Case Diagram</option>
+            <option value="ibd">Internal Block Diagram</option>
+          </optgroup>
+          {customViews.length > 0 && (
+            <optgroup label="Model Views">
+              {customViews.map((v) => (
+                <option key={v.name} value={`custom:${v.name}`}>
+                  {v.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </select>
       </div>
 
       {/* Scope indicator */}
@@ -303,8 +347,19 @@ export function DiagramView() {
         </div>
       )}
 
-      {/* Canvas */}
-      <div ref={canvasRef} style={{ flex: 1, position: "relative", overflow: "hidden", background: "var(--bg-primary)", touchAction: "none" }}>
+      {/* Custom view content */}
+      {viewMode === "custom" && customViewResult && (
+        <CustomViewPanel
+          view={customViewResult.view}
+          elements={customViewResult.elements}
+          allElements={model?.elements ?? []}
+          onSelectElement={(id) => { useUIStore.getState().selectElement(id); }}
+          onNavigateToEditor={(line) => { navigateToEditor(line); }}
+        />
+      )}
+
+      {/* Diagram canvas (hidden when custom view is active) */}
+      <div ref={canvasRef} style={{ flex: 1, position: "relative", overflow: "hidden", background: "var(--bg-primary)", touchAction: "none", display: viewMode === "custom" ? "none" : "block" }}>
         {/* Grid background */}
         <div style={{
           position: "absolute", inset: 0, opacity: 0.15,
@@ -992,5 +1047,254 @@ export function DiagramView() {
         );
       })()}
     </>
+  );
+}
+
+// ─── Custom View Panel ───
+
+function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavigateToEditor }: {
+  view: ViewData;
+  elements: SysmlElement[];
+  allElements: SysmlElement[];
+  onSelectElement: (id: number) => void;
+  onNavigateToEditor: (line?: number) => void;
+}) {
+  const renderMode: "tree" | "table" | "list" =
+    view.render_as === "asTableDiagram" ? "table"
+    : view.render_as === "asInterconnectionDiagram" ? "table"
+    : view.render_as === "asListDiagram" ? "list"
+    : "tree";
+
+  // Build parent-child tree from matched elements
+  const treeRoots = useMemo(() => {
+    const idSet = new Set(elements.map(e => e.id));
+    // Roots: elements whose parent is not in the matched set
+    return elements.filter(e => e.parent_id === null || !idSet.has(e.parent_id));
+  }, [elements]);
+
+  const childMap = useMemo(() => {
+    const map = new Map<number, SysmlElement[]>();
+    for (const el of elements) {
+      if (el.parent_id !== null) {
+        const list = map.get(el.parent_id) ?? [];
+        list.push(el);
+        map.set(el.parent_id, list);
+      }
+    }
+    return map;
+  }, [elements]);
+
+  const mono: React.CSSProperties = { fontSize: 11, fontFamily: "var(--font-mono)" };
+  const kindStr = (kind: ElementKind): string => typeof kind === "string" ? kind : kind.other;
+  const kindColor = (kind: string): string => {
+    if (kind.includes("part")) return "#3b82f6";
+    if (kind.includes("port")) return "#f59e0b";
+    if (kind.includes("attribute")) return "#10b981";
+    if (kind.includes("requirement")) return "#ef4444";
+    if (kind.includes("action") || kind.includes("state")) return "#c084fc";
+    if (kind.includes("constraint") || kind.includes("calc")) return "#f97316";
+    return "var(--text-secondary)";
+  };
+
+  return (
+    <div style={{ flex: 1, overflow: "auto", background: "var(--bg-primary)" }}>
+      {/* View header */}
+      <div style={{
+        padding: "10px 14px", borderBottom: "1px solid var(--border)",
+        background: "var(--bg-secondary)",
+      }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+          <span style={{ ...mono, fontWeight: 700, color: "#c084fc", fontSize: 13 }}>{view.name}</span>
+          <span style={{
+            fontSize: 8, fontWeight: 700, padding: "2px 5px", borderRadius: 3,
+            background: "rgba(192,132,252,0.15)", color: "#c084fc",
+            textTransform: "uppercase", letterSpacing: "0.04em",
+          }}>
+            CUSTOM VIEW
+          </span>
+          <span style={{ ...mono, color: "var(--text-muted)", marginLeft: "auto" }}>
+            {elements.length} elements
+          </span>
+        </div>
+
+        {/* View metadata */}
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          {view.exposes.length > 0 && (
+            <span style={{ ...mono, fontSize: 10, color: "var(--text-muted)" }}>
+              expose: {view.exposes.map((e, i) => (
+                <span key={i} style={{ color: "#38bdf8", fontWeight: 600 }}>{i > 0 ? ", " : ""}{e}</span>
+              ))}
+            </span>
+          )}
+          {view.kind_filters.length > 0 && (
+            <span style={{ ...mono, fontSize: 10, color: "var(--text-muted)" }}>
+              filter: {view.kind_filters.map((k, i) => (
+                <span key={i} style={{ color: "#f59e0b", fontWeight: 600 }}>{i > 0 ? ", " : ""}{k}</span>
+              ))}
+            </span>
+          )}
+        </div>
+
+        {/* Render mode indicator */}
+        {view.render_as && (
+          <span style={{ ...mono, fontSize: 10, color: "var(--text-muted)", marginTop: 4, display: "block" }}>
+            render: <span style={{ color: "#10b981", fontWeight: 600 }}>{view.render_as}</span>
+          </span>
+        )}
+      </div>
+
+      {/* Empty state */}
+      {elements.length === 0 && (
+        <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", ...mono }}>
+          No elements match this view's expose/filter criteria.
+        </div>
+      )}
+
+      {/* Tree rendering */}
+      {renderMode === "tree" && elements.length > 0 && (
+        <div style={{ padding: "8px 10px" }}>
+          {treeRoots.map(root => (
+            <ViewTreeNode
+              key={root.id} element={root} depth={0} childMap={childMap}
+              kindColor={kindColor} mono={mono}
+              onSelect={onSelectElement} onNavigate={onNavigateToEditor}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* Table rendering */}
+      {renderMode === "table" && elements.length > 0 && (
+        <div style={{ padding: "8px 10px" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", ...mono }}>
+            <thead>
+              <tr style={{ borderBottom: "2px solid var(--border)" }}>
+                {["Name", "Kind", "Type", "Qualified Name"].map(h => (
+                  <th key={h} style={{
+                    textAlign: "left", padding: "6px 8px", fontSize: 9,
+                    color: "var(--text-muted)", textTransform: "uppercase",
+                    letterSpacing: "0.05em", fontWeight: 700,
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {elements.map(el => (
+                <tr
+                  key={el.id}
+                  onClick={() => onSelectElement(el.id)}
+                  style={{ cursor: "pointer", borderBottom: "1px solid var(--border)" }}
+                  onMouseOver={e => (e.currentTarget.style.background = "rgba(59,130,246,0.06)")}
+                  onMouseOut={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <td style={{ padding: "5px 8px", fontWeight: 600, color: kindColor(kindStr(el.kind)) }}>
+                    {el.name ?? "<unnamed>"}
+                  </td>
+                  <td style={{ padding: "5px 8px", color: "var(--text-muted)", fontSize: 10 }}>
+                    {kindStr(el.kind).replace(/_/g, " ")}
+                  </td>
+                  <td style={{ padding: "5px 8px", color: "var(--text-secondary)", fontSize: 10 }}>
+                    {el.type_ref ?? "-"}
+                  </td>
+                  <td style={{ padding: "5px 8px", color: "var(--text-muted)", fontSize: 9, opacity: 0.7 }}>
+                    {el.qualified_name}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* List rendering */}
+      {renderMode === "list" && elements.length > 0 && (
+        <div style={{ padding: "4px 10px" }}>
+          {elements.map(el => (
+            <div
+              key={el.id}
+              onClick={() => onSelectElement(el.id)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                padding: "6px 8px", borderRadius: 4, cursor: "pointer",
+                borderBottom: "1px solid var(--border)",
+              }}
+              onMouseOver={e => (e.currentTarget.style.background = "rgba(59,130,246,0.06)")}
+              onMouseOut={e => (e.currentTarget.style.background = "transparent")}
+            >
+              <span style={{
+                width: 6, height: 6, borderRadius: 3,
+                background: kindColor(kindStr(el.kind)), flexShrink: 0,
+              }} />
+              <span style={{ ...mono, fontWeight: 600, color: kindColor(kindStr(el.kind)) }}>
+                {el.name ?? "<unnamed>"}
+              </span>
+              <span style={{ ...mono, fontSize: 9, color: "var(--text-muted)" }}>
+                {kindStr(el.kind).replace(/_/g, " ")}
+              </span>
+              {el.type_ref && (
+                <span style={{ ...mono, fontSize: 9, color: "var(--text-secondary)", marginLeft: "auto" }}>
+                  : {el.type_ref}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ViewTreeNode({ element, depth, childMap, kindColor, mono, onSelect, onNavigate }: {
+  element: SysmlElement;
+  depth: number;
+  childMap: Map<number, SysmlElement[]>;
+  kindColor: (kind: string) => string;
+  mono: React.CSSProperties;
+  onSelect: (id: number) => void;
+  onNavigate: (line?: number) => void;
+}) {
+  const [expanded, setExpanded] = useState(depth < 3);
+  const children = childMap.get(element.id) ?? [];
+  const hasChildren = children.length > 0;
+  const k = typeof element.kind === "string" ? element.kind : element.kind.other;
+
+  return (
+    <div>
+      <div
+        onClick={() => hasChildren ? setExpanded(!expanded) : onSelect(element.id)}
+        style={{
+          display: "flex", alignItems: "center", gap: 4,
+          padding: "3px 6px", marginLeft: depth * 16, borderRadius: 4,
+          cursor: "pointer",
+        }}
+        onMouseOver={e => (e.currentTarget.style.background = "rgba(59,130,246,0.06)")}
+        onMouseOut={e => (e.currentTarget.style.background = "transparent")}
+      >
+        {hasChildren ? (
+          <span style={{ ...mono, color: "var(--text-muted)", width: 12, flexShrink: 0, userSelect: "none" }}>
+            {expanded ? "▾" : "▸"}
+          </span>
+        ) : (
+          <span style={{ width: 12, flexShrink: 0, display: "flex", justifyContent: "center" }}>
+            <span style={{ width: 4, height: 4, borderRadius: 2, background: kindColor(k) }} />
+          </span>
+        )}
+        <span style={{ ...mono, fontWeight: 600, color: kindColor(k) }}>
+          {element.name ?? "<unnamed>"}
+        </span>
+        <span style={{ ...mono, fontSize: 9, color: "var(--text-muted)" }}>
+          {k.replace(/_/g, " ")}
+        </span>
+        {element.type_ref && (
+          <span style={{ ...mono, fontSize: 9, color: "var(--text-secondary)" }}>: {element.type_ref}</span>
+        )}
+      </div>
+      {expanded && children.map(child => (
+        <ViewTreeNode
+          key={child.id} element={child} depth={depth + 1} childMap={childMap}
+          kindColor={kindColor} mono={mono} onSelect={onSelect} onNavigate={onNavigate}
+        />
+      ))}
+    </div>
   );
 }

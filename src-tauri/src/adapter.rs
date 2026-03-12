@@ -297,11 +297,20 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
         parse_time_ms,
     };
 
+    // --- Views ---
+    let views: Vec<ViewData> = core_model.views.iter().map(|v| ViewData {
+        name: v.name.clone(),
+        exposes: v.exposes.clone(),
+        kind_filters: v.kind_filters.clone(),
+        render_as: None, // sysml-core doesn't extract render clause yet
+    }).collect();
+
     SysmlModel {
         file_path: Some(core_model.file.clone()),
         elements,
         errors,
         stats,
+        views,
     }
 }
 
@@ -502,6 +511,11 @@ fn usage_kind_to_element_kind(kind: &str) -> ElementKind {
         "enum" => ElementKind::EnumMember,
         "transition" => ElementKind::TransitionStatement,
         "succession" => ElementKind::SuccessionUsage,
+        "fork_node" => ElementKind::ForkNode,
+        "join_node" => ElementKind::JoinNode,
+        "merge_node" => ElementKind::MergeNode,
+        "decide_node" => ElementKind::DecideNode,
+        "then_succession" => ElementKind::SuccessionBranch,
         "binding" => ElementKind::BindingUsage,
         "snapshot" => ElementKind::SnapshotUsage,
         "timeslice" => ElementKind::TimesliceUsage,
@@ -537,7 +551,7 @@ fn element_kind_to_category(kind: &ElementKind) -> Category {
         ElementKind::ElseAction | ElementKind::PerformStatement |
         ElementKind::ExhibitStatement | ElementKind::IncludeStatement |
         ElementKind::TerminateStatement | ElementKind::SuccessionUsage |
-        ElementKind::SuccessionFlowUsage => Category::Behavior,
+        ElementKind::SuccessionFlowUsage | ElementKind::SuccessionBranch => Category::Behavior,
 
         ElementKind::RequirementDef | ElementKind::RequirementUsage |
         ElementKind::ConcernDef | ElementKind::ConcernUsage |

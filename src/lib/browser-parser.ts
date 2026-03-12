@@ -4,7 +4,7 @@
  * this regex-based parser provides element extraction so the UI is fully functional.
  */
 import type {
-  SysmlModel, SysmlElement, ElementId, SourceSpan,
+  SysmlModel, SysmlElement, ElementId, SourceSpan, ViewData,
   Category, ParseError, DiagramLayout, DiagramNode, DiagramEdge,
   Compartment, CompletenessReport, TraceabilityEntry, TraceLink,
   ValidationIssue, ValidationReport,
@@ -298,6 +298,34 @@ export function browserParse(source: string): SysmlModel {
     }
   }
 
+  // Post-processing: extract view data (expose/filter/render) from view_def bodies
+  const views: ViewData[] = [];
+  for (const el of ctx.elements) {
+    if (el.kind === "view_def" || el.kind === "view_usage") {
+      const vd: ViewData = { name: el.name ?? "<unnamed>", exposes: [], kind_filters: [], render_as: null };
+      // Scan lines within the element's span for expose/filter/render
+      const startLine = el.span.start_line;
+      const endLine = Math.min(startLine + 50, lines.length); // reasonable body size
+      let braceDepth = 0;
+      for (let j = startLine; j < endLine; j++) {
+        const ln = lines[j].trim();
+        if (ln.includes("{")) braceDepth++;
+        if (ln.includes("}")) braceDepth--;
+        if (braceDepth <= 0 && j > startLine) break;
+
+        const exposeMatch = ln.match(/^expose\s+([\w:.*]+)\s*;/);
+        if (exposeMatch) vd.exposes.push(exposeMatch[1]);
+
+        const filterMatch = ln.match(/^filter\s+@(?:SysML::)?(\w+)\s*;/);
+        if (filterMatch) vd.kind_filters.push(filterMatch[1].toLowerCase());
+
+        const renderMatch = ln.match(/^render\s+(\w+)\s*;/);
+        if (renderMatch) vd.render_as = renderMatch[1];
+      }
+      views.push(vd);
+    }
+  }
+
   const parseTime = performance.now() - start;
   const defs = ctx.elements.filter(e => {
     const k = typeof e.kind === "string" ? e.kind : "";
@@ -320,6 +348,7 @@ export function browserParse(source: string): SysmlModel {
       errors: ctx.errors.length,
       parse_time_ms: parseTime,
     },
+    views,
   };
 }
 

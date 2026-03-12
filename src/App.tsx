@@ -173,12 +173,15 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     action passengerGetOut;
 
     // Declare control flow nodes
+    fork forkBoard;
     join joinBoard;
+    fork forkDrive;
     join joinDrive;
+    fork forkExit;
     join joinExit;
 
     // Phase 1: Boarding — driver and passenger board in parallel
-    first start then fork forkBoard;
+    first start then forkBoard;
       then driverGetIn;
       then passengerGetIn;
     first driverGetIn then joinBoard;
@@ -186,7 +189,7 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
 
     // Phase 2: Safety check, then 3 concurrent driving activities
     first joinBoard then checkSafety;
-    first checkSafety then fork forkDrive;
+    first checkSafety then forkDrive;
       then driveToDestination;
       then providePower;
       then monitorSystems;
@@ -195,7 +198,7 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     first monitorSystems then joinDrive;
 
     // Phase 3: Disembark — driver and passenger exit in parallel
-    first joinDrive then fork forkExit;
+    first joinDrive then forkExit;
       then driverGetOut;
       then passengerGetOut;
     first driverGetOut then joinExit;
@@ -289,6 +292,24 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     doc /* Vehicle design satisfying requirements */
     satisfy MaxSpeed;
     satisfy Efficiency;
+  }
+
+  // User-defined views (SysML v2 §7.18)
+  view def StructureOverview {
+    expose VehicleSystem::**;
+    filter @SysML::PartDef;
+    render asTreeDiagram;
+  }
+
+  view def RequirementsView {
+    expose VehicleSystem::**;
+    filter @SysML::Requirement;
+  }
+
+  view def BehaviorView {
+    expose VehicleSystem::**;
+    filter @SysML::ActionDef;
+    render asTreeDiagram;
   }
 }
 `;
