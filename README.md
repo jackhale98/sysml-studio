@@ -34,6 +34,10 @@ All diagrams support:
 
 ### CRUD Operations
 - Create elements via dialog with category/kind selection, type search, documentation, and parent targeting
+- **50+ element types** across 8 categories: Structure, Behavior, Requirements, Interface, Property, Constraint & Analysis, Relationship, View
+- Specialized forms for transitions (guard/effect), connections, flows, calculations, constraints, requirements, use cases, actions, states, allocations, verifications, views, viewpoints
+- **New element types**: binding connectors, dependencies, if/while/for actions, send/accept actions, perform/exhibit statements, metadata/occurrence definitions
+- Collapsible **Advanced Options** for optional fields: port conjugation (~), redefinition (:>>), subsetting (:>), assert constraints, state entry/do/exit actions, action parameters
 - SearchSelect popup with full-text search and grouping for type/parent selection
 - Nested insertion: automatically converts `;`-terminated usages to `{ }` blocks when adding children
 - Edit element name, type reference, and documentation
@@ -192,7 +196,7 @@ npx tauri android build
 ### Tests
 
 ```bash
-# Frontend tests (7 tests)
+# Frontend tests (101 tests)
 npm test
 
 # Rust tests (28 tests)
@@ -232,10 +236,11 @@ The parser handles the full SysML v2 textual notation grammar including:
 
 - **41 definition types**: part def, port def, action def, state def, requirement def, use case def, constraint def, etc.
 - **28+ usage types**: part, attribute, port, action, state, connection, flow, requirement, etc.
-- **Relationships**: composition, specialization, satisfy, verify, allocate, connect
-- **Behavioral**: state machines, transitions, perform/exhibit statements, control flow
+- **Relationships**: composition, specialization, satisfy, verify, allocate, connect, binding, dependency
+- **Behavioral**: state machines (entry/do/exit actions), transitions (guards/effects), perform/exhibit statements, control flow (if/while/for), send/accept actions
 - **MBSE**: requirements traceability, completeness scoring, impact analysis, validation
-- **Other constructs**: packages, imports, enumerations, doc comments, metadata, visibility modifiers
+- **Advanced features**: port conjugation (~), redefinition (:>>), subsetting (:>), assert constraints, action parameters
+- **Other constructs**: packages, imports, enumerations, doc comments, metadata, occurrences, visibility modifiers
 
 Tested against the official [SysML v2 SimpleVehicleModel.sysml](https://github.com/Systems-Modeling/SysML-v2-Release/blob/main/sysml/src/examples/Vehicle%20Example/) (1580 lines, 946 elements, 0 parse errors).
 
