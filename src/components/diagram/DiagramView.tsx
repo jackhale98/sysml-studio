@@ -3,7 +3,7 @@ import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
 import { computeBddLayout, computeStmLayout, computeReqLayout, computeUcdLayout, computeIbdLayout } from "../../lib/tauri-bridge";
 import type { DiagramLayout, DiagramNode, ViewData, SysmlElement, ElementKind } from "../../lib/element-types";
-import { evaluateView, mergeViewData } from "../../lib/view-evaluator";
+import { evaluateView, mergeViewData, buildInterconnectionLayout } from "../../lib/view-evaluator";
 
 export function DiagramView() {
   const diagramType = useUIStore((s) => s.diagramType);
@@ -51,6 +51,8 @@ export function DiagramView() {
   const [layout, setLayout] = useState<DiagramLayout | null>(null);
   const [zoom, setZoom] = useState(0.85);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
   const [dragging, setDragging] = useState(false);
   const draggingRef = useRef(false);
   const lastPos = useRef<{ x: number; y: number } | null>(null);
@@ -195,26 +197,25 @@ export function DiagramView() {
         lastPinchDist.current = dist;
         const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        // Get pinch center relative to canvas
+        // Zoom toward viewport center
         const rect = el!.getBoundingClientRect();
-        const cx = mx - rect.left;
-        const cy = my - rect.top;
-        // Zoom toward pinch center + pan for finger movement
-        setZoom((oldZ) => {
-          const newZ = Math.min(Math.max(oldZ * scale, 0.2), 2.5);
-          const ratio = newZ / oldZ;
-          setPan((p) => {
-            // Zoom toward pinch center
-            let nx = cx - (cx - p.x) * ratio;
-            let ny = cy - (cy - p.y) * ratio;
-            // Also apply finger pan (midpoint movement)
-            if (lastPos.current) {
-              nx += mx - lastPos.current.x;
-              ny += my - lastPos.current.y;
-            }
-            return { x: nx, y: ny };
-          });
-          return newZ;
+        const cx = rect.width / 2;
+        const cy = rect.height / 2;
+        const oldZ = zoomRef.current;
+        const newZ = Math.min(Math.max(oldZ * scale, 0.2), 2.5);
+        const ratio = newZ / oldZ;
+        zoomRef.current = newZ;
+        setZoom(newZ);
+        const savedLastPos = lastPos.current;
+        setPan((p) => {
+          let nx = cx - (cx - p.x) * ratio;
+          let ny = cy - (cy - p.y) * ratio;
+          // Also apply finger pan (midpoint movement)
+          if (savedLastPos) {
+            nx += mx - savedLastPos.x;
+            ny += my - savedLastPos.y;
+          }
+          return { x: nx, y: ny };
         });
         lastPos.current = { x: mx, y: my };
       }
@@ -388,8 +389,26 @@ export function DiagramView() {
           flexDirection: "column", gap: 4, zIndex: 10,
         }}>
           {[
-            { label: "+", action: () => setZoom((z) => Math.min(z + 0.15, 2.5)) },
-            { label: "−", action: () => setZoom((z) => Math.max(z - 0.15, 0.2)) },
+            { label: "+", action: () => {
+              const rect = canvasRef.current?.getBoundingClientRect();
+              if (!rect) { setZoom(z => Math.min(z + 0.15, 2.5)); return; }
+              const cx = rect.width / 2; const cy = rect.height / 2;
+              const oldZ = zoomRef.current;
+              const newZ = Math.min(oldZ + 0.15, 2.5);
+              const ratio = newZ / oldZ;
+              setZoom(newZ);
+              setPan(p => ({ x: cx - (cx - p.x) * ratio, y: cy - (cy - p.y) * ratio }));
+            }},
+            { label: "−", action: () => {
+              const rect = canvasRef.current?.getBoundingClientRect();
+              if (!rect) { setZoom(z => Math.max(z - 0.15, 0.2)); return; }
+              const cx = rect.width / 2; const cy = rect.height / 2;
+              const oldZ = zoomRef.current;
+              const newZ = Math.max(oldZ - 0.15, 0.2);
+              const ratio = newZ / oldZ;
+              setZoom(newZ);
+              setPan(p => ({ x: cx - (cx - p.x) * ratio, y: cy - (cy - p.y) * ratio }));
+            }},
             { label: "FIT", action: () => {
               if (!layout || !canvasRef.current) { setZoom(0.85); setPan({ x: 0, y: 0 }); return; }
               const rect = canvasRef.current.getBoundingClientRect();
@@ -494,18 +513,17 @@ export function DiagramView() {
           onWheel={(e) => {
             e.preventDefault();
             const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-            const cx = e.clientX - rect.left;
-            const cy = e.clientY - rect.top;
+            const cx = rect.width / 2;
+            const cy = rect.height / 2;
             const factor = e.deltaY > 0 ? 0.9 : 1.1;
-            setZoom((oldZ) => {
-              const newZ = Math.min(Math.max(oldZ * factor, 0.2), 2.5);
-              const ratio = newZ / oldZ;
-              setPan((p) => ({
-                x: cx - (cx - p.x) * ratio,
-                y: cy - (cy - p.y) * ratio,
-              }));
-              return newZ;
-            });
+            const oldZ = zoomRef.current;
+            const newZ = Math.min(Math.max(oldZ * factor, 0.2), 2.5);
+            const ratio = newZ / oldZ;
+            setZoom(newZ);
+            setPan((p) => ({
+              x: cx - (cx - p.x) * ratio,
+              y: cy - (cy - p.y) * ratio,
+            }));
           }}
           onClick={(e) => {
             // Click on empty SVG area clears highlight (desktop)
@@ -1085,9 +1103,9 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
   onSelectElement: (id: number) => void;
   onNavigateToEditor: (line?: number) => void;
 }) {
-  const renderMode: "tree" | "table" | "list" =
+  const renderMode: "tree" | "table" | "list" | "diagram" =
     view.render_as === "asTableDiagram" ? "table"
-    : view.render_as === "asInterconnectionDiagram" ? "table"
+    : view.render_as === "asInterconnectionDiagram" ? "diagram"
     : view.render_as === "asListDiagram" ? "list"
     : "tree";
 
@@ -1122,8 +1140,134 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
     return "var(--text-secondary)";
   };
 
+  // Interconnection diagram layout
+  const diagramLayout = useMemo(() => {
+    if (renderMode !== "diagram") return null;
+    return buildInterconnectionLayout(elements, allElements);
+  }, [renderMode, elements, allElements]);
+
+  const [dZoom, setDZoom] = useState(0.85);
+  const [dPan, setDPan] = useState({ x: 0, y: 0 });
+  const dZoomRef = useRef(dZoom);
+  dZoomRef.current = dZoom;
+  const [dDragging, setDDragging] = useState(false);
+  const dLastPos = useRef<{ x: number; y: number } | null>(null);
+  const dSvgRef = useRef<SVGSVGElement>(null);
+  const dContainerRef = useRef<HTMLDivElement>(null);
+
+  const dLastPinchDist = useRef<number | null>(null);
+  const dTouchStartPos = useRef<{ x: number; y: number } | null>(null);
+  const dDidDrag = useRef(false);
+
+  // Auto-fit diagram on layout change
+  useEffect(() => {
+    if (!diagramLayout || !dContainerRef.current) return;
+    const rect = dContainerRef.current.getBoundingClientRect();
+    const [bMinX, bMinY, bMaxX, bMaxY] = diagramLayout.bounds;
+    const dw = bMaxX - bMinX;
+    const dh = bMaxY - bMinY;
+    if (dw <= 0 || dh <= 0) { setDZoom(0.85); setDPan({ x: 0, y: 0 }); return; }
+    const pad = 40;
+    const fz = Math.min((rect.width - pad * 2) / dw, (rect.height - pad * 2) / dh, 2.0);
+    setDZoom(fz);
+    setDPan({ x: (rect.width - dw * fz) / 2 - bMinX * fz, y: (rect.height - dh * fz) / 2 - bMinY * fz });
+  }, [diagramLayout]);
+
+  // Native touch listeners for custom diagram pinch-to-zoom + pan
+  useEffect(() => {
+    const el = dContainerRef.current;
+    if (!el) return;
+    function dist(t1: Touch, t2: Touch) {
+      const dx = t1.clientX - t2.clientX;
+      const dy = t1.clientY - t2.clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+    function onTouchStart(e: TouchEvent) {
+      if ((e.target as HTMLElement).closest("button")) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.touches.length === 1) {
+        const pos = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        setDDragging(true);
+        dLastPos.current = pos;
+        dTouchStartPos.current = pos;
+        dDidDrag.current = false;
+      } else if (e.touches.length === 2) {
+        setDDragging(false);
+        dDidDrag.current = true;
+        dLastPinchDist.current = dist(e.touches[0], e.touches[1]);
+        dLastPos.current = {
+          x: (e.touches[0].clientX + e.touches[1].clientX) / 2,
+          y: (e.touches[0].clientY + e.touches[1].clientY) / 2,
+        };
+      }
+    }
+    function onTouchMove(e: TouchEvent) {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.touches.length === 1 && dLastPos.current) {
+        const dx = e.touches[0].clientX - dLastPos.current.x;
+        const dy = e.touches[0].clientY - dLastPos.current.y;
+        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dDidDrag.current = true;
+        setDPan(p => ({ x: p.x + dx, y: p.y + dy }));
+        dLastPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      } else if (e.touches.length === 2 && dLastPinchDist.current !== null) {
+        dDidDrag.current = true;
+        const d = dist(e.touches[0], e.touches[1]);
+        const scale = d / dLastPinchDist.current;
+        dLastPinchDist.current = d;
+        const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const rect = el!.getBoundingClientRect();
+        const cx = rect.width / 2;
+        const cy = rect.height / 2;
+        const oldZ = dZoomRef.current;
+        const newZ = Math.min(Math.max(oldZ * scale, 0.2), 2.5);
+        const ratio = newZ / oldZ;
+        dZoomRef.current = newZ;
+        setDZoom(newZ);
+        const saved = dLastPos.current;
+        setDPan(p => {
+          let nx = cx - (cx - p.x) * ratio;
+          let ny = cy - (cy - p.y) * ratio;
+          if (saved) { nx += mx - saved.x; ny += my - saved.y; }
+          return { x: nx, y: ny };
+        });
+        dLastPos.current = { x: mx, y: my };
+      }
+    }
+    function onTouchEnd(e: TouchEvent) {
+      if (e.touches.length === 0) {
+        setDDragging(false);
+        dLastPos.current = null;
+        dLastPinchDist.current = null;
+        dTouchStartPos.current = null;
+      } else if (e.touches.length === 1) {
+        dLastPinchDist.current = null;
+        dLastPos.current = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      }
+    }
+    function onGesture(e: Event) { e.preventDefault(); e.stopPropagation(); }
+    el.addEventListener("touchstart", onTouchStart, { passive: false });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd);
+    el.addEventListener("touchcancel", onTouchEnd);
+    el.addEventListener("gesturestart", onGesture, { passive: false } as any);
+    el.addEventListener("gesturechange", onGesture, { passive: false } as any);
+    el.addEventListener("gestureend", onGesture, { passive: false } as any);
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("gesturestart", onGesture);
+      el.removeEventListener("gesturechange", onGesture);
+      el.removeEventListener("gestureend", onGesture);
+    };
+  }, []);
+
   return (
-    <div style={{ flex: 1, overflow: "auto", background: "var(--bg-primary)" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", background: "var(--bg-primary)" }}>
       {/* View header */}
       <div style={{
         padding: "10px 14px", borderBottom: "1px solid var(--border)",
@@ -1178,7 +1322,7 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
 
       {/* Tree rendering */}
       {renderMode === "tree" && elements.length > 0 && (
-        <div style={{ padding: "8px 10px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "8px 10px" }}>
           {treeRoots.map(root => (
             <ViewTreeNode
               key={root.id} element={root} depth={0} childMap={childMap}
@@ -1191,7 +1335,7 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
 
       {/* Table rendering */}
       {renderMode === "table" && elements.length > 0 && (
-        <div style={{ padding: "8px 10px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "8px 10px" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", ...mono }}>
             <thead>
               <tr style={{ borderBottom: "2px solid var(--border)" }}>
@@ -1234,7 +1378,7 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
 
       {/* List rendering */}
       {renderMode === "list" && elements.length > 0 && (
-        <div style={{ padding: "4px 10px" }}>
+        <div style={{ flex: 1, overflow: "auto", padding: "4px 10px" }}>
           {elements.map(el => (
             <div
               key={el.id}
@@ -1264,6 +1408,166 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Interconnection diagram rendering */}
+      {renderMode === "diagram" && diagramLayout && diagramLayout.nodes.length > 0 && (
+        <div
+          ref={dContainerRef}
+          style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 400, touchAction: "none" }}
+        >
+          <div style={{
+            position: "absolute", inset: 0, opacity: 0.15,
+            backgroundImage: "radial-gradient(circle, #334155 1px, transparent 1px)",
+            backgroundSize: "20px 20px",
+          }} />
+          <div style={{
+            position: "absolute", top: 8, right: 8, display: "flex",
+            flexDirection: "column", gap: 4, zIndex: 10,
+          }}>
+            {[
+              { label: "+", action: () => setDZoom(z => Math.min(z + 0.15, 2.5)) },
+              { label: "−", action: () => setDZoom(z => Math.max(z - 0.15, 0.2)) },
+              { label: "FIT", action: () => {
+                if (!diagramLayout || !dContainerRef.current) return;
+                const rect = dContainerRef.current.getBoundingClientRect();
+                const [bx0, by0, bx1, by1] = diagramLayout.bounds;
+                const dw = bx1 - bx0; const dh = by1 - by0;
+                if (dw <= 0 || dh <= 0) return;
+                const pad = 40;
+                const fz = Math.min((rect.width - pad * 2) / dw, (rect.height - pad * 2) / dh, 2.0);
+                setDZoom(fz);
+                setDPan({ x: (rect.width - dw * fz) / 2 - bx0 * fz, y: (rect.height - dh * fz) / 2 - by0 * fz });
+              }},
+            ].map(btn => (
+              <button key={btn.label} onClick={btn.action} style={{
+                width: 30, height: 30, borderRadius: 6, border: "1px solid var(--border)",
+                background: "var(--bg-tertiary)", color: "var(--text-secondary)",
+                cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center",
+                fontSize: btn.label === "FIT" ? 9 : 16, fontWeight: 700, fontFamily: "var(--font-mono)",
+              }}>{btn.label}</button>
+            ))}
+          </div>
+          <svg
+            ref={dSvgRef}
+            width="100%" height="100%"
+            style={{ cursor: dDragging ? "grabbing" : "grab", touchAction: "none" }}
+            onPointerDown={(e) => {
+              if (e.pointerType === "touch") return;
+              setDDragging(true);
+              dLastPos.current = { x: e.clientX, y: e.clientY };
+              (e.target as Element).setPointerCapture?.(e.pointerId);
+            }}
+            onPointerMove={(e) => {
+              if (e.pointerType === "touch") return;
+              if (dLastPos.current) {
+                setDPan(p => ({ x: p.x + e.clientX - dLastPos.current!.x, y: p.y + e.clientY - dLastPos.current!.y }));
+                dLastPos.current = { x: e.clientX, y: e.clientY };
+              }
+            }}
+            onPointerUp={(e) => {
+              if (e.pointerType === "touch") return;
+              setDDragging(false);
+              dLastPos.current = null;
+              (e.target as Element).releasePointerCapture?.(e.pointerId);
+            }}
+            onWheel={(e) => {
+              e.preventDefault();
+              const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+              const cx = rect.width / 2;
+              const cy = rect.height / 2;
+              const factor = e.deltaY > 0 ? 0.9 : 1.1;
+              const oldZ = dZoomRef.current;
+              const newZ = Math.min(Math.max(oldZ * factor, 0.2), 2.5);
+              const ratio = newZ / oldZ;
+              setDZoom(newZ);
+              setDPan(p => ({ x: cx - (cx - p.x) * ratio, y: cy - (cy - p.y) * ratio }));
+            }}
+          >
+            <defs>
+              <marker id="cv-arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#475569" />
+              </marker>
+              <marker id="cv-diamond" markerWidth="12" markerHeight="8" refX="0" refY="4" orient="auto">
+                <polygon points="0 4, 6 0, 12 4, 6 8" fill="#475569" stroke="#475569" strokeWidth="1" />
+              </marker>
+            </defs>
+            <g transform={`translate(${dPan.x}, ${dPan.y}) scale(${dZoom})`}>
+              {/* Edges */}
+              {diagramLayout.edges.map((edge, i) => {
+                if (edge.points.length < 2) return null;
+                const d = edge.points.map((pt, j) => `${j === 0 ? "M" : "L"} ${pt[0]} ${pt[1]}`).join(" ");
+                const midA = edge.points[Math.floor((edge.points.length - 1) / 2)];
+                const midB = edge.points[Math.ceil((edge.points.length - 1) / 2)];
+                const lx = (midA[0] + midB[0]) / 2;
+                const ly = (midA[1] + midB[1]) / 2;
+                const isComp = edge.edge_type === "composition";
+                const isDashed = edge.edge_type === "satisfy" || edge.edge_type === "verify" || edge.edge_type === "specialization";
+                return (
+                  <g key={`cv-edge-${i}`}>
+                    <path d={d} stroke="#475569" strokeWidth={1.5} fill="none"
+                      strokeDasharray={isDashed ? "6 3" : undefined}
+                      markerEnd={isComp ? undefined : "url(#cv-arrow)"}
+                      markerStart={isComp ? "url(#cv-diamond)" : undefined}
+                    />
+                    {edge.label && (
+                      <text x={lx} y={ly - 6} fill="var(--text-muted)" fontSize="9"
+                        fontFamily="var(--font-mono)" textAnchor="middle">
+                        {edge.edge_type === "satisfy" || edge.edge_type === "verify"
+                          ? `\u00AB${edge.edge_type}\u00BB` : edge.label}
+                      </text>
+                    )}
+                  </g>
+                );
+              })}
+              {/* Nodes */}
+              {diagramLayout.nodes.map(node => {
+                const comps = node.compartments ?? [];
+                return (
+                  <g key={`cv-node-${node.element_id}`}
+                    onClick={() => onSelectElement(node.element_id)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <rect x={node.x} y={node.y} width={node.width} height={node.height}
+                      rx={6} ry={6} fill="var(--bg-tertiary)"
+                      stroke={node.color + "88"} strokeWidth={1.5} />
+                    <rect x={node.x} y={node.y} width={node.width} height={4}
+                      rx={2} fill={node.color} opacity={0.8} />
+                    {node.stereotype && (
+                      <text x={node.x + node.width / 2} y={node.y + 16}
+                        fill={node.color} fontSize="8" fontWeight={700}
+                        fontFamily="var(--font-mono)" textAnchor="middle"
+                        letterSpacing="0.08em">{node.stereotype}</text>
+                    )}
+                    <text x={node.x + node.width / 2} y={node.y + (node.stereotype ? 30 : 20)}
+                      fill="var(--text-secondary)" fontSize="11" fontWeight={600}
+                      fontFamily="var(--font-mono)" textAnchor="middle">{node.label}</text>
+                    {comps.length > 0 && (() => {
+                      let cy = node.y + 38;
+                      return comps.map((comp, ci) => {
+                        const startY = cy;
+                        cy += 16 + comp.entries.length * 14;
+                        return (
+                          <g key={ci}>
+                            <line x1={node.x} y1={startY - 2} x2={node.x + node.width} y2={startY - 2}
+                              stroke={node.color + "44"} strokeWidth={0.5} />
+                            <text x={node.x + 8} y={startY + 10}
+                              fill={node.color} fontSize="8" fontWeight={700}
+                              fontFamily="var(--font-mono)" letterSpacing="0.05em">{comp.heading}</text>
+                            {comp.entries.map((entry, ei) => (
+                              <text key={ei} x={node.x + 10} y={startY + 10 + 14 * (ei + 1)}
+                                fill="var(--text-muted)" fontSize="9" fontFamily="var(--font-mono)">{entry}</text>
+                            ))}
+                          </g>
+                        );
+                      });
+                    })()}
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
         </div>
       )}
     </div>

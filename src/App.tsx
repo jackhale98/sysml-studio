@@ -311,6 +311,17 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     expose VehicleSystem::**;
     filter @SysML::ActionDef;
   }
+
+  view def SystemInterconnection {
+    expose VehicleSystem::Vehicle;
+    expose VehicleSystem::Engine;
+    expose VehicleSystem::Transmission;
+    expose VehicleSystem::BrakeSystem;
+    expose VehicleSystem::ElectricalSystem;
+    expose VehicleSystem::WheelAssembly;
+    expose VehicleSystem::BodyStructure;
+    render asInterconnectionDiagram;
+  }
 }
 `;
 

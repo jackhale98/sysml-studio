@@ -257,21 +257,34 @@ export function CreateElementDialog() {
   }, [model, selectedKind, isDef]);
 
   // Requirement items for satisfy/verify
+  // Items that can be satisfied or verified: requirements, viewpoints, concerns, constraints, use cases
   const requirementItems: SearchSelectItem[] = useMemo(() => {
     if (!model) return [];
+    const satisfiableKinds: Record<string, { group: string; color: string }> = {
+      requirement_def: { group: "Requirements", color: "#ef4444" },
+      requirement_usage: { group: "Requirements", color: "#ef4444" },
+      viewpoint_def: { group: "Viewpoints", color: "#c084fc" },
+      concern_def: { group: "Concerns", color: "#a78bfa" },
+      constraint_def: { group: "Constraints", color: "#f97316" },
+      constraint_usage: { group: "Constraints", color: "#f97316" },
+      use_case_def: { group: "Use Cases", color: "#06b6d4" },
+      use_case_usage: { group: "Use Cases", color: "#06b6d4" },
+    };
     return model.elements
       .filter(e => {
         const k = typeof e.kind === "string" ? e.kind : "";
-        return (k === "requirement_def" || k === "requirement_usage") && e.name;
+        return k in satisfiableKinds && e.name;
       })
       .map(e => {
         const k = typeof e.kind === "string" ? e.kind : "other";
+        const info = satisfiableKinds[k] ?? { group: "Other", color: "var(--text-muted)" };
         return {
           id: e.name!,
           label: e.name!,
           sublabel: e.doc ?? undefined,
           badge: k.replace(/_/g, " "),
-          badgeColor: kindBadgeColor(k),
+          badgeColor: info.color,
+          group: info.group,
         };
       });
   }, [model]);
@@ -382,17 +395,34 @@ export function CreateElementDialog() {
   // Allocation target items (any definition or usage)
   const allocItems: SearchSelectItem[] = useMemo(() => {
     if (!model) return [];
+    // Allocations can link any named element: defs, usages, requirements
+    const allocKindGroups: Record<string, string> = {
+      part_def: "Structure", part_usage: "Structure",
+      action_def: "Behavior", action_usage: "Behavior",
+      state_def: "Behavior", state_usage: "Behavior",
+      requirement_def: "Requirements", requirement_usage: "Requirements",
+      use_case_def: "Behavior", use_case_usage: "Behavior",
+      port_def: "Interface", port_usage: "Interface",
+      item_def: "Structure", item_usage: "Structure",
+      constraint_def: "Constraints", constraint_usage: "Constraints",
+      connection_def: "Interface", interface_def: "Interface",
+      calc_def: "Analysis",
+    };
     return model.elements
       .filter(e => {
         const k = typeof e.kind === "string" ? e.kind : "";
-        return (k.endsWith("_def") || k === "part_usage" || k === "action_usage") && e.name;
+        return k in allocKindGroups && e.name;
       })
-      .map(e => ({
-        id: e.name!,
-        label: e.name!,
-        badge: (typeof e.kind === "string" ? e.kind : "").replace(/_/g, " "),
-        badgeColor: kindBadgeColor(typeof e.kind === "string" ? e.kind : ""),
-      }));
+      .map(e => {
+        const k = typeof e.kind === "string" ? e.kind : "";
+        return {
+          id: e.name!,
+          label: e.name!,
+          badge: k.replace(/_/g, " "),
+          badgeColor: kindBadgeColor(k),
+          group: allocKindGroups[k] ?? "Other",
+        };
+      });
   }, [model]);
 
   function selectedParentId(): number | null {
@@ -663,18 +693,18 @@ export function CreateElementDialog() {
           </>
         )}
 
-        {/* 2. Satisfy/Verify: requirement picker */}
+        {/* 2. Satisfy/Verify: requirement/viewpoint/constraint/use case picker */}
         {isSatisfyOrVerify && (
           <>
             <label style={labelStyle}>
-              Requirement to {selectedKind === "satisfy_statement" ? "satisfy" : "verify"}
+              {selectedKind === "satisfy_statement" ? "Element to satisfy" : "Element to verify"}
             </label>
             <SearchSelect
               items={requirementItems}
               value={name}
               onChange={setName}
-              placeholder="Select a requirement..."
-              title="Select Requirement"
+              placeholder="Search requirements, viewpoints, constraints..."
+              title={selectedKind === "satisfy_statement" ? "Select Element to Satisfy" : "Select Element to Verify"}
               allowCustom
             />
             <div style={{ height: 10 }} />
@@ -1341,92 +1371,13 @@ export function CreateElementDialog() {
 
         {/* 15. View Definition */}
         {isViewDef && (
-          <>
-            <label style={labelStyle}>Name</label>
-            <input
-              style={inputStyle}
-              placeholder="StructureOverview"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoCapitalize="none"
-              autoCorrect="off"
-            />
-            <div style={{ height: 10 }} />
-            <label style={labelStyle}>Expose Patterns</label>
-            <span style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", display: "block", marginBottom: 4 }}>
-              Qualified name patterns — use ::* (one level) or ::** (recursive)
-            </span>
-            {exposePatterns.map((p, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                <input
-                  style={{ ...inputStyle, flex: 1 }}
-                  placeholder="e.g. VehicleSystem::**"
-                  value={p}
-                  onChange={(e) => {
-                    const next = [...exposePatterns];
-                    next[i] = e.target.value;
-                    setExposePatterns(next);
-                  }}
-                />
-                <button
-                  onClick={() => setExposePatterns(exposePatterns.filter((_, j) => j !== i))}
-                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
-                >
-                  X
-                </button>
-              </div>
-            ))}
-            <button
-              onClick={() => setExposePatterns([...exposePatterns, ""])}
-              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
-            >
-              + Add Expose Pattern
-            </button>
-
-            <label style={labelStyle}>Kind Filters</label>
-            <span style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", display: "block", marginBottom: 4 }}>
-              SysML element types to include (e.g. PartDef, Requirement)
-            </span>
-            {kindFilters.map((f, i) => (
-              <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                <input
-                  style={{ ...inputStyle, flex: 1 }}
-                  placeholder="e.g. PartDef"
-                  value={f}
-                  onChange={(e) => {
-                    const next = [...kindFilters];
-                    next[i] = e.target.value;
-                    setKindFilters(next);
-                  }}
-                />
-                <button
-                  onClick={() => setKindFilters(kindFilters.filter((_, j) => j !== i))}
-                  style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
-                >
-                  X
-                </button>
-              </div>
-            ))}
-            <button
-              onClick={() => setKindFilters([...kindFilters, ""])}
-              style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
-            >
-              + Add Kind Filter
-            </button>
-
-            <label style={labelStyle}>Render As (optional)</label>
-            <select
-              style={{ ...inputStyle, appearance: "auto" }}
-              value={renderAs}
-              onChange={(e) => setRenderAs(e.target.value)}
-            >
-              <option value="">Default</option>
-              <option value="asTreeDiagram">Tree Diagram</option>
-              <option value="asTableDiagram">Table</option>
-              <option value="asInterconnectionDiagram">Interconnection Diagram</option>
-            </select>
-            <div style={{ height: 10 }} />
-          </>
+          <ViewDefForm
+            name={name} setName={setName}
+            exposePatterns={exposePatterns} setExposePatterns={setExposePatterns}
+            kindFilters={kindFilters} setKindFilters={setKindFilters}
+            renderAs={renderAs} setRenderAs={setRenderAs}
+            model={model}
+          />
         )}
 
         {/* 16. Viewpoint Definition */}
@@ -1821,5 +1772,177 @@ export function CreateElementDialog() {
         </button>
       </div>
     </div>
+  );
+}
+
+// ─── View Definition Form ───
+
+const KIND_FILTER_ITEMS: SearchSelectItem[] = [
+  // Structure
+  { id: "PartDef", label: "Part Definition", badge: "structure", badgeColor: "#3b82f6", group: "Structure" },
+  { id: "Part", label: "Part (Def + Usage)", badge: "structure", badgeColor: "#3b82f6", group: "Structure" },
+  { id: "PortDef", label: "Port Definition", badge: "structure", badgeColor: "#8b5cf6", group: "Structure" },
+  { id: "Port", label: "Port (Def + Usage)", badge: "structure", badgeColor: "#8b5cf6", group: "Structure" },
+  { id: "AttributeDef", label: "Attribute Definition", badge: "structure", badgeColor: "#f59e0b", group: "Structure" },
+  { id: "Attribute", label: "Attribute (Def + Usage)", badge: "structure", badgeColor: "#f59e0b", group: "Structure" },
+  { id: "ItemDef", label: "Item Definition", badge: "structure", badgeColor: "#6366f1", group: "Structure" },
+  { id: "Item", label: "Item (Def + Usage)", badge: "structure", badgeColor: "#6366f1", group: "Structure" },
+  { id: "EnumerationDef", label: "Enumeration", badge: "structure", badgeColor: "#10b981", group: "Structure" },
+  // Behavior
+  { id: "ActionDef", label: "Action Definition", badge: "behavior", badgeColor: "#c084fc", group: "Behavior" },
+  { id: "Action", label: "Action (Def + Usage)", badge: "behavior", badgeColor: "#c084fc", group: "Behavior" },
+  { id: "StateDef", label: "State Definition", badge: "behavior", badgeColor: "#c084fc", group: "Behavior" },
+  { id: "State", label: "State (Def + Usage)", badge: "behavior", badgeColor: "#c084fc", group: "Behavior" },
+  { id: "CalcDef", label: "Calculation", badge: "behavior", badgeColor: "#f97316", group: "Behavior" },
+  { id: "FlowUsage", label: "Flow", badge: "behavior", badgeColor: "#c084fc", group: "Behavior" },
+  // Requirement
+  { id: "RequirementDef", label: "Requirement Definition", badge: "requirement", badgeColor: "#ef4444", group: "Requirement" },
+  { id: "Requirement", label: "Requirement (Def + Usage)", badge: "requirement", badgeColor: "#ef4444", group: "Requirement" },
+  { id: "ConstraintDef", label: "Constraint Definition", badge: "requirement", badgeColor: "#f97316", group: "Requirement" },
+  { id: "Constraint", label: "Constraint (Def + Usage)", badge: "requirement", badgeColor: "#f97316", group: "Requirement" },
+  { id: "UseCaseDef", label: "Use Case Definition", badge: "requirement", badgeColor: "#06b6d4", group: "Requirement" },
+  { id: "UseCase", label: "Use Case (Def + Usage)", badge: "requirement", badgeColor: "#06b6d4", group: "Requirement" },
+  // Interconnection
+  { id: "ConnectionDef", label: "Connection Definition", badge: "connection", badgeColor: "#f472b6", group: "Interconnection" },
+  { id: "Connection", label: "Connection (Def + Statement)", badge: "connection", badgeColor: "#f472b6", group: "Interconnection" },
+  { id: "InterfaceDef", label: "Interface Definition", badge: "connection", badgeColor: "#14b8a6", group: "Interconnection" },
+  { id: "Interface", label: "Interface (Def + Usage)", badge: "connection", badgeColor: "#14b8a6", group: "Interconnection" },
+  { id: "AllocationDef", label: "Allocation Definition", badge: "connection", badgeColor: "#a78bfa", group: "Interconnection" },
+  { id: "Allocation", label: "Allocation (Def + Usage)", badge: "connection", badgeColor: "#a78bfa", group: "Interconnection" },
+  // View
+  { id: "ViewDef", label: "View Definition", badge: "view", badgeColor: "#c084fc", group: "View" },
+];
+
+function ViewDefForm({ name, setName, exposePatterns, setExposePatterns, kindFilters, setKindFilters, renderAs, setRenderAs, model }: {
+  name: string; setName: (v: string) => void;
+  exposePatterns: string[]; setExposePatterns: (v: string[]) => void;
+  kindFilters: string[]; setKindFilters: (v: string[]) => void;
+  renderAs: string; setRenderAs: (v: string) => void;
+  model: ReturnType<typeof useModelStore.getState>["model"];
+}) {
+  // Build expose suggestions from model's qualified names
+  const exposeItems: SearchSelectItem[] = useMemo(() => {
+    if (!model) return [];
+    const seen = new Set<string>();
+    const items: SearchSelectItem[] = [];
+    const addItem = (id: string, label: string, badge: string, badgeColor: string, group: string) => {
+      if (seen.has(id)) return;
+      seen.add(id);
+      items.push({ id, label, badge, badgeColor, group });
+    };
+    for (const el of model.elements) {
+      if (!el.qualified_name) continue;
+      const k = typeof el.kind === "string" ? el.kind : "";
+      const isPackage = k === "package";
+      const isDef = k.endsWith("_def");
+      const color = isPackage ? "#94a3b8" : isDef ? "#3b82f6" : "#10b981";
+      const badge = isPackage ? "package" : k.replace(/_/g, " ");
+      // Exact match
+      addItem(el.qualified_name, el.qualified_name, badge, color, "Exact Match");
+      // Wildcard patterns for containers
+      if (isPackage || isDef) {
+        addItem(el.qualified_name + "::*", el.qualified_name + "::*", "one level", "#f59e0b", "Wildcard Pattern");
+        addItem(el.qualified_name + "::**", el.qualified_name + "::**", "recursive", "#ef4444", "Wildcard Pattern");
+      }
+    }
+    return items;
+  }, [model]);
+
+  return (
+    <>
+      <label style={labelStyle}>Name</label>
+      <input
+        style={inputStyle}
+        placeholder="StructureOverview"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        autoCapitalize="none"
+        autoCorrect="off"
+      />
+      <div style={{ height: 10 }} />
+
+      <label style={labelStyle}>Expose Patterns</label>
+      <span style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", display: "block", marginBottom: 4 }}>
+        Select elements or scope patterns to include in this view
+      </span>
+      {exposePatterns.map((p, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <SearchSelect
+              items={exposeItems}
+              value={p}
+              onChange={(v) => {
+                const next = [...exposePatterns];
+                next[i] = v;
+                setExposePatterns(next);
+              }}
+              placeholder="Search elements..."
+              title="Select Expose Pattern"
+              allowCustom
+            />
+          </div>
+          <button
+            onClick={() => setExposePatterns(exposePatterns.filter((_, j) => j !== i))}
+            style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+          >
+            X
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={() => setExposePatterns([...exposePatterns, ""])}
+        style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+      >
+        + Add Expose Pattern
+      </button>
+
+      <label style={labelStyle}>Kind Filters</label>
+      <span style={{ fontSize: 9, color: "var(--text-muted)", fontFamily: "var(--font-mono)", display: "block", marginBottom: 4 }}>
+        SysML element types to include
+      </span>
+      {kindFilters.map((f, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+          <div style={{ flex: 1 }}>
+            <SearchSelect
+              items={KIND_FILTER_ITEMS}
+              value={f}
+              onChange={(v) => {
+                const next = [...kindFilters];
+                next[i] = v;
+                setKindFilters(next);
+              }}
+              placeholder="Search types..."
+              title="Select Kind Filter"
+              allowCustom
+            />
+          </div>
+          <button
+            onClick={() => setKindFilters(kindFilters.filter((_, j) => j !== i))}
+            style={{ ...smallBtnStyle, padding: "4px 8px", minHeight: 36, color: "var(--error)" }}
+          >
+            X
+          </button>
+        </div>
+      ))}
+      <button
+        onClick={() => setKindFilters([...kindFilters, ""])}
+        style={{ ...smallBtnStyle, width: "100%", marginBottom: 10 }}
+      >
+        + Add Kind Filter
+      </button>
+
+      <label style={labelStyle}>Render As (optional)</label>
+      <select
+        style={{ ...inputStyle, appearance: "auto" }}
+        value={renderAs}
+        onChange={(e) => setRenderAs(e.target.value)}
+      >
+        <option value="">Default (Tree)</option>
+        <option value="asTreeDiagram">Tree Diagram</option>
+        <option value="asTableDiagram">Table</option>
+        <option value="asInterconnectionDiagram">Interconnection Diagram</option>
+      </select>
+      <div style={{ height: 10 }} />
+    </>
   );
 }
