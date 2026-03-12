@@ -192,15 +192,30 @@ export function DiagramView() {
         didDrag.current = true;
         const dist = getTouchDist(e.touches[0], e.touches[1]);
         const scale = dist / lastPinchDist.current;
-        setZoom((z) => Math.min(Math.max(z * scale, 0.2), 2.5));
         lastPinchDist.current = dist;
         const mx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const my = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        if (lastPos.current) {
-          const dx = mx - lastPos.current.x;
-          const dy = my - lastPos.current.y;
-          setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
-        }
+        // Get pinch center relative to canvas
+        const rect = el!.getBoundingClientRect();
+        const cx = mx - rect.left;
+        const cy = my - rect.top;
+        // Zoom toward pinch center + pan for finger movement
+        setZoom((oldZ) => {
+          const newZ = Math.min(Math.max(oldZ * scale, 0.2), 2.5);
+          const ratio = newZ / oldZ;
+          setPan((p) => {
+            // Zoom toward pinch center
+            let nx = cx - (cx - p.x) * ratio;
+            let ny = cy - (cy - p.y) * ratio;
+            // Also apply finger pan (midpoint movement)
+            if (lastPos.current) {
+              nx += mx - lastPos.current.x;
+              ny += my - lastPos.current.y;
+            }
+            return { x: nx, y: ny };
+          });
+          return newZ;
+        });
         lastPos.current = { x: mx, y: my };
       }
     }
@@ -478,8 +493,19 @@ export function DiagramView() {
           onPointerUp={handlePointerUp}
           onWheel={(e) => {
             e.preventDefault();
-            const delta = e.deltaY > 0 ? -0.08 : 0.08;
-            setZoom((z) => Math.min(Math.max(z + delta, 0.2), 2.5));
+            const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+            const cx = e.clientX - rect.left;
+            const cy = e.clientY - rect.top;
+            const factor = e.deltaY > 0 ? 0.9 : 1.1;
+            setZoom((oldZ) => {
+              const newZ = Math.min(Math.max(oldZ * factor, 0.2), 2.5);
+              const ratio = newZ / oldZ;
+              setPan((p) => ({
+                x: cx - (cx - p.x) * ratio,
+                y: cy - (cy - p.y) * ratio,
+              }));
+              return newZ;
+            });
           }}
           onClick={(e) => {
             // Click on empty SVG area clears highlight (desktop)

@@ -301,15 +301,15 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     render asTreeDiagram;
   }
 
-  view def RequirementsView {
+  view def ComponentInventory {
     expose VehicleSystem::**;
-    filter @SysML::Requirement;
+    filter @SysML::Part;
+    render asTableDiagram;
   }
 
   view def BehaviorView {
     expose VehicleSystem::**;
     filter @SysML::ActionDef;
-    render asTreeDiagram;
   }
 }
 `;
