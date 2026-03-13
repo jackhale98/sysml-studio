@@ -65,7 +65,7 @@ const USAGE_PATTERNS: [RegExp, string, Category][] = [
 ];
 
 const OTHER_PATTERNS: [RegExp, string, Category][] = [
-  [/^transition\s+(?:(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s*(?:accept\s+(\w+))?\s*(?:if\s+(.+?)\s+)?(?:do\s+(\w+)\s+)?then\s+(\w+))?/, "transition_statement", "behavior"],
+  [/^transition\s+(?:(?!first\b)(\w+)(?:\s|;|$))?\s*(?:first\s+(\w+)\s*(?:accept\s+(\w+)\s*)?(?:if\s+(.+?)\s+)?(?:do\s+(\w+)\s+)?then\s+(\w+))?/, "transition_statement", "behavior"],
   [/^satisfy\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "satisfy_statement", "requirement"],
   [/^verify\s+([\w:]+)(?:\s+by\s+([\w:]+))?/, "verify_statement", "analysis"],
   [/^(?:public\s+)?import\s+/, "import", "auxiliary"],
@@ -709,7 +709,33 @@ export function browserStmLayout(model: SysmlModel, stateDefName: string): Diagr
     };
   });
 
+  // Add initial pseudo-state node
+  const initialId = 4294967295; // u32::MAX
+  if (states.length > 0) {
+    const firstState = nodes[0];
+    nodes.push({
+      element_id: initialId,
+      label: "",
+      kind: "initial_state",
+      x: firstState.x + firstState.width / 2 - 10,
+      y: firstState.y - 50,
+      width: 20, height: 20,
+      color: "#e2e8f0", children: [],
+    });
+  }
+
   const edges: DiagramEdge[] = [];
+
+  // Connect initial state to first state
+  if (states.length > 0) {
+    const firstNode = nodes[0];
+    edges.push({
+      from_id: initialId, to_id: firstNode.element_id,
+      label: null, edge_type: "transition",
+      points: [[firstNode.x + firstNode.width / 2, firstNode.y - 30], [firstNode.x + firstNode.width / 2, firstNode.y]],
+    });
+  }
+
   for (const t of transitions) {
     let fromLabel: string | null = null;
     let toLabel: string | null = null;

@@ -436,8 +436,10 @@ export function browserListActions(model: SysmlModel | null): ActionModel[] {
             return chain.length === 1 ? chain[0] : { Sequence: { steps: chain } };
           });
           result.push({ Fork: { name: node, branches: branchSteps } });
-          // Find the join that follows
+          // Find the join that follows by tracing any branch to a join
+          let joinFound = false;
           for (const t of targets) {
+            if (joinFound) break;
             let cur = t;
             while (cur && !joinNames.has(cur)) {
               const next = adj.get(cur);
@@ -450,7 +452,7 @@ export function browserListActions(model: SysmlModel | null): ActionModel[] {
               for (const aj of afterJoin) {
                 result.push(...buildSteps(aj));
               }
-              break;
+              joinFound = true;
             }
           }
         } else if (actionNames.has(node)) {

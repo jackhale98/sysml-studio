@@ -3045,7 +3045,7 @@ dependencies = [
 [[package]]
 name = "sysml-core"
 version = "0.3.0"
-source = "git+https://github.com/jackhale98/sysml-cli?branch=main#85651218841cc1a1288d00485b3c6cf344fb0d07"
+source = "git+https://github.com/jackhale98/sysml-cli?branch=main#4ab73ee53befb4c4071fc4100bb9ed09fba12ae3"
 dependencies = [
  "cc",
  "serde",
@@ -3055,7 +3055,7 @@ dependencies = [
 
 [[package]]
 name = "sysml-studio"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "serde",
  "serde_json",

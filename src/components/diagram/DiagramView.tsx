@@ -778,13 +778,17 @@ export function DiagramView() {
                       fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"} fontSize="12"
                       fontWeight={600} fontFamily="var(--font-mono)"
                       textAnchor="middle">{node.label}</text>
-                    {docText && (
-                      <text x={node.x + node.width / 2} y={node.y + 48}
-                        fill="var(--text-muted)" fontSize="8" fontFamily="var(--font-mono)"
-                        textAnchor="middle" fontStyle="italic">
-                        {docText.length > 40 ? docText.slice(0, 37) + "..." : docText}
-                      </text>
-                    )}
+                    {docText && (() => {
+                      const maxChars = Math.max(Math.floor((node.width - 16) / 4.8), 10);
+                      const truncated = docText.length > maxChars ? docText.slice(0, maxChars - 3) + "..." : docText;
+                      return (
+                        <text x={node.x + node.width / 2} y={node.y + 48}
+                          fill="var(--text-muted)" fontSize="8" fontFamily="var(--font-mono)"
+                          textAnchor="middle" fontStyle="italic">
+                          {truncated}
+                        </text>
+                      );
+                    })()}
                   </g>
                 );
               }
@@ -1411,7 +1415,27 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
         </div>
       )}
 
-      {/* Interconnection diagram rendering */}
+      {/* Interconnection diagram rendering — fall back to list if no nodes */}
+      {renderMode === "diagram" && (!diagramLayout || diagramLayout.nodes.length === 0) && elements.length > 0 && (
+        <div style={{ padding: 14 }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)", marginBottom: 10 }}>
+            No diagram nodes generated. Showing element list:
+          </div>
+          {elements.map(el => (
+            <div key={el.id} style={{
+              padding: "6px 10px", marginBottom: 4, borderRadius: 6,
+              background: "var(--bg-primary)", border: "1px solid var(--border)",
+              fontSize: 12, fontFamily: "var(--font-mono)", color: "var(--text-secondary)",
+            }}>
+              <span style={{ color: "var(--text-muted)", fontSize: 9, marginRight: 6 }}>
+                {typeof el.kind === "string" ? el.kind.replace(/_/g, " ") : ""}
+              </span>
+              {el.name ?? "<unnamed>"}
+              {el.type_ref && <span style={{ color: "var(--text-muted)" }}> : {el.type_ref}</span>}
+            </div>
+          ))}
+        </div>
+      )}
       {renderMode === "diagram" && diagramLayout && diagramLayout.nodes.length > 0 && (
         <div
           ref={dContainerRef}

@@ -147,11 +147,11 @@ function BomPanel() {
   return (
     <div>
       {/* Controls row */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
         <select
           value={scopeName}
           onChange={(e) => setScopeName(e.target.value)}
-          style={selectStyle}
+          style={{ ...selectStyle, minWidth: 0 }}
         >
           <option value="">All top-level parts</option>
           {scopeTargets.map((n) => <option key={n} value={n}>{n}</option>)}
@@ -159,14 +159,14 @@ function BomPanel() {
         <select
           value={rollupKey}
           onChange={(e) => setRollupKey(e.target.value)}
-          style={{ ...selectStyle, flex: "none", minWidth: 100 }}
+          style={{ ...selectStyle, flex: "none", minWidth: 80 }}
         >
           {attrKeys.map((k) => <option key={k} value={k}>{k}</option>)}
         </select>
         <button onClick={refresh} style={{
           padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)",
           background: "var(--accent)", color: "#fff", fontSize: 11, fontWeight: 600,
-          fontFamily: "var(--font-mono)", cursor: "pointer", flexShrink: 0,
+          fontFamily: "var(--font-mono)", cursor: "pointer",
         }}>
           {loading ? "..." : "Refresh"}
         </button>

@@ -82,6 +82,12 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
         }
 
         let kind = usage_kind_to_element_kind(&usage.kind);
+        // For transitions, value_expr holds the source state from "first" clause
+        let specializations = if kind == ElementKind::TransitionStatement {
+            usage.value_expr.iter().cloned().collect()
+        } else {
+            vec![]
+        };
         elements.push(SysmlElement {
             id,
             kind: kind.clone(),
@@ -94,7 +100,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             children_ids: vec![],
             span: convert_span(&usage.span),
             type_ref: usage.type_ref.clone(),
-            specializations: vec![],
+            specializations,
             modifiers: {
                 let mut m = Vec::new();
                 if let Some(ref d) = usage.direction { m.push(d.label().to_string()); }
@@ -105,7 +111,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
             multiplicity: usage.multiplicity.as_ref().map(|m| m.to_string()),
             doc: None,
             short_name: usage.short_name.clone(),
-            value_expr: usage.value_expr.clone(),
+            value_expr: if kind == ElementKind::TransitionStatement { None } else { usage.value_expr.clone() },
         });
     }
 
@@ -302,7 +308,7 @@ pub fn convert_model(core_model: &Model, parse_time_ms: f64) -> SysmlModel {
         name: v.name.clone(),
         exposes: v.exposes.clone(),
         kind_filters: v.kind_filters.clone(),
-        render_as: None, // sysml-core doesn't extract render clause yet
+        render_as: v.render_as.clone(),
     }).collect();
 
     SysmlModel {
