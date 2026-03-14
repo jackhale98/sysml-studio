@@ -736,41 +736,6 @@ describe("insertElement", () => {
   });
 });
 
-// ─── Browser Parser Short Name Tests ───
-
-describe("browserParse short name handling", () => {
-  // Dynamic import since browserParse is in a separate module
-  let browserParse: typeof import("../browser-parser").browserParse;
-
-  beforeAll(async () => {
-    const mod = await import("../browser-parser");
-    browserParse = mod.browserParse;
-  });
-
-  it("parses definition with short name", () => {
-    const model = browserParse("part def Vehicle <V001> {\n}");
-    const el = model.elements.find(e => e.name === "Vehicle");
-    expect(el).toBeDefined();
-    expect(el!.short_name).toBe("V001");
-    expect(el!.kind).toBe("part_def");
-  });
-
-  it("parses usage with short name and type ref", () => {
-    const source = "package P {\n  part engine <E001> : Engine;\n}";
-    const model = browserParse(source);
-    const el = model.elements.find(e => e.name === "engine");
-    expect(el).toBeDefined();
-    expect(el!.short_name).toBe("E001");
-    expect(el!.type_ref).toBe("Engine");
-  });
-
-  it("parses elements without short name (short_name is null)", () => {
-    const model = browserParse("part def Vehicle {\n}");
-    const el = model.elements.find(e => e.name === "Vehicle");
-    expect(el).toBeDefined();
-    expect(el!.short_name).toBeNull();
-  });
-});
 
 // ─── editElement ───
 

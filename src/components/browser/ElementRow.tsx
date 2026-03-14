@@ -272,6 +272,11 @@ export function ElementRow({ element, depth, hasChildren, expanded, onToggle, se
                 {" : "}{element.type_ref}
               </span>
             )}
+            {element.value_expr && (
+              <span style={{ color: "var(--accent)", fontWeight: 400 }}>
+                {" = "}{element.value_expr}
+              </span>
+            )}
           </div>
         </div>
         <TypeBadge kind={kindStr} />

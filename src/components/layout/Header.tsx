@@ -4,7 +4,6 @@ import { useUIStore } from "../../stores/ui-store";
 import { pickFile, readBrowserFile } from "../../lib/tauri-bridge";
 import { SAMPLE_SOURCE } from "../../App";
 
-const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 export function Header() {
@@ -36,7 +35,7 @@ export function Header() {
   }
 
   async function handleOpen() {
-    if (isTauri && !isMobile) {
+    if (!isMobile) {
       const path = await pickFile();
       if (path) await loadFile(path);
     } else {
@@ -45,7 +44,7 @@ export function Header() {
     setDrawerOpen(false);
   }
 
-  async function handleBrowserFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleMobileFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const source = await readBrowserFile(file);
@@ -55,21 +54,12 @@ export function Header() {
   }
 
   async function handleSave() {
-    if (filePath && isTauri && !isMobile) {
+    if (filePath) {
       await saveCurrentFile();
-    } else if (isTauri && !isMobile) {
+    } else {
       const { pickSaveFile } = await import("../../lib/tauri-bridge");
       const path = await pickSaveFile("model.sysml");
       if (path) await saveAs(path);
-    } else {
-      const source = activeFile?.source ?? "";
-      const blob = new Blob([source], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = fileName;
-      a.click();
-      URL.revokeObjectURL(url);
     }
   }
 
@@ -105,7 +95,7 @@ export function Header() {
           type="file"
           accept=".sysml,.sysml2,.txt"
           style={{ display: "none" }}
-          onChange={handleBrowserFileChange}
+          onChange={handleMobileFileChange}
           multiple
         />
 

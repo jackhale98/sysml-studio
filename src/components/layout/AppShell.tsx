@@ -15,7 +15,6 @@ import { useModelStore } from "../../stores/model-store";
 import { pickFile, readBrowserFile } from "../../lib/tauri-bridge";
 import { SAMPLE_SOURCE } from "../../App";
 
-const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 function WelcomeScreen() {
@@ -24,7 +23,7 @@ function WelcomeScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   async function handleOpen() {
-    if (isTauri && !isMobile) {
+    if (!isMobile) {
       const path = await pickFile();
       if (path) await loadFile(path);
     } else {
@@ -32,11 +31,10 @@ function WelcomeScreen() {
     }
   }
 
-  async function handleBrowserFile(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleMobileFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const { readBrowserFile: readFile } = await import("../../lib/tauri-bridge");
-    const source = await readFile(file);
+    const source = await readBrowserFile(file);
     await loadSource(source, file.name);
     e.target.value = "";
   }
@@ -53,7 +51,7 @@ function WelcomeScreen() {
       alignItems: "center", justifyContent: "center", gap: 20, padding: 32,
     }}>
       <input ref={fileInputRef} type="file" accept=".sysml,.sysml2,.txt"
-        style={{ display: "none" }} onChange={handleBrowserFile} />
+        style={{ display: "none" }} onChange={handleMobileFile} />
 
       <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1" opacity="0.3">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />

@@ -1,10 +1,7 @@
 import React, { useEffect } from "react";
 import { AppShell } from "./components/layout/AppShell";
-import { useModelStore } from "./stores/model-store";
 import { useUIStore } from "./stores/ui-store";
 import "./styles/globals.css";
-
-const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
 
 // Sample SysML source for development/demo
 export const SAMPLE_SOURCE = `package VehicleSystem {
@@ -326,21 +323,12 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
 `;
 
 function App() {
-  const loadSource = useModelStore((s) => s.loadSource);
   const theme = useUIStore((s) => s.theme);
 
   // Apply theme to document on mount and changes
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
-
-  useEffect(() => {
-    // Browser mode: load demo content so users can explore without files
-    // Tauri app: start empty — user must open or create a file
-    if (!isTauri) {
-      loadSource(SAMPLE_SOURCE);
-    }
-  }, [loadSource]);
 
   return <AppShell />;
 }
