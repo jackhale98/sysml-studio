@@ -7,7 +7,6 @@ import {
   insertElement,
   getInsertTargets,
 } from "../../lib/source-editor";
-import { TypeBadge } from "../shared/TypeBadge";
 import { SearchSelect } from "../shared/SearchSelect";
 import type { SearchSelectItem } from "../shared/SearchSelect";
 import { SYSML_STDLIB_TYPES, TYPE_COLORS } from "../../lib/constants";
@@ -761,49 +760,33 @@ export function CreateElementDialog() {
           </button>
         </div>
 
-        {/* Category chips */}
-        <label style={labelStyle}>Category</label>
-        <div style={{
-          display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12,
-        }}>
-          {CREATE_OPTIONS.map((cat, i) => (
-            <button
-              key={cat.category}
-              onClick={() => { setSelectedCategory(i); setSelectedKind(""); }}
-              style={{
-                padding: "5px 9px", borderRadius: 6, fontSize: 10, fontWeight: 600,
-                fontFamily: "var(--font-mono)", cursor: "pointer", border: "none",
-                background: selectedCategory === i ? "var(--accent)" : "var(--bg-tertiary)",
-                color: selectedCategory === i ? "#fff" : "var(--text-muted)",
-                minHeight: 28,
-              }}
+        {/* Category & Type selectors */}
+        <div style={{ display: "flex", gap: 10, marginBottom: 12 }}>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Category</label>
+            <select
+              value={selectedCategory}
+              onChange={(e) => { setSelectedCategory(Number(e.target.value)); setSelectedKind(""); }}
+              style={inputStyle}
             >
-              {cat.category}
-            </button>
-          ))}
-        </div>
-
-        {/* Kind selector */}
-        <label style={labelStyle}>Element Type</label>
-        <div style={{
-          display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 12,
-        }}>
-          {category?.items.map((item) => (
-            <button
-              key={item.kind}
-              onClick={() => setSelectedKind(item.kind)}
-              style={{
-                padding: "6px 10px", borderRadius: 6, fontSize: 10, fontWeight: 600,
-                fontFamily: "var(--font-mono)", cursor: "pointer",
-                border: selectedKind === item.kind ? "1.5px solid var(--accent)" : "1.5px solid var(--border)",
-                background: selectedKind === item.kind ? "rgba(59,130,246,0.13)" : "var(--bg-primary)",
-                color: selectedKind === item.kind ? "var(--accent-hover)" : "var(--text-secondary)",
-                minHeight: 32,
-              }}
+              {CREATE_OPTIONS.map((cat, i) => (
+                <option key={cat.category} value={i}>{cat.category}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={labelStyle}>Element Type</label>
+            <select
+              value={selectedKind}
+              onChange={(e) => setSelectedKind(e.target.value)}
+              style={inputStyle}
             >
-              {item.label}
-            </button>
-          ))}
+              <option value="">Select type...</option>
+              {category?.items.map((item) => (
+                <option key={item.kind} value={item.kind}>{item.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* ─── Form fields (varies by kind) ─── */}
