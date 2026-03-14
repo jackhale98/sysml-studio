@@ -37,6 +37,7 @@ export function EditElementDialog() {
   const [typeRef, setTypeRef] = useState(element?.type_ref ?? "");
   const [doc, setDoc] = useState(element?.doc ?? "");
   const [shortName, setShortName] = useState(element?.short_name ?? "");
+  const [valueExpr, setValueExpr] = useState(element?.value_expr ?? "");
 
   const typeItems: SearchSelectItem[] = useMemo(() => {
     const modelDefs = model
@@ -70,19 +71,22 @@ export function EditElementDialog() {
   if (!element) return null;
 
   const kindStr = typeof element.kind === "string" ? element.kind : "other";
+  const isAttribute = typeof element.kind === "string" && element.kind === "attribute_usage";
   const hasChanged = name !== (element.name ?? "") ||
     typeRef !== (element.type_ref ?? "") ||
     doc !== (element.doc ?? "") ||
-    shortName !== (element.short_name ?? "");
+    shortName !== (element.short_name ?? "") ||
+    valueExpr !== (element.value_expr ?? "");
 
   function handleSave() {
     if (!element) return;
 
-    const changes: { name?: string; typeRef?: string; doc?: string; shortName?: string } = {};
+    const changes: { name?: string; typeRef?: string; doc?: string; shortName?: string; valueExpr?: string } = {};
     if (name.trim() && name !== element.name) changes.name = name.trim();
     if (typeRef !== (element.type_ref ?? "")) changes.typeRef = typeRef.trim() || undefined;
     if (doc !== (element.doc ?? "")) changes.doc = doc.trim() || undefined;
     if (shortName !== (element.short_name ?? "")) changes.shortName = shortName.trim();
+    if (valueExpr !== (element.value_expr ?? "")) changes.valueExpr = valueExpr.trim() || undefined;
 
     if (Object.keys(changes).length === 0) {
       closeDialog();
@@ -188,6 +192,22 @@ export function EditElementDialog() {
           allowCustom
         />
         <div style={{ height: 12 }} />
+
+        {/* Value Expression (attributes only) */}
+        {isAttribute && (
+          <>
+            <label style={labelStyle}>Value</label>
+            <input
+              style={inputStyle}
+              placeholder="e.g. 180, 9.81"
+              value={valueExpr}
+              onChange={(e) => setValueExpr(e.target.value)}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <div style={{ height: 12 }} />
+          </>
+        )}
 
         {/* Doc */}
         <label style={labelStyle}>Documentation</label>

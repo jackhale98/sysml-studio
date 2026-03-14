@@ -364,7 +364,7 @@ export function insertElement(
 export function editElement(
   source: string,
   element: SysmlElement,
-  changes: { name?: string; typeRef?: string; doc?: string; shortName?: string },
+  changes: { name?: string; typeRef?: string; doc?: string; shortName?: string; valueExpr?: string },
 ): string {
   const lines = source.split("\n");
   const lineIdx = element.span.start_line;
@@ -410,6 +410,20 @@ export function editElement(
       // Remove short name
       line = line.replace(` <${element.short_name}>`, "");
       line = line.replace(`<${element.short_name}>`, "");
+    }
+  }
+
+  // Handle value expression changes (e.g. `attribute mass : Real = 180;`)
+  if (changes.valueExpr !== undefined && element.value_expr !== changes.valueExpr) {
+    if (element.value_expr && changes.valueExpr) {
+      // Replace existing value
+      line = line.replace(`= ${element.value_expr}`, `= ${changes.valueExpr}`);
+    } else if (!element.value_expr && changes.valueExpr) {
+      // Add value before semicolon
+      line = line.replace(/\s*;/, ` = ${changes.valueExpr};`);
+    } else if (element.value_expr && !changes.valueExpr) {
+      // Remove value expression
+      line = line.replace(new RegExp(`\\s*=\\s*${element.value_expr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), "");
     }
   }
 

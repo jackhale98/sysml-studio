@@ -538,24 +538,25 @@ function StateMachinePanel() {
                   <div style={{ ...monoSmall, fontWeight: 700, color: "var(--text-secondary)", marginBottom: 6 }}>
                     Execution Trace
                   </div>
-                  {result.trace.map((t: SimStep, i: number) => (
-                    <div key={i} style={{
-                      ...monoSmall, padding: "3px 0",
-                      borderBottom: i < result.trace.length - 1 ? "1px solid var(--border)" : "none",
-                      color: "var(--text-primary)",
-                    }}>
-                      <span style={{ color: "var(--text-muted)" }}>#{t.step}</span>{" "}
-                      <span style={{ color: "#ef4444" }}>{t.from_state}</span>
-                      {" \u2192 "}
-                      <span style={{ color: "#4ade80" }}>{t.to_state}</span>
-                      {t.trigger && <span style={{ color: "#c084fc" }}> [{t.trigger}]</span>}
-                      {t.guard_result !== null && (
-                        <span style={{ color: t.guard_result ? "#4ade80" : "#ef4444", marginLeft: 4 }}>
-                          guard:{t.guard_result ? "T" : "F"}
+                  {result.trace.map((t: SimStep, i: number) => {
+                    const transitioned = t.from_state !== t.to_state;
+                    return (
+                      <div key={i} style={{
+                        ...monoSmall, padding: "3px 0",
+                        borderBottom: i < result.trace.length - 1 ? "1px solid var(--border)" : "none",
+                        color: "var(--text-primary)",
+                        opacity: transitioned ? 1 : 0.7,
+                      }}>
+                        <span style={{ color: "var(--text-muted)" }}>#{t.step}</span>{" "}
+                        <span style={{ color: transitioned ? "#ef4444" : "var(--text-muted)" }}>{t.from_state}</span>
+                        {transitioned ? " \u2192 " : " \u2022 "}
+                        <span style={{ color: transitioned ? "#4ade80" : "var(--text-muted)" }}>
+                          {transitioned ? t.to_state : "no transition"}
                         </span>
-                      )}
-                    </div>
-                  ))}
+                        {t.trigger && <span style={{ color: transitioned ? "#c084fc" : "#ef4444" }}> [{t.trigger}]</span>}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

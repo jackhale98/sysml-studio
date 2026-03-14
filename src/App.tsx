@@ -137,6 +137,50 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     enum hydrogen;
   }
 
+  // Port type definitions (SysML v2 §7.14)
+  port def FuelPort {
+    attribute flowRate : Real;
+  }
+
+  port def TorquePort {
+    attribute torque : Real;
+  }
+
+  port def DrivePort {
+    attribute speed : Real;
+  }
+
+  port def ElectricalPort {
+    attribute voltage : Real;
+    attribute current : Real;
+  }
+
+  // Interface definitions (SysML v2 §7.14)
+  interface def PowerTrain {
+    end source : TorquePort;
+    end target : TorquePort;
+  }
+
+  interface def FuelDelivery {
+    end supply : FuelPort;
+    end intake : FuelPort;
+  }
+
+  connection def DriveConnection {
+    end source : DrivePort;
+    end target : DrivePort;
+  }
+
+  // System-level connections (SysML v2 §7.14)
+  part def VehicleAssembly {
+    part engine : Engine;
+    part transmission : Transmission;
+    part wheels[4] : WheelAssembly;
+
+    connect engine.torqueOut to transmission.torqueIn;
+    connect transmission.driveOut to engine.fuelIn;
+  }
+
   // Sequential driving procedure with explicit succession (SysML v2 §7.13)
   action def Drive {
     action startEngine;

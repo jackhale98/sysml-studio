@@ -1154,10 +1154,13 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
   const [dPan, setDPan] = useState({ x: 0, y: 0 });
   const dZoomRef = useRef(dZoom);
   dZoomRef.current = dZoom;
+  const dPanRef = useRef(dPan);
+  dPanRef.current = dPan;
   const [dDragging, setDDragging] = useState(false);
   const dLastPos = useRef<{ x: number; y: number } | null>(null);
   const dSvgRef = useRef<SVGSVGElement>(null);
   const dContainerRef = useRef<HTMLDivElement>(null);
+  const [highlightedNodeId, setHighlightedNodeId] = useState<number | null>(null);
 
   const dLastPinchDist = useRef<number | null>(null);
   const dTouchStartPos = useRef<{ x: number; y: number } | null>(null);
@@ -1242,6 +1245,29 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
     }
     function onTouchEnd(e: TouchEvent) {
       if (e.touches.length === 0) {
+        // Detect tap (no drag)
+        if (!dDidDrag.current && dTouchStartPos.current && diagramLayout) {
+          const svgEl = dSvgRef.current;
+          if (svgEl) {
+            const rect = svgEl.getBoundingClientRect();
+            const sx = (dTouchStartPos.current.x - rect.left - dPanRef.current.x) / dZoomRef.current;
+            const sy = (dTouchStartPos.current.y - rect.top - dPanRef.current.y) / dZoomRef.current;
+            let tapped: number | null = null;
+            for (let ni = diagramLayout.nodes.length - 1; ni >= 0; ni--) {
+              const n = diagramLayout.nodes[ni];
+              if (sx >= n.x && sx <= n.x + n.width && sy >= n.y && sy <= n.y + n.height) {
+                tapped = n.element_id;
+                break;
+              }
+            }
+            if (tapped !== null) {
+              setHighlightedNodeId(prev => prev === tapped ? null : tapped);
+              onSelectElement(tapped);
+            } else {
+              setHighlightedNodeId(null);
+            }
+          }
+        }
         setDDragging(false);
         dLastPos.current = null;
         dLastPinchDist.current = null;
@@ -1496,6 +1522,9 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
               dLastPos.current = null;
               (e.target as Element).releasePointerCapture?.(e.pointerId);
             }}
+            onClick={(e) => {
+              if ((e.target as Element).tagName === "svg") setHighlightedNodeId(null);
+            }}
             onWheel={(e) => {
               e.preventDefault();
               const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
@@ -1528,9 +1557,13 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
                 const ly = (midA[1] + midB[1]) / 2;
                 const isComp = edge.edge_type === "composition";
                 const isDashed = edge.edge_type === "satisfy" || edge.edge_type === "verify" || edge.edge_type === "specialization";
+                const edgeConnected = highlightedNodeId !== null && (
+                  edge.from_id === highlightedNodeId || edge.to_id === highlightedNodeId
+                );
+                const edgeDimmed = highlightedNodeId !== null && !edgeConnected;
                 return (
-                  <g key={`cv-edge-${i}`}>
-                    <path d={d} stroke="#475569" strokeWidth={1.5} fill="none"
+                  <g key={`cv-edge-${i}`} opacity={edgeDimmed ? 0.15 : 1}>
+                    <path d={d} stroke={edgeConnected ? "#60a5fa" : "#475569"} strokeWidth={edgeConnected ? 2 : 1.5} fill="none"
                       strokeDasharray={isDashed ? "6 3" : undefined}
                       markerEnd={isComp ? undefined : "url(#cv-arrow)"}
                       markerStart={isComp ? "url(#cv-diamond)" : undefined}
@@ -1548,14 +1581,20 @@ function CustomViewPanel({ view, elements, allElements, onSelectElement, onNavig
               {/* Nodes */}
               {diagramLayout.nodes.map(node => {
                 const comps = node.compartments ?? [];
+                const isHl = highlightedNodeId === node.element_id;
+                const dimmed = highlightedNodeId !== null && !isHl;
                 return (
                   <g key={`cv-node-${node.element_id}`}
-                    onClick={() => onSelectElement(node.element_id)}
+                    onClick={() => {
+                      setHighlightedNodeId(prev => prev === node.element_id ? null : node.element_id);
+                      onSelectElement(node.element_id);
+                    }}
                     style={{ cursor: "pointer" }}
+                    opacity={dimmed ? 0.3 : 1}
                   >
                     <rect x={node.x} y={node.y} width={node.width} height={node.height}
                       rx={6} ry={6} fill="var(--bg-tertiary)"
-                      stroke={node.color + "88"} strokeWidth={1.5} />
+                      stroke={isHl ? "#60a5fa" : node.color + "88"} strokeWidth={isHl ? 2.5 : 1.5} />
                     <rect x={node.x} y={node.y} width={node.width} height={4}
                       rx={2} fill={node.color} opacity={0.8} />
                     {node.stereotype && (
