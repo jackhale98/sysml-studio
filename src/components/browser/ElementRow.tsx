@@ -221,6 +221,7 @@ export function ElementRow({ element, depth, hasChildren, expanded, onToggle, se
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
+        title={element.qualified_name || undefined}
         style={{
           display: "flex", alignItems: "center", gap: 6, width: "100%",
           padding: `8px 14px 8px ${14 + depth * INDENT_PX}px`,

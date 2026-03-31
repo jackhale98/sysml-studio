@@ -299,10 +299,360 @@ pub fn execute_action(
     })).map_err(|_| "Action execution crashed".to_string())
 }
 
+// ─── Rollup Engine (delegates to sysml-core rollup) ───
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RollupContribution {
+    pub path: Vec<String>,
+    pub definition: String,
+    pub quantity: u32,
+    pub own_value: f64,
+    pub subtotal: f64,
+    pub percentage: f64,
+    pub children: Vec<RollupContribution>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RollupResponse {
+    pub root: String,
+    pub attribute: String,
+    pub method: String,
+    pub total: f64,
+    pub own_value: f64,
+    pub contributions: Vec<RollupContribution>,
+}
+
+fn convert_contribution(c: &sysml_core::sim::rollup::Contribution) -> RollupContribution {
+    RollupContribution {
+        path: c.path.clone(),
+        definition: c.definition.clone(),
+        quantity: c.quantity,
+        own_value: c.own_value,
+        subtotal: c.subtotal,
+        percentage: c.percentage,
+        children: c.children.iter().map(convert_contribution).collect(),
+    }
+}
+
+fn convert_rollup_result(r: &sysml_core::sim::rollup::RollupResult) -> RollupResponse {
+    RollupResponse {
+        root: r.root.clone(),
+        attribute: r.attribute.clone(),
+        method: r.method.label().to_string(),
+        total: r.total,
+        own_value: r.own_value,
+        contributions: r.contributions.iter().map(convert_contribution).collect(),
+    }
+}
+
+#[tauri::command]
+pub fn compute_rollup(
+    root_def: String,
+    attribute: String,
+    method: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<RollupResponse, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+
+    let agg = method.as_deref()
+        .and_then(sysml_core::sim::rollup::AggregationMethod::from_str)
+        .unwrap_or(sysml_core::sim::rollup::AggregationMethod::Sum);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::rollup::evaluate_rollup(core_model, &root_def, &attribute, agg)
+    })).map_err(|_| "Rollup computation failed".to_string())?;
+
+    Ok(convert_rollup_result(&result))
+}
+
+/// List all part definitions that could be rollup roots + their numeric attributes
+#[tauri::command]
+pub fn list_rollup_targets(
+    state: State<'_, AppState>,
+) -> Result<Vec<RollupTarget>, String> {
+    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+    let model = model_lock.as_ref().ok_or("No model loaded")?;
+
+    let mut targets = Vec::new();
+    for el in &model.elements {
+        if el.kind == ElementKind::PartDef {
+            let attrs: Vec<String> = model.elements.iter()
+                .filter(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::AttributeUsage)
+                .filter(|c| c.value_expr.as_ref().and_then(|v| v.parse::<f64>().ok()).is_some())
+                .filter_map(|c| c.name.clone())
+                .collect();
+            if !attrs.is_empty() || model.elements.iter().any(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::PartUsage) {
+                targets.push(RollupTarget {
+                    name: el.name.clone().unwrap_or_default(),
+                    attributes: attrs,
+                });
+            }
+        }
+    }
+    Ok(targets)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RollupTarget {
+    pub name: String,
+    pub attributes: Vec<String>,
+}
+
+// ─── Analysis Cases & Trade Studies (delegates to sysml-core analysis) ───
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalysisCaseInfo {
+    pub name: String,
+    pub subject: Option<String>,
+    pub objective: Option<String>,
+    pub objective_kind: String,
+    pub parameters: Vec<AnalysisParameter>,
+    pub alternatives: Vec<String>,
+    pub return_name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalysisParameter {
+    pub name: String,
+    pub type_ref: Option<String>,
+    pub direction: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AnalysisEvalResult {
+    pub name: String,
+    pub subject_name: Option<String>,
+    pub bindings: Vec<(String, f64)>,
+    pub return_value: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TradeStudyResult {
+    pub name: String,
+    pub objective: String,
+    pub alternatives: Vec<AlternativeScoreResult>,
+    pub winner: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlternativeScoreResult {
+    pub name: String,
+    pub score: Option<f64>,
+    pub overrides: Vec<(String, String)>,
+}
+
+#[tauri::command]
+pub fn list_analysis_cases(state: State<'_, AppState>) -> Result<Vec<AnalysisCaseInfo>, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+
+    let cases = sysml_core::sim::analysis::extract_analysis_cases_from_model(core_model);
+    Ok(cases.iter().map(|c| AnalysisCaseInfo {
+        name: c.name.clone(),
+        subject: c.subject.as_ref().map(|s| s.name.clone()),
+        objective: c.objective.as_ref().map(|o| o.name.clone()),
+        objective_kind: match c.objective.as_ref().map(|o| &o.kind) {
+            Some(sysml_core::sim::analysis::ObjectiveKind::Maximize) => "maximize".into(),
+            Some(sysml_core::sim::analysis::ObjectiveKind::Minimize) => "minimize".into(),
+            _ => "general".into(),
+        },
+        parameters: c.parameters.iter().map(|p| AnalysisParameter {
+            name: p.name.clone(),
+            type_ref: p.type_ref.clone(),
+            direction: match p.direction {
+                sysml_core::sim::analysis::ParameterDirection::In => "in".into(),
+                sysml_core::sim::analysis::ParameterDirection::Out => "out".into(),
+                sysml_core::sim::analysis::ParameterDirection::InOut => "inout".into(),
+            },
+        }).collect(),
+        alternatives: c.alternatives.iter().map(|a| a.name.clone()).collect(),
+        return_name: c.return_decl.as_ref().map(|r| r.name.clone()),
+    }).collect())
+}
+
+#[tauri::command]
+pub fn evaluate_analysis_case(
+    case_name: String,
+    bindings: std::collections::HashMap<String, f64>,
+    state: State<'_, AppState>,
+) -> Result<AnalysisEvalResult, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+
+    let cases = sysml_core::sim::analysis::extract_analysis_cases_from_model(core_model);
+    let case = cases.iter().find(|c| c.name == case_name)
+        .ok_or_else(|| format!("Analysis case '{}' not found", case_name))?;
+
+    let mut env = Env::new();
+    for (k, v) in &bindings { env.bind(k.clone(), Value::Number(*v)); }
+
+    let result = sysml_core::sim::analysis::evaluate_analysis(core_model, case, &env);
+    Ok(AnalysisEvalResult {
+        name: result.name,
+        subject_name: result.subject_name,
+        bindings: result.bindings,
+        return_value: result.return_value,
+    })
+}
+
+#[tauri::command]
+pub fn evaluate_trade_study(
+    case_name: String,
+    state: State<'_, AppState>,
+) -> Result<TradeStudyResult, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+
+    let cases = sysml_core::sim::analysis::extract_analysis_cases_from_model(core_model);
+    let case = cases.iter().find(|c| c.name == case_name)
+        .ok_or_else(|| format!("Analysis case '{}' not found", case_name))?;
+
+    let result = sysml_core::sim::analysis::evaluate_trade_study(core_model, case);
+    Ok(TradeStudyResult {
+        name: result.name,
+        objective: match result.objective {
+            sysml_core::sim::analysis::ObjectiveKind::Maximize => "maximize".into(),
+            sysml_core::sim::analysis::ObjectiveKind::Minimize => "minimize".into(),
+            sysml_core::sim::analysis::ObjectiveKind::General => "general".into(),
+        },
+        alternatives: result.alternatives.iter().map(|a| AlternativeScoreResult {
+            name: a.name.clone(),
+            score: a.score,
+            overrides: a.overrides.clone(),
+        }).collect(),
+        winner: result.winner,
+    })
+}
+
+// ─── What-If & Sensitivity Analysis (delegates to sysml-core what_if) ───
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioInput {
+    pub name: String,
+    pub overrides: Vec<(String, f64)>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WhatIfResponse {
+    pub attribute: String,
+    pub method: String,
+    pub root: String,
+    pub baseline: f64,
+    pub scenarios: Vec<ScenarioResponse>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ScenarioResponse {
+    pub name: String,
+    pub total: f64,
+    pub delta: f64,
+    pub delta_pct: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SweepInput {
+    pub parameter: String,
+    pub start: f64,
+    pub end: f64,
+    pub steps: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SweepResponse {
+    pub attribute: String,
+    pub parameter: String,
+    pub root: String,
+    pub points: Vec<(f64, f64)>,
+    pub sensitivity: f64,
+}
+
+#[tauri::command]
+pub fn evaluate_what_if(
+    root_def: String,
+    attribute: String,
+    method: Option<String>,
+    scenarios: Vec<ScenarioInput>,
+    state: State<'_, AppState>,
+) -> Result<WhatIfResponse, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+
+    let agg = method.as_deref()
+        .and_then(sysml_core::sim::rollup::AggregationMethod::from_str)
+        .unwrap_or(sysml_core::sim::rollup::AggregationMethod::Sum);
+
+    let core_scenarios: Vec<sysml_core::sim::what_if::Scenario> = scenarios.iter().map(|s| {
+        sysml_core::sim::what_if::Scenario {
+            name: s.name.clone(),
+            overrides: s.overrides.clone(),
+        }
+    }).collect();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::what_if::evaluate_what_if(core_model, &root_def, &attribute, agg, &core_scenarios)
+    })).map_err(|_| "What-if analysis failed".to_string())?;
+
+    Ok(WhatIfResponse {
+        attribute: result.attribute,
+        method: agg.label().to_string(),
+        root: result.root,
+        baseline: result.baseline,
+        scenarios: result.scenarios.iter().map(|s| ScenarioResponse {
+            name: s.name.clone(),
+            total: s.total,
+            delta: s.delta,
+            delta_pct: s.delta_pct,
+        }).collect(),
+    })
+}
+
+#[tauri::command]
+pub fn evaluate_sweep(
+    root_def: String,
+    attribute: String,
+    method: Option<String>,
+    sweep: SweepInput,
+    state: State<'_, AppState>,
+) -> Result<SweepResponse, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+
+    let agg = method.as_deref()
+        .and_then(sysml_core::sim::rollup::AggregationMethod::from_str)
+        .unwrap_or(sysml_core::sim::rollup::AggregationMethod::Sum);
+
+    let config = sysml_core::sim::what_if::SweepConfig {
+        parameter: sweep.parameter,
+        start: sweep.start,
+        end: sweep.end,
+        steps: sweep.steps,
+    };
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::what_if::evaluate_sweep(core_model, &root_def, &attribute, agg, &config)
+    })).map_err(|_| "Sweep analysis failed".to_string())?;
+
+    Ok(SweepResponse {
+        attribute: result.attribute,
+        parameter: result.parameter,
+        root: result.root,
+        points: result.points,
+        sensitivity: result.sensitivity,
+    })
+}
+
+// ─── Unit Conversion ───
+
+#[tauri::command]
+pub fn convert_units(value: f64, from: String, to: String) -> Result<f64, String> {
+    sysml_core::sim::units::convert(value, &from, &to)
+        .map_err(|e| e.message)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::elements::*;
 
     fn make_el(
         id: ElementId, kind: ElementKind, name: &str,

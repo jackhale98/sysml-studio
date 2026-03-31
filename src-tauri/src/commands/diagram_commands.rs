@@ -1141,6 +1141,335 @@ fn connect_nodes(from: &DiagramNode, to: &DiagramNode) -> Vec<(f64, f64)> {
     }
 }
 
+// ─── Activity Diagram (ACT) ───
+
+#[tauri::command]
+pub fn compute_act_layout(
+    action_def_name: String,
+    state: State<'_, AppState>,
+) -> Result<DiagramLayout, String> {
+    let source = state.current_source.lock().map_err(|e| e.to_string())?;
+    if source.is_empty() { return Err("No source loaded".into()); }
+
+    let src = source.clone();
+    let actions = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        sysml_core::sim::action_parser::extract_actions("<buffer>", &src)
+    })).map_err(|_| "Action extraction failed".to_string())?;
+
+    let action = actions.iter().find(|a| a.name == action_def_name)
+        .ok_or_else(|| format!("Action '{}' not found", action_def_name))?;
+
+    let mut nodes = Vec::new();
+    let mut edges = Vec::new();
+    let mut y = 30.0;
+    let center_x = 200.0;
+    let mut next_id: ElementId = 0;
+
+    // Initial node (filled circle)
+    let initial_id = u32::MAX;
+    nodes.push(DiagramNode {
+        element_id: initial_id,
+        label: String::new(),
+        kind: "initial".into(),
+        x: center_x - 10.0, y, width: 20.0, height: 20.0,
+        color: "#64748b".into(),
+        children: vec![], stereotype: None,
+        compartments: vec![], description: None,
+    });
+    y += 50.0;
+
+    let mut prev_id = initial_id;
+
+    for step in &action.steps {
+        let step_id = layout_act_step(
+            step, center_x, &mut y, &mut nodes, &mut edges,
+            &mut next_id, &mut prev_id,
+        );
+        if step_id != prev_id {
+            prev_id = step_id;
+        }
+    }
+
+    // Final node (bull's eye)
+    let final_id = u32::MAX - 1;
+    nodes.push(DiagramNode {
+        element_id: final_id,
+        label: String::new(),
+        kind: "final".into(),
+        x: center_x - 12.0, y, width: 24.0, height: 24.0,
+        color: "#64748b".into(),
+        children: vec![], stereotype: None,
+        compartments: vec![], description: None,
+    });
+    edges.push(DiagramEdge {
+        from_id: prev_id, to_id: final_id,
+        label: None, edge_type: "flow".into(),
+        points: vec![],
+    });
+    y += 50.0;
+
+    // Compute bounds
+    let mut max_x: f64 = 0.0;
+    for n in &nodes {
+        let right = n.x + n.width;
+        if right > max_x { max_x = right; }
+    }
+
+    Ok(DiagramLayout {
+        diagram_type: "act".into(),
+        nodes, edges,
+        bounds: (0.0, 0.0, max_x + 40.0, y),
+    })
+}
+
+/// Lay out a single action step, returns the ID of the last node created.
+fn layout_act_step(
+    step: &sysml_core::sim::action_flow::ActionStep,
+    center_x: f64,
+    y: &mut f64,
+    nodes: &mut Vec<DiagramNode>,
+    edges: &mut Vec<DiagramEdge>,
+    next_id: &mut ElementId,
+    prev_id: &mut ElementId,
+) -> ElementId {
+    use sysml_core::sim::action_flow::ActionStep;
+
+    match step {
+        ActionStep::Perform { name, .. } => {
+            if name == "start" || name == "done" { return *prev_id; }
+            let id = *next_id; *next_id += 1;
+            let w = estimate_text_width(name, 12.0).max(120.0);
+            nodes.push(DiagramNode {
+                element_id: id,
+                label: name.clone(),
+                kind: "action".into(),
+                x: center_x - w / 2.0, y: *y, width: w, height: 40.0,
+                color: "#10b981".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            edges.push(DiagramEdge {
+                from_id: *prev_id, to_id: id,
+                label: None, edge_type: "flow".into(),
+                points: vec![],
+            });
+            *y += 70.0;
+            *prev_id = id;
+            id
+        }
+        ActionStep::Fork { name, branches, .. } => {
+            // Fork bar
+            let fork_id = *next_id; *next_id += 1;
+            let bar_w = 160.0 + (branches.len() as f64 - 1.0) * 120.0;
+            nodes.push(DiagramNode {
+                element_id: fork_id,
+                label: name.clone().unwrap_or_else(|| "fork".into()),
+                kind: "fork".into(),
+                x: center_x - bar_w / 2.0, y: *y, width: bar_w, height: 8.0,
+                color: "#64748b".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            edges.push(DiagramEdge {
+                from_id: *prev_id, to_id: fork_id,
+                label: None, edge_type: "flow".into(),
+                points: vec![],
+            });
+            *y += 50.0;
+
+            // Lay out each branch side-by-side
+            let branch_spacing = 150.0;
+            let total_w = (branches.len() as f64 - 1.0) * branch_spacing;
+            let start_x = center_x - total_w / 2.0;
+            let branch_start_y = *y;
+            let mut branch_end_ids = Vec::new();
+            let mut max_branch_y = *y;
+
+            for (bi, branch) in branches.iter().enumerate() {
+                let bx = start_x + bi as f64 * branch_spacing;
+                let mut by = branch_start_y;
+                let mut branch_prev = fork_id;
+
+                // A branch might be a single Perform or a Sequence
+                let branch_steps = match branch {
+                    ActionStep::Sequence { steps, .. } => steps.as_slice(),
+                    other => std::slice::from_ref(other),
+                };
+
+                for bstep in branch_steps {
+                    let sid = layout_act_step(bstep, bx, &mut by, nodes, edges, next_id, &mut branch_prev);
+                    branch_prev = sid;
+                }
+
+                branch_end_ids.push(branch_prev);
+                if by > max_branch_y { max_branch_y = by; }
+            }
+
+            *y = max_branch_y;
+            // Store fork_id as prev for the Join that follows
+            *prev_id = fork_id;
+            // Return a synthetic "multi-end" — the Join will connect from branches
+            // We store branch_end_ids by connecting them in the next Join step
+            // For now, make edges from branch ends implicit — Join handles it
+            // Actually we need to propagate branch_end_ids. We'll use a trick:
+            // store them as extra edges to a placeholder, then the Join connects.
+            // Simpler approach: return fork_id and let the caller handle joins.
+            // The actual join edge creation happens in the Join step below.
+            for &bend in &branch_end_ids {
+                // Store the branch end IDs — they'll be connected to the next join
+                // We use a special edge_type "fork_branch_end" for the frontend to ignore
+                edges.push(DiagramEdge {
+                    from_id: bend, to_id: fork_id,
+                    label: None, edge_type: "fork_branch_end".into(),
+                    points: vec![],
+                });
+            }
+            fork_id
+        }
+        ActionStep::Join { name, .. } => {
+            let join_id = *next_id; *next_id += 1;
+            // Find branch ends: edges with edge_type "fork_branch_end" pointing to prev_id (the fork)
+            let branch_ends: Vec<ElementId> = edges.iter()
+                .filter(|e| e.edge_type == "fork_branch_end" && e.to_id == *prev_id)
+                .map(|e| e.from_id)
+                .collect();
+            // Remove the placeholder edges
+            edges.retain(|e| !(e.edge_type == "fork_branch_end" && e.to_id == *prev_id));
+
+            let bar_w = 160.0 + (branch_ends.len() as f64 - 1.0).max(0.0) * 120.0;
+            nodes.push(DiagramNode {
+                element_id: join_id,
+                label: name.clone().unwrap_or_else(|| "join".into()),
+                kind: "join".into(),
+                x: center_x - bar_w / 2.0, y: *y, width: bar_w, height: 8.0,
+                color: "#64748b".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            for bend in &branch_ends {
+                edges.push(DiagramEdge {
+                    from_id: *bend, to_id: join_id,
+                    label: None, edge_type: "flow".into(),
+                    points: vec![],
+                });
+            }
+            if branch_ends.is_empty() {
+                // Fallback: connect from prev
+                edges.push(DiagramEdge {
+                    from_id: *prev_id, to_id: join_id,
+                    label: None, edge_type: "flow".into(),
+                    points: vec![],
+                });
+            }
+            *y += 50.0;
+            *prev_id = join_id;
+            join_id
+        }
+        ActionStep::Sequence { steps, .. } => {
+            let mut last_id = *prev_id;
+            for s in steps {
+                last_id = layout_act_step(s, center_x, y, nodes, edges, next_id, prev_id);
+            }
+            last_id
+        }
+        ActionStep::IfAction { then_step, else_step, .. } => {
+            let decide_id = *next_id; *next_id += 1;
+            nodes.push(DiagramNode {
+                element_id: decide_id,
+                label: "decision".into(),
+                kind: "decide".into(),
+                x: center_x - 20.0, y: *y, width: 40.0, height: 40.0,
+                color: "#fb923c".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            edges.push(DiagramEdge {
+                from_id: *prev_id, to_id: decide_id,
+                label: None, edge_type: "flow".into(),
+                points: vec![],
+            });
+            *y += 60.0;
+            *prev_id = decide_id;
+            let then_id = layout_act_step(then_step, center_x - 80.0, y, nodes, edges, next_id, prev_id);
+            if let Some(else_s) = else_step {
+                let mut ey = *y - 70.0; // align with then branch
+                let mut else_prev = decide_id;
+                layout_act_step(else_s, center_x + 80.0, &mut ey, nodes, edges, next_id, &mut else_prev);
+                if ey > *y { *y = ey; }
+            }
+            *prev_id = then_id;
+            then_id
+        }
+        ActionStep::Send { payload, to, .. } => {
+            let id = *next_id; *next_id += 1;
+            let label = format!("send {}{}", payload.as_deref().unwrap_or(""), to.as_ref().map(|t| format!(" → {}", t)).unwrap_or_default());
+            let w = estimate_text_width(&label, 12.0).max(120.0);
+            nodes.push(DiagramNode {
+                element_id: id,
+                label,
+                kind: "send".into(),
+                x: center_x - w / 2.0, y: *y, width: w, height: 40.0,
+                color: "#38bdf8".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            edges.push(DiagramEdge {
+                from_id: *prev_id, to_id: id,
+                label: None, edge_type: "flow".into(),
+                points: vec![],
+            });
+            *y += 70.0;
+            *prev_id = id;
+            id
+        }
+        ActionStep::Accept { signal, .. } => {
+            let id = *next_id; *next_id += 1;
+            let label = format!("accept {}", signal.as_deref().unwrap_or(""));
+            let w = estimate_text_width(&label, 12.0).max(120.0);
+            nodes.push(DiagramNode {
+                element_id: id,
+                label,
+                kind: "accept".into(),
+                x: center_x - w / 2.0, y: *y, width: w, height: 40.0,
+                color: "#4ade80".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            edges.push(DiagramEdge {
+                from_id: *prev_id, to_id: id,
+                label: None, edge_type: "flow".into(),
+                points: vec![],
+            });
+            *y += 70.0;
+            *prev_id = id;
+            id
+        }
+        _ => {
+            // Assign, WhileLoop, ForLoop, Decide, Merge — render as generic action
+            let id = *next_id; *next_id += 1;
+            let label = format!("{:?}", step).chars().take(30).collect::<String>();
+            let w = estimate_text_width(&label, 12.0).max(120.0);
+            nodes.push(DiagramNode {
+                element_id: id,
+                label,
+                kind: "action".into(),
+                x: center_x - w / 2.0, y: *y, width: w, height: 40.0,
+                color: "#94a3b8".into(),
+                children: vec![], stereotype: None,
+                compartments: vec![], description: None,
+            });
+            edges.push(DiagramEdge {
+                from_id: *prev_id, to_id: id,
+                label: None, edge_type: "flow".into(),
+                points: vec![],
+            });
+            *y += 70.0;
+            *prev_id = id;
+            id
+        }
+    }
+}
+
 fn kind_to_color(kind: &ElementKind) -> String {
     match kind {
         ElementKind::PartDef | ElementKind::PartUsage => "#3b82f6".into(),

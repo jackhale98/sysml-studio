@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { ElementId } from "../lib/element-types";
 
 export type TabId = "browser" | "diagram" | "editor" | "mbse" | "analysis";
-export type DiagramType = "bdd" | "stm" | "req" | "ucd" | "ibd";
+export type DiagramType = "bdd" | "stm" | "req" | "ucd" | "ibd" | "act";
 export type ViewMode = DiagramType | "custom";
 export type ThemeMode = "dark" | "light";
 

@@ -4,21 +4,30 @@ import type {
   BomNode, ConstraintModel, CalcModel, EvalResult,
   StateMachineModel, SimulationState, SimStep,
   ActionModel, ActionExecState, ActionExecStep,
+  RollupResponse, RollupTarget,
+  AnalysisCaseInfo, AnalysisEvalResult, TradeStudyResult,
+  WhatIfResponse, SweepResponse, ScenarioInput, SweepInput,
 } from "../../lib/element-types";
 import {
   computeBom, listConstraints, listCalculations,
   evaluateConstraint, evaluateCalculation,
   listStateMachines, simulateStateMachine,
   listActions, executeAction,
+  computeRollup, listRollupTargets,
+  listAnalysisCases, evaluateAnalysisCase, evaluateTradeStudy,
+  evaluateWhatIf, evaluateSweep,
 } from "../../lib/tauri-bridge";
 
-type AnalysisPanel = "bom" | "stm" | "action" | "calcs";
+type AnalysisPanel = "bom" | "stm" | "action" | "calcs" | "rollup" | "analysis" | "whatif";
 
 const PANEL_LABELS: { id: AnalysisPanel; label: string }[] = [
-  { id: "bom", label: "BOM / Rollups" },
+  { id: "bom", label: "BOM" },
+  { id: "rollup", label: "Rollup" },
   { id: "stm", label: "State Machine" },
   { id: "action", label: "Action Flow" },
-  { id: "calcs", label: "Calcs & Constraints" },
+  { id: "calcs", label: "Calcs" },
+  { id: "analysis", label: "Analysis" },
+  { id: "whatif", label: "What-If" },
 ];
 
 export function AnalysisView() {
@@ -60,9 +69,12 @@ export function AnalysisView() {
 
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: 14 }}>
         {panel === "bom" && <BomPanel />}
+        {panel === "rollup" && <RollupPanel />}
         {panel === "stm" && <StateMachinePanel />}
         {panel === "action" && <ActionFlowPanel />}
         {panel === "calcs" && <CalcsPanel />}
+        {panel === "analysis" && <AnalysisCasePanel />}
+        {panel === "whatif" && <WhatIfPanel />}
       </div>
     </div>
   );
@@ -1173,7 +1185,419 @@ const paramInput: React.CSSProperties = {
   fontSize: 11, fontFamily: "var(--font-mono)",
 };
 
-// ─── Shared Components ───
+// ─── Rollup Panel ───
+
+function RollupPanel() {
+  const model = useModelStore((s) => s.model);
+  const [targets, setTargets] = useState<RollupTarget[]>([]);
+  const [selectedRoot, setSelectedRoot] = useState("");
+  const [selectedAttr, setSelectedAttr] = useState("");
+  const [method, setMethod] = useState("sum");
+  const [result, setResult] = useState<RollupResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    listRollupTargets().then((t) => {
+      setTargets(t);
+      if (t.length > 0 && !selectedRoot) {
+        setSelectedRoot(t[0].name);
+        if (t[0].attributes.length > 0) setSelectedAttr(t[0].attributes[0]);
+      }
+    }).catch(() => {});
+  }, [model]);
+
+  const attrs = targets.find((t) => t.name === selectedRoot)?.attributes ?? [];
+
+  const run = async () => {
+    if (!selectedRoot || !selectedAttr) return;
+    setLoading(true);
+    try {
+      const r = await computeRollup(selectedRoot, selectedAttr, method);
+      setResult(r);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      {targets.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", color: "var(--text-muted)", ...monoSmall }}>
+          No part definitions with numeric attributes found.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+            <select value={selectedRoot} onChange={(e) => { setSelectedRoot(e.target.value); setResult(null); const t = targets.find((t) => t.name === e.target.value); if (t?.attributes[0]) setSelectedAttr(t.attributes[0]); }}
+              style={{ flex: 1, ...selectStyle }}>
+              {targets.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            <select value={selectedAttr} onChange={(e) => { setSelectedAttr(e.target.value); setResult(null); }}
+              style={{ flex: 1, ...selectStyle }}>
+              {attrs.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <select value={method} onChange={(e) => setMethod(e.target.value)} style={{ width: 70, ...selectStyle }}>
+              {["sum", "rss", "product", "min", "max"].map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <button onClick={run} disabled={loading} style={runBtnStyle}>
+              {loading ? "..." : "Compute"}
+            </button>
+          </div>
+          {result && (
+            <div style={card}>
+              <div style={{ ...monoSmall, fontWeight: 700, marginBottom: 6 }}>
+                {result.root} / {result.attribute} ({result.method})
+              </div>
+              <div style={{ ...monoSmall, fontSize: 16, fontWeight: 700, color: "var(--accent)", marginBottom: 8 }}>
+                Total: {fmtNum(result.total)}
+              </div>
+              {result.own_value > 0 && (
+                <div style={{ ...monoSmall, color: "var(--text-muted)", marginBottom: 4 }}>
+                  Own: {fmtNum(result.own_value)}
+                </div>
+              )}
+              {result.contributions.map((c, i) => (
+                <RollupRow key={i} contribution={c} depth={0} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function RollupRow({ contribution: c, depth }: { contribution: import("../../lib/element-types").RollupContribution; depth: number }) {
+  return (
+    <>
+      <div style={{ ...monoSmall, padding: "2px 0", paddingLeft: depth * 16 }}>
+        <span style={{ color: "var(--text-primary)" }}>{c.path[c.path.length - 1] || c.definition}</span>
+        {c.quantity > 1 && <span style={{ color: "var(--text-muted)" }}> x{c.quantity}</span>}
+        <span style={{ color: "var(--accent)", marginLeft: 8 }}>{fmtNum(c.subtotal)}</span>
+        <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>({c.percentage.toFixed(1)}%)</span>
+        {c.own_value > 0 && <span style={{ color: "var(--text-muted)", marginLeft: 4 }}>own: {fmtNum(c.own_value)}</span>}
+      </div>
+      {c.children.map((child, i) => <RollupRow key={i} contribution={child} depth={depth + 1} />)}
+    </>
+  );
+}
+
+// ─── Analysis Case Panel ───
+
+function AnalysisCasePanel() {
+  const model = useModelStore((s) => s.model);
+  const [cases, setCases] = useState<AnalysisCaseInfo[]>([]);
+  const [selected, setSelected] = useState("");
+  const [evalResult, setEvalResult] = useState<AnalysisEvalResult | null>(null);
+  const [tradeResult, setTradeResult] = useState<TradeStudyResult | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    listAnalysisCases().then((c) => {
+      setCases(c);
+      if (c.length > 0 && !selected) setSelected(c[0].name);
+    }).catch(() => setCases([]));
+  }, [model]);
+
+  const ac = cases.find((c) => c.name === selected);
+
+  const runEval = async () => {
+    if (!selected) return;
+    setLoading(true);
+    try {
+      const r = await evaluateAnalysisCase(selected, {});
+      setEvalResult(r);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  const runTrade = async () => {
+    if (!selected) return;
+    setLoading(true);
+    try {
+      const r = await evaluateTradeStudy(selected);
+      setTradeResult(r);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      {cases.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", color: "var(--text-muted)", ...monoSmall }}>
+          No analysis cases found. Define an <code>analysis def</code> in your model.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+            <select value={selected} onChange={(e) => { setSelected(e.target.value); setEvalResult(null); setTradeResult(null); }}
+              style={{ flex: 1, ...selectStyle }}>
+              {cases.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+            </select>
+            <button onClick={runEval} disabled={loading} style={runBtnStyle}>Evaluate</button>
+            {ac && ac.alternatives.length > 0 && (
+              <button onClick={runTrade} disabled={loading} style={runBtnStyle}>Trade Study</button>
+            )}
+          </div>
+
+          {ac && (
+            <div style={card}>
+              <div style={{ ...monoSmall, color: "var(--text-muted)", marginBottom: 4 }}>
+                {ac.subject && <span>Subject: <strong>{ac.subject}</strong> </span>}
+                {ac.objective && <span>Objective: <strong>{ac.objective}</strong> ({ac.objective_kind}) </span>}
+              </div>
+              {ac.parameters.length > 0 && (
+                <div style={{ ...monoSmall, color: "var(--text-muted)" }}>
+                  Params: {ac.parameters.map((p) => `${p.direction} ${p.name}`).join(", ")}
+                </div>
+              )}
+              {ac.alternatives.length > 0 && (
+                <div style={{ ...monoSmall, color: "var(--text-muted)", marginTop: 2 }}>
+                  Alternatives: {ac.alternatives.join(", ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {evalResult && (
+            <div style={card}>
+              <div style={sectionTitle}>Evaluation Result</div>
+              {evalResult.return_value !== null && (
+                <div style={{ ...monoSmall, fontSize: 16, fontWeight: 700, color: "var(--accent)", marginBottom: 6 }}>
+                  Result: {evalResult.return_value}
+                </div>
+              )}
+              {evalResult.bindings.length > 0 && (
+                <div style={monoSmall}>
+                  {evalResult.bindings.map(([k, v], i) => (
+                    <div key={i}>{k} = {v}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {tradeResult && (
+            <div style={card}>
+              <div style={sectionTitle}>Trade Study: {tradeResult.objective}</div>
+              {tradeResult.winner && (
+                <div style={{ ...monoSmall, fontWeight: 700, color: "#4ade80", marginBottom: 6 }}>
+                  Winner: {tradeResult.winner}
+                </div>
+              )}
+              {tradeResult.alternatives.map((a, i) => (
+                <div key={i} style={{ ...monoSmall, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ fontWeight: a.name === tradeResult.winner ? 700 : 400, color: a.name === tradeResult.winner ? "#4ade80" : "var(--text-primary)" }}>
+                    {a.name}
+                  </span>
+                  {a.score !== null && <span style={{ color: "var(--accent)", marginLeft: 8 }}>score: {a.score}</span>}
+                  {a.overrides.length > 0 && (
+                    <span style={{ color: "var(--text-muted)", marginLeft: 8 }}>
+                      ({a.overrides.map(([k, v]) => `${k}=${v}`).join(", ")})
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── What-If & Sensitivity Panel ───
+
+function WhatIfPanel() {
+  const model = useModelStore((s) => s.model);
+  const [targets, setTargets] = useState<RollupTarget[]>([]);
+  const [rootDef, setRootDef] = useState("");
+  const [attribute, setAttribute] = useState("");
+  const [method, setMethod] = useState("sum");
+  const [mode, setMode] = useState<"whatif" | "sweep">("whatif");
+
+  // What-if state
+  const [scenarios, setScenarios] = useState<ScenarioInput[]>([{ name: "Scenario 1", overrides: [] }]);
+  const [whatIfResult, setWhatIfResult] = useState<WhatIfResponse | null>(null);
+
+  // Sweep state
+  const [sweepParam, setSweepParam] = useState("");
+  const [sweepStart, setSweepStart] = useState(0);
+  const [sweepEnd, setSweepEnd] = useState(100);
+  const [sweepSteps, setSweepSteps] = useState(10);
+  const [sweepResult, setSweepResult] = useState<SweepResponse | null>(null);
+
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    listRollupTargets().then((t) => {
+      setTargets(t);
+      if (t.length > 0 && !rootDef) {
+        setRootDef(t[0].name);
+        if (t[0].attributes.length > 0) setAttribute(t[0].attributes[0]);
+      }
+    }).catch(() => {});
+  }, [model]);
+
+  const attrs = targets.find((t) => t.name === rootDef)?.attributes ?? [];
+
+  const runWhatIf = async () => {
+    if (!rootDef || !attribute) return;
+    setLoading(true);
+    try {
+      const r = await evaluateWhatIf(rootDef, attribute, scenarios, method);
+      setWhatIfResult(r);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  const runSweep = async () => {
+    if (!rootDef || !attribute || !sweepParam) return;
+    setLoading(true);
+    try {
+      const sweep: SweepInput = { parameter: sweepParam, start: sweepStart, end: sweepEnd, steps: sweepSteps };
+      const r = await evaluateSweep(rootDef, attribute, sweep, method);
+      setSweepResult(r);
+    } catch { /* ignore */ }
+    setLoading(false);
+  };
+
+  const addScenario = () => {
+    setScenarios([...scenarios, { name: `Scenario ${scenarios.length + 1}`, overrides: [] }]);
+  };
+
+  const updateScenarioName = (i: number, name: string) => {
+    const s = [...scenarios]; s[i] = { ...s[i], name }; setScenarios(s);
+  };
+
+  const addOverride = (i: number) => {
+    const s = [...scenarios];
+    s[i] = { ...s[i], overrides: [...s[i].overrides, ["", 0]] };
+    setScenarios(s);
+  };
+
+  const updateOverride = (si: number, oi: number, key: string, value: number) => {
+    const s = [...scenarios];
+    const overrides = [...s[si].overrides];
+    overrides[oi] = [key, value];
+    s[si] = { ...s[si], overrides };
+    setScenarios(s);
+  };
+
+  return (
+    <div>
+      {targets.length === 0 ? (
+        <div style={{ ...card, textAlign: "center", color: "var(--text-muted)", ...monoSmall }}>
+          No rollup targets found.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+            <select value={rootDef} onChange={(e) => { setRootDef(e.target.value); setWhatIfResult(null); setSweepResult(null); const t = targets.find((t) => t.name === e.target.value); if (t?.attributes[0]) setAttribute(t.attributes[0]); }}
+              style={{ flex: 1, ...selectStyle }}>
+              {targets.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+            </select>
+            <select value={attribute} onChange={(e) => setAttribute(e.target.value)} style={{ flex: 1, ...selectStyle }}>
+              {attrs.map((a) => <option key={a} value={a}>{a}</option>)}
+            </select>
+            <select value={mode} onChange={(e) => setMode(e.target.value as "whatif" | "sweep")} style={{ width: 90, ...selectStyle }}>
+              <option value="whatif">What-If</option>
+              <option value="sweep">Sweep</option>
+            </select>
+          </div>
+
+          {mode === "whatif" && (
+            <>
+              {scenarios.map((s, si) => (
+                <div key={si} style={{ ...card, padding: 8 }}>
+                  <input value={s.name} onChange={(e) => updateScenarioName(si, e.target.value)}
+                    style={{ ...paramInput, width: "100%", marginBottom: 4, fontWeight: 600 }} />
+                  {s.overrides.map((o, oi) => (
+                    <div key={oi} style={{ display: "flex", gap: 4, marginBottom: 2 }}>
+                      <input value={o[0]} placeholder="path (e.g. engine.mass)"
+                        onChange={(e) => updateOverride(si, oi, e.target.value, o[1])}
+                        style={{ ...paramInput, flex: 1 }} />
+                      <input type="number" value={o[1]}
+                        onChange={(e) => updateOverride(si, oi, o[0], parseFloat(e.target.value) || 0)}
+                        style={{ ...paramInput, width: 60 }} />
+                    </div>
+                  ))}
+                  <button onClick={() => addOverride(si)} style={{ ...monoSmall, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: "2px 0" }}>
+                    + Override
+                  </button>
+                </div>
+              ))}
+              <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                <button onClick={addScenario} style={{ ...runBtnStyle, background: "var(--bg-tertiary)", color: "var(--text-primary)" }}>+ Scenario</button>
+                <button onClick={runWhatIf} disabled={loading} style={runBtnStyle}>{loading ? "..." : "Run What-If"}</button>
+              </div>
+              {whatIfResult && (
+                <div style={card}>
+                  <div style={{ ...monoSmall, fontWeight: 700, marginBottom: 6 }}>
+                    Baseline: {fmtNum(whatIfResult.baseline)}
+                  </div>
+                  {whatIfResult.scenarios.map((s, i) => (
+                    <div key={i} style={{ ...monoSmall, padding: "3px 0", borderBottom: "1px solid var(--border)" }}>
+                      <span style={{ fontWeight: 600 }}>{s.name}</span>
+                      <span style={{ color: "var(--accent)", marginLeft: 8 }}>{fmtNum(s.total)}</span>
+                      <span style={{ color: s.delta >= 0 ? "#4ade80" : "#ef4444", marginLeft: 8 }}>
+                        {s.delta >= 0 ? "+" : ""}{fmtNum(s.delta)} ({s.delta_pct >= 0 ? "+" : ""}{s.delta_pct.toFixed(1)}%)
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+
+          {mode === "sweep" && (
+            <>
+              <div style={{ ...card, padding: 8 }}>
+                <div style={{ ...monoSmall, marginBottom: 4, fontWeight: 600 }}>Parameter Sweep</div>
+                <div style={{ display: "flex", gap: 4, marginBottom: 4 }}>
+                  <input value={sweepParam} placeholder="path (e.g. engine.mass)"
+                    onChange={(e) => setSweepParam(e.target.value)}
+                    style={{ ...paramInput, flex: 1 }} />
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input type="number" value={sweepStart} onChange={(e) => setSweepStart(parseFloat(e.target.value) || 0)}
+                    style={{ ...paramInput, flex: 1 }} placeholder="Start" />
+                  <input type="number" value={sweepEnd} onChange={(e) => setSweepEnd(parseFloat(e.target.value) || 0)}
+                    style={{ ...paramInput, flex: 1 }} placeholder="End" />
+                  <input type="number" value={sweepSteps} onChange={(e) => setSweepSteps(parseInt(e.target.value) || 10)}
+                    style={{ ...paramInput, width: 50 }} placeholder="Steps" />
+                </div>
+              </div>
+              <button onClick={runSweep} disabled={loading} style={{ ...runBtnStyle, marginBottom: 8 }}>
+                {loading ? "..." : "Run Sweep"}
+              </button>
+              {sweepResult && (
+                <div style={card}>
+                  <div style={{ ...monoSmall, fontWeight: 700, marginBottom: 6 }}>
+                    Sensitivity: {sweepResult.sensitivity.toFixed(4)} d({sweepResult.attribute})/d({sweepResult.parameter})
+                  </div>
+                  <div style={{ ...monoSmall, maxHeight: 200, overflowY: "auto" }}>
+                    {sweepResult.points.map(([param, total], i) => (
+                      <div key={i} style={{ display: "flex", gap: 8, padding: "1px 0" }}>
+                        <span style={{ color: "var(--text-muted)", width: 60 }}>{fmtNum(param)}</span>
+                        <span style={{ color: "var(--accent)" }}>{fmtNum(total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+const runBtnStyle: React.CSSProperties = {
+  padding: "6px 14px", borderRadius: 6, border: "none", cursor: "pointer",
+  fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)",
+  background: "var(--accent)", color: "#fff",
+};
 
 function StatusBadge({ label, color }: { label: string; color: string }) {
   return (

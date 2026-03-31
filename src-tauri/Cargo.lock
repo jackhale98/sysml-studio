@@ -3044,8 +3044,8 @@ dependencies = [
 
 [[package]]
 name = "sysml-core"
-version = "0.3.0"
-source = "git+https://github.com/jackhale98/sysml-cli?branch=main#667bbcaef832c2b8d8e8f18d4610a1cb1d3266bd"
+version = "0.5.0"
+source = "git+https://github.com/jackhale98/sysml-cli?branch=main#441403f08559f2e2a01c28bfbdbca41bbfe03098"
 dependencies = [
  "cc",
  "serde",

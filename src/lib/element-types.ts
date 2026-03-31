@@ -51,6 +51,12 @@ export type ElementKind =
   | "flow_statement" | "message_statement"
   | "subject_declaration" | "actor_declaration"
   | "objective_declaration" | "stakeholder_declaration"
+  // KerML usage types
+  | "class_usage" | "struct_usage" | "assoc_usage" | "data_type_usage"
+  | "behavior_usage" | "connector_usage" | "type_usage"
+  // New SysML usage types
+  | "message_usage" | "case_usage" | "step_usage" | "expr_usage"
+  | "classifier_usage" | "metaclass_usage" | "return_usage" | "frame_usage"
   | { other: string };
 
 export interface SourceSpan {
@@ -179,7 +185,7 @@ export interface ValidationIssue {
   element_id: ElementId;
   severity: "error" | "warning" | "info";
   message: string;
-  category: "incomplete" | "missing_type" | "unresolved_ref" | "circular_dep" | "orphan";
+  category: string;
 }
 
 export interface ValidationReport {
@@ -323,6 +329,107 @@ export interface ActionExecStep {
   step: number;
   kind: string;
   description: string;
+}
+
+// ─── Rollup Types ───
+
+export interface RollupContribution {
+  path: string[];
+  definition: string;
+  quantity: number;
+  own_value: number;
+  subtotal: number;
+  percentage: number;
+  children: RollupContribution[];
+}
+
+export interface RollupResponse {
+  root: string;
+  attribute: string;
+  method: string;
+  total: number;
+  own_value: number;
+  contributions: RollupContribution[];
+}
+
+export interface RollupTarget {
+  name: string;
+  attributes: string[];
+}
+
+// ─── Analysis Case Types ───
+
+export interface AnalysisCaseInfo {
+  name: string;
+  subject: string | null;
+  objective: string | null;
+  objective_kind: "maximize" | "minimize" | "general";
+  parameters: AnalysisParameter[];
+  alternatives: string[];
+  return_name: string | null;
+}
+
+export interface AnalysisParameter {
+  name: string;
+  type_ref: string | null;
+  direction: string;
+}
+
+export interface AnalysisEvalResult {
+  name: string;
+  subject_name: string | null;
+  bindings: [string, number][];
+  return_value: number | null;
+}
+
+export interface TradeStudyResult {
+  name: string;
+  objective: string;
+  alternatives: AlternativeScoreResult[];
+  winner: string | null;
+}
+
+export interface AlternativeScoreResult {
+  name: string;
+  score: number | null;
+  overrides: [string, string][];
+}
+
+// ─── What-If & Sensitivity Types ───
+
+export interface ScenarioInput {
+  name: string;
+  overrides: [string, number][];
+}
+
+export interface WhatIfResponse {
+  attribute: string;
+  method: string;
+  root: string;
+  baseline: number;
+  scenarios: ScenarioResponse[];
+}
+
+export interface ScenarioResponse {
+  name: string;
+  total: number;
+  delta: number;
+  delta_pct: number;
+}
+
+export interface SweepInput {
+  parameter: string;
+  start: number;
+  end: number;
+  steps: number;
+}
+
+export interface SweepResponse {
+  attribute: string;
+  parameter: string;
+  root: string;
+  points: [number, number][];
+  sensitivity: number;
 }
 
 // Syntax highlighting token from tree-sitter

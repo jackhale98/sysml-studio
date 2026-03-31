@@ -133,6 +133,63 @@ impl ElementGraph {
                 }
             }
 
+            // Connection relationships from connect statements and connection usages
+            if el.kind == ElementKind::ConnectStatement || el.kind == ElementKind::ConnectionUsage {
+                if el.specializations.len() == 2 {
+                    let source_name = &el.specializations[0];
+                    let target_name = &el.specializations[1];
+                    if let (Some(src), Some(tgt)) = (
+                        elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
+                        elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
+                    ) {
+                        graph.add_relationship(Relationship {
+                            from_id: src.id,
+                            to_id: tgt.id,
+                            rel_type: RelationshipType::Connection,
+                            label: el.name.clone(),
+                        });
+                    }
+                }
+            }
+
+            // Flow relationships from flow statements and flow usages
+            if el.kind == ElementKind::FlowStatement || el.kind == ElementKind::FlowUsage {
+                if el.specializations.len() == 2 {
+                    let source_name = &el.specializations[0];
+                    let target_name = &el.specializations[1];
+                    if let (Some(src), Some(tgt)) = (
+                        elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
+                        elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
+                    ) {
+                        graph.add_relationship(Relationship {
+                            from_id: src.id,
+                            to_id: tgt.id,
+                            rel_type: RelationshipType::Flow,
+                            label: el.name.clone(),
+                        });
+                    }
+                }
+            }
+
+            // Dependency relationships
+            if el.kind == ElementKind::DependencyStatement {
+                if el.specializations.len() == 2 {
+                    let source_name = &el.specializations[0];
+                    let target_name = &el.specializations[1];
+                    if let (Some(src), Some(tgt)) = (
+                        elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
+                        elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
+                    ) {
+                        graph.add_relationship(Relationship {
+                            from_id: src.id,
+                            to_id: tgt.id,
+                            rel_type: RelationshipType::Dependency,
+                            label: el.name.clone(),
+                        });
+                    }
+                }
+            }
+
             // Allocation relationships
             if el.kind == ElementKind::AllocationUsage || el.kind == ElementKind::AllocateStatement {
                 if let (Some(parent_id), Some(ref type_ref)) = (el.parent_id, &el.type_ref) {
@@ -317,6 +374,53 @@ mod tests {
         // Impact of changing Engine def should include the part usage that references it
         let impact = graph.impact_analysis(2);
         assert!(impact.contains(&1), "engine usage should be impacted");
+    }
+
+    #[test]
+    fn test_connection_edges_from_connect_statement() {
+        // connect source.p1 to target.p2
+        let source_part = make_element(0, ElementKind::PartDef, "Source", None);
+        let target_part = make_element(1, ElementKind::PartDef, "Target", None);
+        let mut connect = make_element(2, ElementKind::ConnectStatement, "conn1", None);
+        connect.specializations = vec!["Source".to_string(), "Target".to_string()];
+
+        let elements = vec![source_part, target_part, connect];
+        let graph = ElementGraph::build_from_model(&elements);
+
+        let conn_rels: Vec<_> = graph.relationships_of_type(&RelationshipType::Connection);
+        assert_eq!(conn_rels.len(), 1, "Should have 1 connection relationship");
+        assert_eq!(conn_rels[0].from_id, 0);
+        assert_eq!(conn_rels[0].to_id, 1);
+    }
+
+    #[test]
+    fn test_flow_edges_from_flow_statement() {
+        let source_port = make_element(0, ElementKind::PortUsage, "outPort", None);
+        let target_port = make_element(1, ElementKind::PortUsage, "inPort", None);
+        let mut flow = make_element(2, ElementKind::FlowStatement, "flow1", None);
+        flow.specializations = vec!["outPort".to_string(), "inPort".to_string()];
+
+        let elements = vec![source_port, target_port, flow];
+        let graph = ElementGraph::build_from_model(&elements);
+
+        let flow_rels: Vec<_> = graph.relationships_of_type(&RelationshipType::Flow);
+        assert_eq!(flow_rels.len(), 1, "Should have 1 flow relationship");
+        assert_eq!(flow_rels[0].from_id, 0);
+        assert_eq!(flow_rels[0].to_id, 1);
+    }
+
+    #[test]
+    fn test_dependency_edges() {
+        let source = make_element(0, ElementKind::PartDef, "Client", None);
+        let target = make_element(1, ElementKind::PartDef, "Server", None);
+        let mut dep = make_element(2, ElementKind::DependencyStatement, "dep1", None);
+        dep.specializations = vec!["Client".to_string(), "Server".to_string()];
+
+        let elements = vec![source, target, dep];
+        let graph = ElementGraph::build_from_model(&elements);
+
+        let dep_rels: Vec<_> = graph.relationships_of_type(&RelationshipType::Dependency);
+        assert_eq!(dep_rels.len(), 1, "Should have 1 dependency relationship");
     }
 
     #[test]

@@ -5,6 +5,9 @@ import type {
   BomNode, ConstraintModel, CalcModel, EvalResult,
   StateMachineModel, SimulationState,
   ActionModel, ActionExecState,
+  RollupResponse, RollupTarget,
+  AnalysisCaseInfo, AnalysisEvalResult, TradeStudyResult,
+  ScenarioInput, WhatIfResponse, SweepInput, SweepResponse,
 } from "./element-types";
 
 async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -207,4 +210,48 @@ export async function computeUcdLayout(): Promise<DiagramLayout> {
 
 export async function computeIbdLayout(blockName?: string): Promise<DiagramLayout> {
   return tauriInvoke<DiagramLayout>("compute_ibd_layout", { blockName: blockName ?? null });
+}
+
+export async function computeActLayout(actionDefName: string): Promise<DiagramLayout> {
+  return tauriInvoke<DiagramLayout>("compute_act_layout", { actionDefName });
+}
+
+// Rollup Commands
+export async function computeRollup(rootDef: string, attribute: string, method?: string): Promise<RollupResponse> {
+  return tauriInvoke<RollupResponse>("compute_rollup", { rootDef, attribute, method: method ?? null });
+}
+
+export async function listRollupTargets(): Promise<RollupTarget[]> {
+  return tauriInvoke<RollupTarget[]>("list_rollup_targets");
+}
+
+// Analysis Case Commands
+export async function listAnalysisCases(): Promise<AnalysisCaseInfo[]> {
+  return tauriInvoke<AnalysisCaseInfo[]>("list_analysis_cases");
+}
+
+export async function evaluateAnalysisCase(caseName: string, bindings: Record<string, number>): Promise<AnalysisEvalResult> {
+  return tauriInvoke<AnalysisEvalResult>("evaluate_analysis_case", { caseName, bindings });
+}
+
+export async function evaluateTradeStudy(caseName: string): Promise<TradeStudyResult> {
+  return tauriInvoke<TradeStudyResult>("evaluate_trade_study", { caseName });
+}
+
+// What-If & Sensitivity Commands
+export async function evaluateWhatIf(
+  rootDef: string, attribute: string, scenarios: ScenarioInput[], method?: string,
+): Promise<WhatIfResponse> {
+  return tauriInvoke<WhatIfResponse>("evaluate_what_if", { rootDef, attribute, method: method ?? null, scenarios });
+}
+
+export async function evaluateSweep(
+  rootDef: string, attribute: string, sweep: SweepInput, method?: string,
+): Promise<SweepResponse> {
+  return tauriInvoke<SweepResponse>("evaluate_sweep", { rootDef, attribute, method: method ?? null, sweep });
+}
+
+// Unit Conversion
+export async function convertUnits(value: number, from: string, to: string): Promise<number> {
+  return tauriInvoke<number>("convert_units", { value, from, to });
 }

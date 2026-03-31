@@ -82,6 +82,14 @@ pub enum ElementKind {
     FunctionDef,
     PredicateDef,
     InteractionDef,
+    // --- KerML Usage Types ---
+    ClassUsage,
+    StructUsage,
+    AssocUsage,
+    DataTypeUsage,
+    BehaviorUsage,
+    ConnectorUsage,
+    TypeUsage,
     // --- Usage/Feature Types ---
     FeatureUsage,
     EndFeature,
@@ -90,6 +98,14 @@ pub enum ElementKind {
     EventUsage,
     SnapshotUsage,
     TimesliceUsage,
+    MessageUsage,
+    CaseUsage,
+    StepUsage,
+    ExprUsage,
+    ClassifierUsage,
+    MetaclassUsage,
+    ReturnUsage,
+    FrameUsage,
     // --- Behavioral Nodes ---
     PerformStatement,
     ExhibitStatement,
@@ -251,7 +267,13 @@ impl ElementKind {
             ElementKind::SnapshotUsage | ElementKind::TimesliceUsage | ElementKind::TransitionStatement |
             ElementKind::BindingUsage | ElementKind::BooleanExpressionUsage |
             ElementKind::InvariantUsage | ElementKind::SuccessionUsage |
-            ElementKind::SuccessionFlowUsage | ElementKind::SuccessionBranch
+            ElementKind::SuccessionFlowUsage | ElementKind::SuccessionBranch |
+            ElementKind::MessageUsage | ElementKind::CaseUsage | ElementKind::StepUsage |
+            ElementKind::ExprUsage | ElementKind::ClassifierUsage | ElementKind::MetaclassUsage |
+            ElementKind::ReturnUsage | ElementKind::FrameUsage |
+            ElementKind::ClassUsage | ElementKind::StructUsage | ElementKind::AssocUsage |
+            ElementKind::DataTypeUsage | ElementKind::BehaviorUsage |
+            ElementKind::ConnectorUsage | ElementKind::TypeUsage
         )
     }
 
@@ -323,6 +345,13 @@ impl ElementKind {
             ElementKind::FunctionDef => "Function Def",
             ElementKind::PredicateDef => "Predicate Def",
             ElementKind::InteractionDef => "Interaction Def",
+            ElementKind::ClassUsage => "Class",
+            ElementKind::StructUsage => "Struct",
+            ElementKind::AssocUsage => "Assoc",
+            ElementKind::DataTypeUsage => "Datatype",
+            ElementKind::BehaviorUsage => "Behavior",
+            ElementKind::ConnectorUsage => "Connector",
+            ElementKind::TypeUsage => "Type",
             ElementKind::FeatureUsage => "Feature",
             ElementKind::EndFeature => "End Feature",
             ElementKind::EnumMember => "Enum Value",
@@ -330,6 +359,14 @@ impl ElementKind {
             ElementKind::EventUsage => "Event",
             ElementKind::SnapshotUsage => "Snapshot",
             ElementKind::TimesliceUsage => "Timeslice",
+            ElementKind::MessageUsage => "Message",
+            ElementKind::CaseUsage => "Case",
+            ElementKind::StepUsage => "Step",
+            ElementKind::ExprUsage => "Expr",
+            ElementKind::ClassifierUsage => "Classifier",
+            ElementKind::MetaclassUsage => "Metaclass",
+            ElementKind::ReturnUsage => "Return",
+            ElementKind::FrameUsage => "Frame",
             ElementKind::PerformStatement => "Perform",
             ElementKind::ExhibitStatement => "Exhibit",
             ElementKind::IncludeStatement => "Include",

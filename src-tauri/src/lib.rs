@@ -32,6 +32,7 @@ pub fn run() {
             commands::diagram_commands::compute_req_layout,
             commands::diagram_commands::compute_ucd_layout,
             commands::diagram_commands::compute_ibd_layout,
+            commands::diagram_commands::compute_act_layout,
             commands::analysis_commands::compute_bom,
             commands::analysis_commands::list_constraints,
             commands::analysis_commands::list_calculations,
@@ -41,6 +42,14 @@ pub fn run() {
             commands::analysis_commands::simulate_state_machine,
             commands::analysis_commands::list_actions,
             commands::analysis_commands::execute_action,
+            commands::analysis_commands::compute_rollup,
+            commands::analysis_commands::list_rollup_targets,
+            commands::analysis_commands::list_analysis_cases,
+            commands::analysis_commands::evaluate_analysis_case,
+            commands::analysis_commands::evaluate_trade_study,
+            commands::analysis_commands::evaluate_what_if,
+            commands::analysis_commands::evaluate_sweep,
+            commands::analysis_commands::convert_units,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

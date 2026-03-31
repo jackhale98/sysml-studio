@@ -1,7 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
-import { computeBddLayout, computeStmLayout, computeReqLayout, computeUcdLayout, computeIbdLayout } from "../../lib/tauri-bridge";
+import { computeBddLayout, computeStmLayout, computeReqLayout, computeUcdLayout, computeIbdLayout, computeActLayout } from "../../lib/tauri-bridge";
 import type { DiagramLayout, DiagramNode, ViewData, SysmlElement, ElementKind } from "../../lib/element-types";
 import { evaluateView, mergeViewData, buildInterconnectionLayout } from "../../lib/view-evaluator";
 
@@ -99,6 +99,15 @@ export function DiagramView() {
           case "ibd":
             setLayout(await computeIbdLayout(isScopedPart ? scopeName : undefined));
             break;
+          case "act": {
+            const actionDef = model.elements.find(
+              (e) => typeof e.kind === "string" && e.kind === "action_def"
+            );
+            const actName = actionDef?.name;
+            if (actName) setLayout(await computeActLayout(actName));
+            else setLayout(null);
+            break;
+          }
         }
       } catch {
         setLayout(null);
@@ -137,7 +146,7 @@ export function DiagramView() {
 
     for (let i = layout.nodes.length - 1; i >= 0; i--) {
       const n = layout.nodes[i];
-      if (n.kind === "block_container" || n.kind === "system_boundary" || n.kind === "initial_state" || n.kind === "final_state") continue;
+      if (n.kind === "block_container" || n.kind === "system_boundary" || n.kind === "initial_state" || n.kind === "final_state" || n.kind === "initial" || n.kind === "final" || n.kind === "fork" || n.kind === "join") continue;
       if (svgX >= n.x && svgX <= n.x + n.width && svgY >= n.y && svgY <= n.y + n.height) {
         setHighlightedNode(n.label);
         return;
@@ -325,6 +334,7 @@ export function DiagramView() {
             <option value="req">Requirements Diagram</option>
             <option value="ucd">Use Case Diagram</option>
             <option value="ibd">Internal Block Diagram</option>
+            <option value="act">Activity Diagram</option>
           </optgroup>
           {customViews.length > 0 && (
             <optgroup label="Model Views">
@@ -499,7 +509,7 @@ export function DiagramView() {
           background: "rgba(15,23,42,0.8)", padding: "4px 10px", borderRadius: 6,
           border: "1px solid var(--border)",
         }}>
-          {{ bdd: "Block Definition", stm: "State Machine", req: "Requirements", ucd: "Use Case", ibd: "Internal Block" }[diagramType]}
+          {{ bdd: "Block Definition", stm: "State Machine", req: "Requirements", ucd: "Use Case", ibd: "Internal Block", act: "Activity" }[diagramType]}
         </div>
 
         {/* SVG */}
@@ -610,8 +620,8 @@ export function DiagramView() {
               const { kind } = node;
               const comps = node.compartments ?? [];
 
-              // Initial pseudo-state: filled circle
-              if (kind === "initial_state") {
+              // Initial pseudo-state: filled circle (STM and ACT)
+              if (kind === "initial_state" || kind === "initial") {
                 const cx = node.x + node.width / 2;
                 const cy = node.y + node.height / 2;
                 return (
@@ -622,8 +632,8 @@ export function DiagramView() {
                 );
               }
 
-              // Final pseudo-state: bull's eye
-              if (kind === "final_state") {
+              // Final pseudo-state: bull's eye (STM and ACT)
+              if (kind === "final_state" || kind === "final") {
                 const cx = node.x + node.width / 2;
                 const cy = node.y + node.height / 2;
                 return (
@@ -661,6 +671,56 @@ export function DiagramView() {
                     <text x={cx} y={node.y + node.height - 2}
                       fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"} fontSize="11"
                       fontWeight={600} fontFamily="var(--font-mono)"
+                      textAnchor="middle">{node.label}</text>
+                  </g>
+                );
+              }
+
+              // Fork/Join bar: thick horizontal bar (ACT)
+              if (kind === "fork" || kind === "join") {
+                return (
+                  <g key={node.element_id} opacity={effectiveHl && !isHl ? 0.25 : 1}>
+                    <rect x={node.x} y={node.y} width={node.width} height={node.height}
+                      fill="#475569" rx={2} />
+                    <text x={node.x + node.width / 2} y={node.y - 4}
+                      fill="var(--text-muted)" fontSize="9" fontFamily="var(--font-mono)"
+                      textAnchor="middle">{node.label}</text>
+                  </g>
+                );
+              }
+
+              // Decision diamond (ACT)
+              if (kind === "decide") {
+                const cx = node.x + node.width / 2;
+                const cy = node.y + node.height / 2;
+                const hw = node.width / 2;
+                const hh = node.height / 2;
+                return (
+                  <g key={node.element_id} opacity={effectiveHl && !isHl ? 0.25 : 1}
+                    onClick={() => setHighlightedNode(node.label)}
+                    style={{ cursor: "pointer" }}>
+                    <polygon points={`${cx},${cy - hh} ${cx + hw},${cy} ${cx},${cy + hh} ${cx - hw},${cy}`}
+                      fill="#fb923c22" stroke="#fb923c" strokeWidth={1.5} />
+                  </g>
+                );
+              }
+
+              // Action node: rounded rectangle (ACT)
+              if (kind === "action" || kind === "send" || kind === "accept") {
+                return (
+                  <g key={node.element_id}
+                    onClick={() => setHighlightedNode(node.label)}
+                    style={{ cursor: "pointer" }}
+                    opacity={effectiveHl && !isHl ? 0.25 : 1}
+                    filter={isHl ? "url(#glow)" : undefined}>
+                    <rect x={node.x} y={node.y} width={node.width} height={node.height}
+                      rx={12} ry={12}
+                      fill={`${node.color}22`}
+                      stroke={isHl ? "#60a5fa" : node.color}
+                      strokeWidth={isHl ? 2.5 : 1.5} />
+                    <text x={node.x + node.width / 2} y={node.y + node.height / 2 + 4}
+                      fill={isHl ? "var(--text-primary)" : "var(--text-secondary)"}
+                      fontSize="11" fontWeight={600} fontFamily="var(--font-mono)"
                       textAnchor="middle">{node.label}</text>
                   </g>
                 );
