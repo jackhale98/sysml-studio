@@ -134,59 +134,59 @@ impl ElementGraph {
             }
 
             // Connection relationships from connect statements and connection usages
-            if el.kind == ElementKind::ConnectStatement || el.kind == ElementKind::ConnectionUsage {
-                if el.specializations.len() == 2 {
-                    let source_name = &el.specializations[0];
-                    let target_name = &el.specializations[1];
-                    if let (Some(src), Some(tgt)) = (
-                        elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
-                        elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
-                    ) {
-                        graph.add_relationship(Relationship {
-                            from_id: src.id,
-                            to_id: tgt.id,
-                            rel_type: RelationshipType::Connection,
-                            label: el.name.clone(),
-                        });
-                    }
+            if (el.kind == ElementKind::ConnectStatement || el.kind == ElementKind::ConnectionUsage)
+                && el.specializations.len() == 2
+            {
+                let source_name = &el.specializations[0];
+                let target_name = &el.specializations[1];
+                if let (Some(src), Some(tgt)) = (
+                    elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
+                    elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
+                ) {
+                    graph.add_relationship(Relationship {
+                        from_id: src.id,
+                        to_id: tgt.id,
+                        rel_type: RelationshipType::Connection,
+                        label: el.name.clone(),
+                    });
                 }
             }
 
             // Flow relationships from flow statements and flow usages
-            if el.kind == ElementKind::FlowStatement || el.kind == ElementKind::FlowUsage {
-                if el.specializations.len() == 2 {
-                    let source_name = &el.specializations[0];
-                    let target_name = &el.specializations[1];
-                    if let (Some(src), Some(tgt)) = (
-                        elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
-                        elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
-                    ) {
-                        graph.add_relationship(Relationship {
-                            from_id: src.id,
-                            to_id: tgt.id,
-                            rel_type: RelationshipType::Flow,
-                            label: el.name.clone(),
-                        });
-                    }
+            if (el.kind == ElementKind::FlowStatement || el.kind == ElementKind::FlowUsage)
+                && el.specializations.len() == 2
+            {
+                let source_name = &el.specializations[0];
+                let target_name = &el.specializations[1];
+                if let (Some(src), Some(tgt)) = (
+                    elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
+                    elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
+                ) {
+                    graph.add_relationship(Relationship {
+                        from_id: src.id,
+                        to_id: tgt.id,
+                        rel_type: RelationshipType::Flow,
+                        label: el.name.clone(),
+                    });
                 }
             }
 
             // Dependency relationships
-            if el.kind == ElementKind::DependencyStatement {
-                if el.specializations.len() == 2 {
-                    let source_name = &el.specializations[0];
-                    let target_name = &el.specializations[1];
-                    if let (Some(src), Some(tgt)) = (
-                        elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
-                        elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
-                    ) {
-                        graph.add_relationship(Relationship {
-                            from_id: src.id,
-                            to_id: tgt.id,
-                            rel_type: RelationshipType::Dependency,
-                            label: el.name.clone(),
-                        });
-                    }
+            if el.kind == ElementKind::DependencyStatement
+                && el.specializations.len() == 2
+            {
+                let source_name = &el.specializations[0];
+                let target_name = &el.specializations[1];
+                if let (Some(src), Some(tgt)) = (
+                    elements.iter().find(|e| e.name.as_deref() == Some(source_name.as_str())),
+                    elements.iter().find(|e| e.name.as_deref() == Some(target_name.as_str())),
+                ) {
+                    graph.add_relationship(Relationship {
+                        from_id: src.id,
+                        to_id: tgt.id,
+                        rel_type: RelationshipType::Dependency,
+                        label: el.name.clone(),
+                    });
                 }
             }
 
