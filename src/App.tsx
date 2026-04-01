@@ -335,6 +335,94 @@ export const SAMPLE_SOURCE = `package VehicleSystem {
     satisfy Efficiency;
   }
 
+  // Constraint definitions (SysML v2 §7.12)
+  constraint def MassLimit {
+    in totalMass : Real;
+    in maxMass : Real;
+    totalMass <= maxMass;
+  }
+
+  constraint def CostBudget {
+    in totalCost : Real;
+    in budget : Real;
+    totalCost <= budget;
+  }
+
+  // Allocations (SysML v2 §7.15)
+  part def SystemArchitecture {
+    doc /* Logical to physical allocation */
+    part processing : ECU;
+    part powerSupply : Battery;
+    allocate SafetyReq to processing;
+    allocate Efficiency to powerSupply;
+  }
+
+  // Analysis case with trade study (SysML v2 §7.16)
+  analysis def PowertrainTradeStudy {
+    doc /* Compare powertrain configurations for mass vs cost */
+    subject vehicle : Vehicle;
+    objective minimizeObj {
+      doc /* Minimize total vehicle mass */
+    }
+
+    part alternative1 : Vehicle {
+      doc /* Lightweight aluminum */
+    }
+    part alternative2 : Vehicle {
+      doc /* Standard steel */
+    }
+    part alternative3 : Vehicle {
+      doc /* Carbon fiber composite */
+    }
+
+    return tradeScore : Real;
+  }
+
+  analysis def FuelEfficiencyAnalysis {
+    doc /* Analyze fuel efficiency across operating conditions */
+    subject vehicle : Vehicle;
+    objective maximizeObj {
+      doc /* Maximize range per unit fuel */
+    }
+    return rangeEstimate : Real;
+  }
+
+  // Parallel startup with decision (activity diagram showcase)
+  action def VehicleStartup {
+    action insertKey;
+    action checkDashboard;
+    action fastenerSeatbelt;
+    action adjustMirrors;
+    action startIgnition;
+    action warmUpEngine;
+    action checkInstruments;
+
+    fork forkPrep;
+    join joinPrep;
+    fork forkWarmup;
+    join joinWarmup;
+
+    // Insert key, then prepare cabin in parallel
+    first start then insertKey;
+    first insertKey then forkPrep;
+      then checkDashboard;
+      then fastenerSeatbelt;
+      then adjustMirrors;
+    first checkDashboard then joinPrep;
+    first fastenerSeatbelt then joinPrep;
+    first adjustMirrors then joinPrep;
+
+    // Start engine, then warm up and check in parallel
+    first joinPrep then startIgnition;
+    first startIgnition then forkWarmup;
+      then warmUpEngine;
+      then checkInstruments;
+    first warmUpEngine then joinWarmup;
+    first checkInstruments then joinWarmup;
+
+    first joinWarmup then done;
+  }
+
   // User-defined views (SysML v2 §7.18)
   view def StructureOverview {
     expose VehicleSystem::**;
