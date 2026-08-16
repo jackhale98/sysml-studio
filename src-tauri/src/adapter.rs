@@ -652,7 +652,7 @@ pub fn run_core_checks(
     all_models.extend_from_slice(siblings);
     diags.extend(sysml_core::checks::value_constraints::check_value_constraints(
         &all_models,
-        &[core_model.file.clone()],
+        std::slice::from_ref(&core_model.file),
     ));
 
     diags
@@ -673,207 +673,6 @@ pub fn run_core_checks(
             }
         })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_usage_kind_mapping_covers_all_sysml_kinds() {
-        // Standard SysML usage kinds
-        let sysml_kinds = vec![
-            ("part", ElementKind::PartUsage),
-            ("attribute", ElementKind::AttributeUsage),
-            ("attr", ElementKind::AttributeUsage),
-            ("port", ElementKind::PortUsage),
-            ("connection", ElementKind::ConnectionUsage),
-            ("interface", ElementKind::InterfaceUsage),
-            ("item", ElementKind::ItemUsage),
-            ("action", ElementKind::ActionUsage),
-            ("state", ElementKind::StateUsage),
-            ("constraint", ElementKind::ConstraintUsage),
-            ("requirement", ElementKind::RequirementUsage),
-            ("concern", ElementKind::ConcernUsage),
-            ("view", ElementKind::ViewUsage),
-            ("viewpoint", ElementKind::ViewpointUsage),
-            ("rendering", ElementKind::RenderingUsage),
-            ("allocation", ElementKind::AllocationUsage),
-            ("analysis", ElementKind::AnalysisUsage),
-            ("use case", ElementKind::UseCaseUsage),
-            ("verification", ElementKind::VerificationUsage),
-            ("occurrence", ElementKind::OccurrenceUsage),
-            ("flow", ElementKind::FlowUsage),
-            ("metadata", ElementKind::MetadataUsage),
-            ("calc", ElementKind::CalcUsage),
-            ("ref", ElementKind::RefUsage),
-            ("event", ElementKind::EventUsage),
-            ("enum", ElementKind::EnumMember),
-            ("transition", ElementKind::TransitionStatement),
-            ("succession", ElementKind::SuccessionUsage),
-            ("fork_node", ElementKind::ForkNode),
-            ("join_node", ElementKind::JoinNode),
-            ("merge_node", ElementKind::MergeNode),
-            ("decide_node", ElementKind::DecideNode),
-            ("then_succession", ElementKind::SuccessionBranch),
-            ("binding", ElementKind::BindingUsage),
-            ("snapshot", ElementKind::SnapshotUsage),
-            ("timeslice", ElementKind::TimesliceUsage),
-            ("feature", ElementKind::FeatureUsage),
-            ("end", ElementKind::EndFeature),
-        ];
-
-        for (kind_str, expected) in sysml_kinds {
-            let result = usage_kind_to_element_kind(kind_str);
-            assert_eq!(result, expected, "usage kind '{}' should map to {:?}", kind_str, expected);
-        }
-    }
-
-    #[test]
-    fn test_usage_kind_mapping_covers_new_kinds() {
-        let new_kinds = vec![
-            ("message", ElementKind::MessageUsage),
-            ("case", ElementKind::UseCaseUsage),
-            ("step", ElementKind::StepUsage),
-            ("expr", ElementKind::ExprUsage),
-            ("classifier", ElementKind::ClassifierUsage),
-            ("metaclass", ElementKind::MetaclassUsage),
-            ("succession flow", ElementKind::SuccessionFlowUsage),
-            ("frame", ElementKind::FrameUsage),
-            ("return", ElementKind::ReturnUsage),
-            ("subject", ElementKind::SubjectDeclaration),
-            ("objective", ElementKind::ObjectiveDeclaration),
-            ("actor", ElementKind::ActorDeclaration),
-            ("stakeholder", ElementKind::StakeholderDeclaration),
-        ];
-
-        for (kind_str, expected) in new_kinds {
-            let result = usage_kind_to_element_kind(kind_str);
-            assert_eq!(result, expected, "new usage kind '{}' should map to {:?}", kind_str, expected);
-        }
-    }
-
-    #[test]
-    fn test_usage_kind_mapping_covers_kerml_kinds() {
-        let kerml_kinds = vec![
-            ("assoc", ElementKind::AssocUsage),
-            ("behavior", ElementKind::BehaviorUsage),
-            ("class", ElementKind::ClassUsage),
-            ("connector", ElementKind::ConnectorUsage),
-            ("datatype", ElementKind::DataTypeUsage),
-            ("struct", ElementKind::StructUsage),
-            ("type", ElementKind::TypeUsage),
-        ];
-
-        for (kind_str, expected) in kerml_kinds {
-            let result = usage_kind_to_element_kind(kind_str);
-            assert_eq!(result, expected, "KerML usage kind '{}' should map to {:?}", kind_str, expected);
-        }
-    }
-
-    #[test]
-    fn test_unknown_kind_maps_to_other() {
-        let result = usage_kind_to_element_kind("some_unknown_thing");
-        assert!(matches!(result, ElementKind::Other(_)));
-    }
-
-    #[test]
-    fn test_def_kind_mapping_covers_all_variants() {
-        use sysml_core::model::DefKind;
-
-        let all_def_kinds = vec![
-            (DefKind::Part, ElementKind::PartDef),
-            (DefKind::Port, ElementKind::PortDef),
-            (DefKind::Connection, ElementKind::ConnectionDef),
-            (DefKind::Interface, ElementKind::InterfaceDef),
-            (DefKind::Flow, ElementKind::FlowDef),
-            (DefKind::Action, ElementKind::ActionDef),
-            (DefKind::State, ElementKind::StateDef),
-            (DefKind::Constraint, ElementKind::ConstraintDef),
-            (DefKind::Calc, ElementKind::CalcDef),
-            (DefKind::Requirement, ElementKind::RequirementDef),
-            (DefKind::UseCase, ElementKind::UseCaseDef),
-            (DefKind::Verification, ElementKind::VerificationCaseDef),
-            (DefKind::Analysis, ElementKind::AnalysisCaseDef),
-            (DefKind::Concern, ElementKind::ConcernDef),
-            (DefKind::View, ElementKind::ViewDef),
-            (DefKind::Viewpoint, ElementKind::ViewpointDef),
-            (DefKind::Rendering, ElementKind::RenderingDef),
-            (DefKind::Enum, ElementKind::EnumerationDef),
-            (DefKind::Attribute, ElementKind::AttributeDef),
-            (DefKind::Item, ElementKind::ItemDef),
-            (DefKind::Allocation, ElementKind::AllocationDef),
-            (DefKind::Occurrence, ElementKind::OccurrenceDef),
-            (DefKind::Package, ElementKind::Package),
-            // KerML
-            (DefKind::Class, ElementKind::ClassDef),
-            (DefKind::Struct, ElementKind::StructDef),
-            (DefKind::Assoc, ElementKind::AssocDef),
-            (DefKind::Behavior, ElementKind::BehaviorDef),
-            (DefKind::Datatype, ElementKind::DataTypeDef),
-            (DefKind::Feature, ElementKind::FeatureUsage),
-            (DefKind::Function, ElementKind::FunctionDef),
-            (DefKind::Interaction, ElementKind::InteractionDef),
-            (DefKind::Connector, ElementKind::ConnectionDef),
-            (DefKind::Predicate, ElementKind::PredicateDef),
-            (DefKind::Namespace, ElementKind::Package),
-            (DefKind::Metaclass, ElementKind::MetadataDef),
-            (DefKind::Metadata, ElementKind::MetadataDef),
-            (DefKind::Expr, ElementKind::CalcDef),
-            (DefKind::Step, ElementKind::ActionUsage),
-            (DefKind::Annotation, ElementKind::Comment),
-        ];
-
-        for (def_kind, expected) in all_def_kinds {
-            let result = def_kind_to_element_kind(&def_kind);
-            assert_eq!(result, expected, "DefKind::{:?} should map to {:?}", def_kind, expected);
-        }
-    }
-
-    #[test]
-    fn test_all_element_kinds_have_category() {
-        // Ensure no panic from element_kind_to_category for all known kinds
-        let all_kinds = vec![
-            ElementKind::Package, ElementKind::PartDef, ElementKind::PartUsage,
-            ElementKind::AttributeDef, ElementKind::AttributeUsage,
-            ElementKind::PortDef, ElementKind::PortUsage,
-            ElementKind::ConnectionDef, ElementKind::ConnectionUsage,
-            ElementKind::InterfaceDef, ElementKind::InterfaceUsage,
-            ElementKind::ActionDef, ElementKind::ActionUsage,
-            ElementKind::StateDef, ElementKind::StateUsage,
-            ElementKind::ConstraintDef, ElementKind::ConstraintUsage,
-            ElementKind::RequirementDef, ElementKind::RequirementUsage,
-            ElementKind::FlowDef, ElementKind::FlowUsage,
-            // New kinds
-            ElementKind::MessageUsage, ElementKind::CaseUsage,
-            ElementKind::StepUsage, ElementKind::ExprUsage,
-            ElementKind::ClassifierUsage, ElementKind::MetaclassUsage,
-            ElementKind::ReturnUsage, ElementKind::FrameUsage,
-            ElementKind::ClassUsage, ElementKind::StructUsage,
-            ElementKind::AssocUsage, ElementKind::DataTypeUsage,
-            ElementKind::BehaviorUsage, ElementKind::ConnectorUsage,
-            ElementKind::TypeUsage,
-        ];
-
-        for kind in all_kinds {
-            let _ = element_kind_to_category(&kind); // should not panic
-        }
-    }
-
-    #[test]
-    fn test_new_kinds_correct_categories() {
-        assert_eq!(element_kind_to_category(&ElementKind::MessageUsage), Category::Interface);
-        assert_eq!(element_kind_to_category(&ElementKind::ConnectorUsage), Category::Interface);
-        assert_eq!(element_kind_to_category(&ElementKind::StepUsage), Category::Behavior);
-        assert_eq!(element_kind_to_category(&ElementKind::BehaviorUsage), Category::Behavior);
-        assert_eq!(element_kind_to_category(&ElementKind::CaseUsage), Category::Behavior);
-        assert_eq!(element_kind_to_category(&ElementKind::ExprUsage), Category::Property);
-        assert_eq!(element_kind_to_category(&ElementKind::ReturnUsage), Category::Property);
-        assert_eq!(element_kind_to_category(&ElementKind::ClassUsage), Category::Structure);
-        assert_eq!(element_kind_to_category(&ElementKind::StructUsage), Category::Structure);
-        assert_eq!(element_kind_to_category(&ElementKind::TypeUsage), Category::Structure);
-        assert_eq!(element_kind_to_category(&ElementKind::FrameUsage), Category::Auxiliary);
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1077,5 +876,206 @@ pub fn core_completeness(
         score_source: s.score_source.clone(),
         summary,
         gates,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_usage_kind_mapping_covers_all_sysml_kinds() {
+        // Standard SysML usage kinds
+        let sysml_kinds = vec![
+            ("part", ElementKind::PartUsage),
+            ("attribute", ElementKind::AttributeUsage),
+            ("attr", ElementKind::AttributeUsage),
+            ("port", ElementKind::PortUsage),
+            ("connection", ElementKind::ConnectionUsage),
+            ("interface", ElementKind::InterfaceUsage),
+            ("item", ElementKind::ItemUsage),
+            ("action", ElementKind::ActionUsage),
+            ("state", ElementKind::StateUsage),
+            ("constraint", ElementKind::ConstraintUsage),
+            ("requirement", ElementKind::RequirementUsage),
+            ("concern", ElementKind::ConcernUsage),
+            ("view", ElementKind::ViewUsage),
+            ("viewpoint", ElementKind::ViewpointUsage),
+            ("rendering", ElementKind::RenderingUsage),
+            ("allocation", ElementKind::AllocationUsage),
+            ("analysis", ElementKind::AnalysisUsage),
+            ("use case", ElementKind::UseCaseUsage),
+            ("verification", ElementKind::VerificationUsage),
+            ("occurrence", ElementKind::OccurrenceUsage),
+            ("flow", ElementKind::FlowUsage),
+            ("metadata", ElementKind::MetadataUsage),
+            ("calc", ElementKind::CalcUsage),
+            ("ref", ElementKind::RefUsage),
+            ("event", ElementKind::EventUsage),
+            ("enum", ElementKind::EnumMember),
+            ("transition", ElementKind::TransitionStatement),
+            ("succession", ElementKind::SuccessionUsage),
+            ("fork_node", ElementKind::ForkNode),
+            ("join_node", ElementKind::JoinNode),
+            ("merge_node", ElementKind::MergeNode),
+            ("decide_node", ElementKind::DecideNode),
+            ("then_succession", ElementKind::SuccessionBranch),
+            ("binding", ElementKind::BindingUsage),
+            ("snapshot", ElementKind::SnapshotUsage),
+            ("timeslice", ElementKind::TimesliceUsage),
+            ("feature", ElementKind::FeatureUsage),
+            ("end", ElementKind::EndFeature),
+        ];
+
+        for (kind_str, expected) in sysml_kinds {
+            let result = usage_kind_to_element_kind(kind_str);
+            assert_eq!(result, expected, "usage kind '{}' should map to {:?}", kind_str, expected);
+        }
+    }
+
+    #[test]
+    fn test_usage_kind_mapping_covers_new_kinds() {
+        let new_kinds = vec![
+            ("message", ElementKind::MessageUsage),
+            ("case", ElementKind::UseCaseUsage),
+            ("step", ElementKind::StepUsage),
+            ("expr", ElementKind::ExprUsage),
+            ("classifier", ElementKind::ClassifierUsage),
+            ("metaclass", ElementKind::MetaclassUsage),
+            ("succession flow", ElementKind::SuccessionFlowUsage),
+            ("frame", ElementKind::FrameUsage),
+            ("return", ElementKind::ReturnUsage),
+            ("subject", ElementKind::SubjectDeclaration),
+            ("objective", ElementKind::ObjectiveDeclaration),
+            ("actor", ElementKind::ActorDeclaration),
+            ("stakeholder", ElementKind::StakeholderDeclaration),
+        ];
+
+        for (kind_str, expected) in new_kinds {
+            let result = usage_kind_to_element_kind(kind_str);
+            assert_eq!(result, expected, "new usage kind '{}' should map to {:?}", kind_str, expected);
+        }
+    }
+
+    #[test]
+    fn test_usage_kind_mapping_covers_kerml_kinds() {
+        let kerml_kinds = vec![
+            ("assoc", ElementKind::AssocUsage),
+            ("behavior", ElementKind::BehaviorUsage),
+            ("class", ElementKind::ClassUsage),
+            ("connector", ElementKind::ConnectorUsage),
+            ("datatype", ElementKind::DataTypeUsage),
+            ("struct", ElementKind::StructUsage),
+            ("type", ElementKind::TypeUsage),
+        ];
+
+        for (kind_str, expected) in kerml_kinds {
+            let result = usage_kind_to_element_kind(kind_str);
+            assert_eq!(result, expected, "KerML usage kind '{}' should map to {:?}", kind_str, expected);
+        }
+    }
+
+    #[test]
+    fn test_unknown_kind_maps_to_other() {
+        let result = usage_kind_to_element_kind("some_unknown_thing");
+        assert!(matches!(result, ElementKind::Other(_)));
+    }
+
+    #[test]
+    fn test_def_kind_mapping_covers_all_variants() {
+        use sysml_core::model::DefKind;
+
+        let all_def_kinds = vec![
+            (DefKind::Part, ElementKind::PartDef),
+            (DefKind::Port, ElementKind::PortDef),
+            (DefKind::Connection, ElementKind::ConnectionDef),
+            (DefKind::Interface, ElementKind::InterfaceDef),
+            (DefKind::Flow, ElementKind::FlowDef),
+            (DefKind::Action, ElementKind::ActionDef),
+            (DefKind::State, ElementKind::StateDef),
+            (DefKind::Constraint, ElementKind::ConstraintDef),
+            (DefKind::Calc, ElementKind::CalcDef),
+            (DefKind::Requirement, ElementKind::RequirementDef),
+            (DefKind::UseCase, ElementKind::UseCaseDef),
+            (DefKind::Verification, ElementKind::VerificationCaseDef),
+            (DefKind::Analysis, ElementKind::AnalysisCaseDef),
+            (DefKind::Concern, ElementKind::ConcernDef),
+            (DefKind::View, ElementKind::ViewDef),
+            (DefKind::Viewpoint, ElementKind::ViewpointDef),
+            (DefKind::Rendering, ElementKind::RenderingDef),
+            (DefKind::Enum, ElementKind::EnumerationDef),
+            (DefKind::Attribute, ElementKind::AttributeDef),
+            (DefKind::Item, ElementKind::ItemDef),
+            (DefKind::Allocation, ElementKind::AllocationDef),
+            (DefKind::Occurrence, ElementKind::OccurrenceDef),
+            (DefKind::Package, ElementKind::Package),
+            // KerML
+            (DefKind::Class, ElementKind::ClassDef),
+            (DefKind::Struct, ElementKind::StructDef),
+            (DefKind::Assoc, ElementKind::AssocDef),
+            (DefKind::Behavior, ElementKind::BehaviorDef),
+            (DefKind::Datatype, ElementKind::DataTypeDef),
+            (DefKind::Feature, ElementKind::FeatureUsage),
+            (DefKind::Function, ElementKind::FunctionDef),
+            (DefKind::Interaction, ElementKind::InteractionDef),
+            (DefKind::Connector, ElementKind::ConnectionDef),
+            (DefKind::Predicate, ElementKind::PredicateDef),
+            (DefKind::Namespace, ElementKind::Package),
+            (DefKind::Metaclass, ElementKind::MetadataDef),
+            (DefKind::Metadata, ElementKind::MetadataDef),
+            (DefKind::Expr, ElementKind::CalcDef),
+            (DefKind::Step, ElementKind::ActionUsage),
+            (DefKind::Annotation, ElementKind::Comment),
+        ];
+
+        for (def_kind, expected) in all_def_kinds {
+            let result = def_kind_to_element_kind(&def_kind);
+            assert_eq!(result, expected, "DefKind::{:?} should map to {:?}", def_kind, expected);
+        }
+    }
+
+    #[test]
+    fn test_all_element_kinds_have_category() {
+        // Ensure no panic from element_kind_to_category for all known kinds
+        let all_kinds = vec![
+            ElementKind::Package, ElementKind::PartDef, ElementKind::PartUsage,
+            ElementKind::AttributeDef, ElementKind::AttributeUsage,
+            ElementKind::PortDef, ElementKind::PortUsage,
+            ElementKind::ConnectionDef, ElementKind::ConnectionUsage,
+            ElementKind::InterfaceDef, ElementKind::InterfaceUsage,
+            ElementKind::ActionDef, ElementKind::ActionUsage,
+            ElementKind::StateDef, ElementKind::StateUsage,
+            ElementKind::ConstraintDef, ElementKind::ConstraintUsage,
+            ElementKind::RequirementDef, ElementKind::RequirementUsage,
+            ElementKind::FlowDef, ElementKind::FlowUsage,
+            // New kinds
+            ElementKind::MessageUsage, ElementKind::CaseUsage,
+            ElementKind::StepUsage, ElementKind::ExprUsage,
+            ElementKind::ClassifierUsage, ElementKind::MetaclassUsage,
+            ElementKind::ReturnUsage, ElementKind::FrameUsage,
+            ElementKind::ClassUsage, ElementKind::StructUsage,
+            ElementKind::AssocUsage, ElementKind::DataTypeUsage,
+            ElementKind::BehaviorUsage, ElementKind::ConnectorUsage,
+            ElementKind::TypeUsage,
+        ];
+
+        for kind in all_kinds {
+            let _ = element_kind_to_category(&kind); // should not panic
+        }
+    }
+
+    #[test]
+    fn test_new_kinds_correct_categories() {
+        assert_eq!(element_kind_to_category(&ElementKind::MessageUsage), Category::Interface);
+        assert_eq!(element_kind_to_category(&ElementKind::ConnectorUsage), Category::Interface);
+        assert_eq!(element_kind_to_category(&ElementKind::StepUsage), Category::Behavior);
+        assert_eq!(element_kind_to_category(&ElementKind::BehaviorUsage), Category::Behavior);
+        assert_eq!(element_kind_to_category(&ElementKind::CaseUsage), Category::Behavior);
+        assert_eq!(element_kind_to_category(&ElementKind::ExprUsage), Category::Property);
+        assert_eq!(element_kind_to_category(&ElementKind::ReturnUsage), Category::Property);
+        assert_eq!(element_kind_to_category(&ElementKind::ClassUsage), Category::Structure);
+        assert_eq!(element_kind_to_category(&ElementKind::StructUsage), Category::Structure);
+        assert_eq!(element_kind_to_category(&ElementKind::TypeUsage), Category::Structure);
+        assert_eq!(element_kind_to_category(&ElementKind::FrameUsage), Category::Auxiliary);
     }
 }

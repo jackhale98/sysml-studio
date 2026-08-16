@@ -178,8 +178,10 @@ fn rollup_attr_keys(merged: &sysml_core::model::Model, def_name: &str) -> Vec<St
         for u in merged.usages.iter().filter(|u| u.parent_def.as_deref() == Some(d.as_str())) {
             if u.kind == "attribute" {
                 if let Some(v) = u.value_expr.as_deref() {
-                    if sysml_core::sim::resolve::parse_value_with_unit(v).is_some() {
-                        if !keys.contains(&u.name) { keys.push(u.name.clone()); }
+                    if sysml_core::sim::resolve::parse_value_with_unit(v).is_some()
+                        && !keys.contains(&u.name)
+                    {
+                        keys.push(u.name.clone());
                     }
                 }
             } else if u.kind == "part" {
@@ -713,28 +715,6 @@ pub async fn convert_units(value: f64, from: String, to: String) -> Result<f64, 
 mod tests {
     use super::*;
 
-    fn make_el(
-        id: ElementId, kind: ElementKind, name: &str,
-        parent_id: Option<ElementId>, type_ref: Option<&str>,
-        value_expr: Option<&str>, multiplicity: Option<&str>,
-    ) -> SysmlElement {
-        SysmlElement {
-            id, kind,
-            name: Some(name.to_string()),
-            qualified_name: name.to_string(),
-            category: Category::Structure,
-            parent_id,
-            children_ids: vec![],
-            span: SourceSpan { start_line: 0, start_col: 0, end_line: 0, end_col: 0, start_byte: 0, end_byte: 0 },
-            type_ref: type_ref.map(String::from),
-            specializations: vec![],
-            modifiers: vec![],
-            multiplicity: multiplicity.map(String::from),
-            doc: None,
-            short_name: None,
-            value_expr: value_expr.map(String::from),
-        }
-    }
 
     /// End-to-end: parse real SysML, then assert the BOM tree's numbers
     /// EQUAL sysml-core's rollup engine on the same model - the invariant

@@ -274,9 +274,6 @@ impl ElementGraph {
         visited.into_iter().collect()
     }
 
-    /// MBSE: Get traceability chain for requirements
-
-
 
     /// Get relationships of a specific type
     pub fn relationships_of_type(&self, rel_type: &RelationshipType) -> Vec<&Relationship> {
