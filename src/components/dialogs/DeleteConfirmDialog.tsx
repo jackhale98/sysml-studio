@@ -29,8 +29,8 @@ export function DeleteConfirmDialog() {
 
   // Show source that will be removed
   const sourceLines = source.split("\n");
-  const contextStart = Math.max(0, element.span.start_line);
-  const contextEnd = Math.min(sourceLines.length, element.span.end_line + 1);
+  const contextStart = Math.max(0, element.span.start_line - 1);
+  const contextEnd = Math.min(sourceLines.length, element.span.end_line);
   const contextSnippet = sourceLines.slice(contextStart, contextEnd).join("\n");
 
   function handleDelete() {
@@ -90,7 +90,7 @@ export function DeleteConfirmDialog() {
           <div style={{
             fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)",
           }}>
-            {getKindLabel(kindStr)} — Line {element.span.start_line + 1}
+            {getKindLabel(kindStr)} — Line {element.span.start_line}
           </div>
         </div>
 

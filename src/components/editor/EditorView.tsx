@@ -218,7 +218,7 @@ export function EditorView() {
   useEffect(() => {
     const view = viewRef.current;
     if (view && scrollToLine !== null) {
-      const line = Math.min(scrollToLine + 1, view.state.doc.lines);
+      const line = Math.max(1, Math.min(scrollToLine, view.state.doc.lines));
       const lineInfo = view.state.doc.line(line);
 
       view.dispatch({

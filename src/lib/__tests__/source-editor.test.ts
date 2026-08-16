@@ -9,6 +9,11 @@ import type { SysmlElement, SysmlModel, Category, SourceSpan } from "../element-
 
 // ─── Helpers ───
 
+/**
+ * Spans are 1-based (sysml-core's `Span::from_node` convention). The
+ * test call sites historically passed 0-based rows; the +1 here keeps
+ * them meaning "the same source line" under the correct convention.
+ */
 function makeSpan(
   startLine: number,
   endLine: number,
@@ -16,9 +21,9 @@ function makeSpan(
   endCol = 0,
 ): SourceSpan {
   return {
-    start_line: startLine,
+    start_line: startLine + 1,
     start_col: startCol,
-    end_line: endLine,
+    end_line: endLine + 1,
     end_col: endCol,
     start_byte: 0,
     end_byte: 0,

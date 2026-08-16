@@ -15,8 +15,8 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-export async function parseSource(source: string): Promise<SysmlModel> {
-  return tauriInvoke<SysmlModel>("parse_source", { source });
+export async function parseSource(source: string, path?: string): Promise<SysmlModel> {
+  return tauriInvoke<SysmlModel>("parse_source", { source, path: path ?? null });
 }
 
 export async function openFile(path: string): Promise<[SysmlModel, string]> {
@@ -53,43 +53,6 @@ export async function pickSaveFile(defaultName?: string): Promise<string | null>
  * Resolve imports: scan source for `import` statements, load referenced files
  * from the same directory, and return combined source.
  */
-export async function resolveImports(source: string, filePath: string): Promise<string> {
-  const { readTextFile } = await import("@tauri-apps/plugin-fs");
-  const dir = filePath.substring(0, filePath.lastIndexOf("/") + 1) || filePath.substring(0, filePath.lastIndexOf("\\") + 1);
-  if (!dir) return source;
-
-  const currentFileName = filePath.split("/").pop()?.split("\\").pop() ?? "";
-  const resolvedFiles = new Set<string>([currentFileName]);
-  const importedSources: string[] = [];
-
-  const pendingSources = [source];
-  while (pendingSources.length > 0) {
-    const currentSource = pendingSources.pop()!;
-    const importRegex = /^\s*import\s+(\w+)/gm;
-    let match;
-    while ((match = importRegex.exec(currentSource)) !== null) {
-      const name = match[1];
-      for (const ext of [".sysml", ".sysml2"]) {
-        const fname = name + ext;
-        if (resolvedFiles.has(fname)) break;
-        try {
-          const importPath = dir + fname;
-          const importSource = await readTextFile(importPath);
-          resolvedFiles.add(fname);
-          importedSources.push(`// --- Imported from ${fname} ---\n${importSource}`);
-          pendingSources.push(importSource);
-          break;
-        } catch {
-          // File doesn't exist with this extension, try next
-        }
-      }
-    }
-  }
-
-  if (importedSources.length === 0) return source;
-  return importedSources.join("\n\n") + "\n\n" + source;
-}
-
 /** Read a file picked via browser <input type="file"> (used on iOS) */
 export function readBrowserFile(file: File): Promise<string> {
   return new Promise((resolve, reject) => {

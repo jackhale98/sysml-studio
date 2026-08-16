@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import type { SysmlModel, SysmlElement, CompletenessReport, TraceabilityEntry, ValidationReport } from "../lib/element-types";
 import {
-  parseSource, openFile, saveFile, resolveImports,
+  parseSource, openFile, saveFile,
   getCompletenessReport, getTraceabilityMatrix, getValidation,
 } from "../lib/tauri-bridge";
 
@@ -14,7 +14,6 @@ export interface OpenFile {
   /** Raw source text (what the user edits) */
   source: string;
   /** Cached prefix from imported sibling files */
-  importedPrefix: string;
   /** Disk path (null for untitled or browser-loaded) */
   filePath: string | null;
   /** Has unsaved changes */
@@ -55,31 +54,19 @@ interface ModelState {
   clearError: () => void;
 }
 
-/** Combine all open file sources for a unified parse */
-function buildCombinedSource(files: Record<string, OpenFile>, activeId: string | null): string {
-  const parts: string[] = [];
-  for (const [id, file] of Object.entries(files)) {
-    if (id === activeId) continue;
-    if (file.source.trim()) {
-      parts.push(`// --- From ${file.name} ---\n${file.source}`);
-    }
-  }
-  if (activeId && files[activeId]) {
-    const active = files[activeId];
-    if (active.importedPrefix) {
-      parts.push(active.importedPrefix);
-    }
-    parts.push(active.source);
-  }
-  return parts.join("\n\n");
-}
-
+/**
+ * Parse the ACTIVE file only. Its spans always index exactly the text
+ * in the editor. Cross-file resolution (imports, satisfy/verify across
+ * files, W017 value pools) happens backend-side via resolver::Project
+ * over the file's directory — never by concatenating sources, which
+ * corrupted every span.
+ */
 async function reparseAll(
   files: Record<string, OpenFile>,
   activeId: string | null,
 ): Promise<SysmlModel> {
-  const combined = buildCombinedSource(files, activeId);
-  return parseSource(combined);
+  const active = activeId ? files[activeId] : null;
+  return parseSource(active?.source ?? "", active?.filePath ?? undefined);
 }
 
 /** Extract mirror fields from active file */
@@ -109,7 +96,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
     const id = filePath ?? `untitled-${nextUntitledId++}.sysml`;
     const name = filePath?.split("/").pop()?.split("\\").pop() ?? id;
     const newFile: OpenFile = {
-      id, name, source, importedPrefix: "", filePath: filePath ?? null, dirty: false,
+      id, name, source, filePath: filePath ?? null, dirty: false,
     };
     const files = { ...get().openFiles, [id]: newFile };
     set({ openFiles: files, activeFileId: id, loading: true, error: null, ...mirrorActive(files, id) });
@@ -141,15 +128,10 @@ export const useModelStore = create<ModelState>((set, get) => ({
     set({ loading: true, error: null });
     try {
       const [_model, rawSource] = await openFile(path);
-      const resolved = await resolveImports(rawSource, path);
-      let importedPrefix = "";
-      if (resolved !== rawSource) {
-        importedPrefix = resolved.substring(0, resolved.length - rawSource.length);
-      }
 
       const name = path.split("/").pop()?.split("\\").pop() ?? "file.sysml";
       const newFile: OpenFile = {
-        id: path, name, source: rawSource, importedPrefix, filePath: path, dirty: false,
+        id: path, name, source: rawSource, filePath: path, dirty: false,
       };
       const files = { ...get().openFiles, [path]: newFile };
       set({ openFiles: files, activeFileId: path, ...mirrorActive(files, path) });

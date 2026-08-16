@@ -12,35 +12,93 @@ pub struct AppState {
     pub current_graph: Mutex<Option<ElementGraph>>,
     /// sysml-core Model kept for lint checks and future analysis
     pub core_model: Mutex<Option<sysml_core::model::Model>>,
+    /// Sibling project models (same directory) — cross-file resolution
+    /// context and the value pool for W017. The ACTIVE file's spans are
+    /// never affected by these: it is always parsed alone.
+    pub sibling_models: Mutex<Vec<sysml_core::model::Model>>,
     /// Current source text — needed for simulation extraction (constraint/calc/state/action parsers)
     pub current_source: Mutex<String>,
 }
 
+/// Parse the active buffer ALONE (its spans always index this exact
+/// text) and, when a file path is known, build cross-file resolution
+/// context from sibling .sysml/.kerml files via `resolver::Project` —
+/// the same mechanism as `sysml check`. Replaces the old
+/// concatenate-imports approach, which corrupted every span.
+fn build_core_context(
+    source: &str,
+    path: Option<&str>,
+) -> (sysml_core::model::Model, Vec<sysml_core::model::Model>) {
+    use std::path::{Path, PathBuf};
+
+    let label = path.unwrap_or("<buffer>");
+    let mut model = sysml_core::parser::parse_file(label, source);
+    sysml_core::model::qualify_model(&mut model);
+
+    let mut siblings: Vec<sysml_core::model::Model> = Vec::new();
+    if let Some(p) = path {
+        if let Some(dir) = Path::new(p).parent() {
+            let mut files: Vec<PathBuf> = Vec::new();
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let fp = entry.path();
+                    let ext = fp.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    if matches!(ext, "sysml" | "kerml" | "sysml2") {
+                        files.push(fp);
+                    }
+                }
+            }
+            files.sort();
+            if files.len() > 1 {
+                let proj = sysml_core::resolver::Project::from_files(&files);
+                model.resolved_imports = proj.resolve_imports(&model);
+                model.resolved_imports.extend(proj.resolve_root_refs(&model));
+                model.external_references = proj.external_references_for(&model);
+                let (satisfied, verified) = proj.traced_requirements();
+                model.external_satisfied = satisfied.into_iter().collect();
+                model.external_verified = verified.into_iter().collect();
+                siblings = proj
+                    .models
+                    .into_iter()
+                    .filter(|m| m.file != model.file)
+                    .collect();
+            }
+        }
+    }
+    (model, siblings)
+}
+
 #[tauri::command]
-pub fn parse_source(source: String, state: State<'_, AppState>) -> Result<SysmlModel, String> {
+pub fn parse_source(
+    source: String,
+    path: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<SysmlModel, String> {
     let start = std::time::Instant::now();
 
-    // Parse with sysml-core (catch panics to prevent app crash)
     let source_clone = source.clone();
+    let path_clone = path.clone();
+    // Parse with sysml-core (catch panics to prevent app crash). Nothing
+    // is locked while unwinding, so a panic cannot poison state.
     let parse_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut core_model = sysml_core::parser::parse_file("<buffer>", &source_clone);
-        sysml_core::model::qualify_model(&mut core_model);
-        core_model
+        build_core_context(&source_clone, path_clone.as_deref())
     }));
-    let core_model = parse_result.map_err(|_| "Parser crashed on this input — please check for syntax errors".to_string())?;
+    let (core_model, siblings) = parse_result
+        .map_err(|_| "Parser crashed on this input — please check for syntax errors".to_string())?;
 
     let parse_time_ms = start.elapsed().as_secs_f64() * 1000.0;
 
-    // Convert to Studio model format (catch panics)
     let convert_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         adapter::convert_model(&core_model, parse_time_ms)
     }));
-    let model = convert_result.map_err(|_| "Model conversion failed — please report this bug".to_string())?;
+    let mut model = convert_result
+        .map_err(|_| "Model conversion failed — please report this bug".to_string())?;
+    model.file_path = path;
 
-    // Build relationship graph for MBSE features
     let graph = ElementGraph::build_from_model(&model.elements);
     *state.current_graph.lock().map_err(|e| e.to_string())? = Some(graph);
     *state.core_model.lock().map_err(|e| e.to_string())? = Some(core_model);
+    *state.sibling_models.lock().map_err(|e| e.to_string())? = siblings;
     *state.current_model.lock().map_err(|e| e.to_string())? = Some(model.clone());
     *state.current_source.lock().map_err(|e| e.to_string())? = source;
 
@@ -50,75 +108,23 @@ pub fn parse_source(source: String, state: State<'_, AppState>) -> Result<SysmlM
 #[tauri::command]
 pub fn open_file(path: String, state: State<'_, AppState>) -> Result<(SysmlModel, String), String> {
     let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-
-    // Resolve imports: read sibling .sysml files referenced by import statements
-    let combined = resolve_sibling_imports(&source, &path);
-    let mut model = parse_source(combined, state)?;
-    model.file_path = Some(path);
-    Ok((model, source)) // Return original source for the editor, not the combined
+    let model = parse_source(source.clone(), Some(path), state)?;
+    Ok((model, source))
 }
 
+/// Atomic save: write to a temp file in the same directory, then rename
+/// over the target — a crash mid-write can no longer truncate the model.
 #[tauri::command]
 pub fn save_file(path: String, source: String) -> Result<(), String> {
-    std::fs::write(&path, &source).map_err(|e| e.to_string())
-}
-
-/// Resolve import statements by reading sibling .sysml files from the same directory.
-/// Handles recursive imports (imported files may import other files).
-fn resolve_sibling_imports(source: &str, file_path: &str) -> String {
     use std::path::Path;
-    use std::collections::HashSet;
-
-    let path = Path::new(file_path);
-    let dir = match path.parent() {
-        Some(d) => d,
-        None => return source.to_string(),
-    };
-    let current_file = path.file_name().and_then(|f| f.to_str()).unwrap_or("");
-
-    let mut resolved_files = HashSet::new();
-    resolved_files.insert(current_file.to_string());
-
-    let mut imported_sources: Vec<String> = Vec::new();
-    let mut pending_sources = vec![source.to_string()];
-
-    while let Some(current_source) = pending_sources.pop() {
-        for line in current_source.lines() {
-            let trimmed = line.trim();
-            // Match: import Foo, import Foo::*, import Foo::Bar::*, etc.
-            let rest = if let Some(r) = trimmed.strip_prefix("import ") {
-                r
-            } else if let Some(r) = trimmed.strip_prefix("public import ") {
-                r
-            } else if let Some(r) = trimmed.strip_prefix("private import ") {
-                r
-            } else {
-                continue;
-            };
-
-            // Extract the first path component as the file name to look up
-            let name: String = rest.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect();
-            if name.is_empty() { continue; }
-
-            for ext in &["sysml", "sysml2"] {
-                let fname = format!("{}.{}", name, ext);
-                if resolved_files.contains(&fname) { break; }
-                let import_path = dir.join(&fname);
-                if let Ok(import_source) = std::fs::read_to_string(&import_path) {
-                    resolved_files.insert(fname.clone());
-                    imported_sources.push(format!("// --- Imported from {} ---\n{}", fname, import_source));
-                    pending_sources.push(import_source);
-                    break;
-                }
-            }
-        }
-    }
-
-    if imported_sources.is_empty() {
-        return source.to_string();
-    }
-
-    format!("{}\n\n{}", imported_sources.join("\n\n"), source)
+    let target = Path::new(&path);
+    let dir = target.parent().ok_or("invalid path")?;
+    let tmp = dir.join(format!(
+        ".{}.tmp",
+        target.file_name().and_then(|f| f.to_str()).unwrap_or("sysml-studio-save")
+    ));
+    std::fs::write(&tmp, &source).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, target).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -198,32 +204,40 @@ pub fn get_traceability_matrix(
 pub fn get_validation(
     state: State<'_, AppState>,
 ) -> Result<ValidationReport, String> {
-    let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
-    let model = model_lock.as_ref().ok_or("No model loaded")?;
+    // Validation is sysml-core's 16 registered checks plus the
+    // project-level W017 value-constraint pass — the same rules as
+    // `sysml check`, so Studio and the CLI can never disagree. Studio's
+    // former hand-rolled rules (9-entry stdlib list, name-equality
+    // resolution) produced false positives core's resolver does not.
+    let mut issues = {
+        let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+        let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+        let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;
+        adapter::run_core_checks(core_model, &siblings)
+    };
 
-    let graph_lock = state.current_graph.lock().map_err(|e| e.to_string())?;
-    let graph = graph_lock.as_ref().ok_or("No graph built")?;
-
-    let mut report = query::validate_model(&model.elements, graph);
-
-    // Add sysml-core lint check results (catch panics)
-    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
-    if let Some(ref core_model) = *core_lock {
-        if let Ok(core_issues) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            adapter::run_core_checks(core_model)
-        })) {
-            for issue in core_issues {
-                match issue.severity.as_str() {
-                    "error" => report.summary.errors += 1,
-                    "warning" => report.summary.warnings += 1,
-                    _ => report.summary.infos += 1,
+    // Anchor diagnostics to tree elements by source line so the panel
+    // can navigate to them.
+    {
+        let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
+        if let Some(model) = model_lock.as_ref() {
+            for issue in issues.iter_mut() {
+                if issue.line > 0 {
+                    if let Some(id) = query::element_at_line(&model.elements, issue.line) {
+                        issue.element_id = id;
+                    }
                 }
-                report.issues.push(issue);
             }
         }
     }
 
-    Ok(report)
+    let errors = issues.iter().filter(|i| i.severity == "error").count() as u32;
+    let warnings = issues.iter().filter(|i| i.severity == "warning").count() as u32;
+    let infos = issues.iter().filter(|i| i.severity == "info").count() as u32;
+    Ok(ValidationReport {
+        issues,
+        summary: query::ValidationSummary { errors, warnings, infos },
+    })
 }
 
 /// Get connected elements for a given element (for diagram highlighting)

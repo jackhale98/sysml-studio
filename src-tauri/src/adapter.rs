@@ -631,30 +631,48 @@ fn element_kind_to_category(kind: &ElementKind) -> Category {
 }
 
 /// Run sysml-core lint checks and convert to Studio's ValidationReport.
-pub fn run_core_checks(core_model: &Model) -> Vec<crate::model::query::ValidationIssue> {
+/// Includes W017 value-constraint evaluation, which is a project-level
+/// pass (`check_value_constraints`) and deliberately NOT part of
+/// `all_checks()`.
+pub fn run_core_checks(
+    core_model: &Model,
+    siblings: &[Model],
+) -> Vec<crate::model::query::ValidationIssue> {
     use sysml_core::checks::all_checks;
 
     let checks = all_checks();
-    let mut issues = Vec::new();
-
+    let mut diags: Vec<sysml_core::diagnostic::Diagnostic> = Vec::new();
     for check in &checks {
-        for diag in check.run(core_model) {
+        diags.extend(check.run(core_model));
+    }
+    // W017 is project-wide: siblings/libraries provide the assert
+    // constraints, the active file provides the values.
+    let mut all_models: Vec<Model> = Vec::with_capacity(siblings.len() + 1);
+    all_models.push(core_model.clone());
+    all_models.extend_from_slice(siblings);
+    diags.extend(sysml_core::checks::value_constraints::check_value_constraints(
+        &all_models,
+        &[core_model.file.clone()],
+    ));
+
+    diags
+        .into_iter()
+        .map(|diag| {
             let severity = match diag.severity {
                 sysml_core::diagnostic::Severity::Error => "error",
                 sysml_core::diagnostic::Severity::Warning => "warning",
                 sysml_core::diagnostic::Severity::Note => "info",
             };
-
-            issues.push(crate::model::query::ValidationIssue {
-                element_id: 0, // not element-specific from core checks
+            crate::model::query::ValidationIssue {
+                element_id: 0,
                 severity: severity.to_string(),
                 message: format!("[{}] {}", diag.code, diag.message),
                 category: diag.code.to_string(),
-            });
-        }
-    }
-
-    issues
+                line: diag.span.start_row as u32,
+                suggestion: diag.suggestion.clone(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

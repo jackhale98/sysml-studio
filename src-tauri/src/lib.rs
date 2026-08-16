@@ -14,6 +14,7 @@ pub fn run() {
             current_model: Mutex::new(None),
             current_graph: Mutex::new(None),
             core_model: Mutex::new(None),
+            sibling_models: Mutex::new(Vec::new()),
             current_source: Mutex::new(String::new()),
         })
         .invoke_handler(tauri::generate_handler![

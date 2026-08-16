@@ -100,8 +100,8 @@ export function EditElementDialog() {
 
   // Show source context around this element
   const sourceLines = source.split("\n");
-  const contextStart = Math.max(0, element.span.start_line);
-  const contextEnd = Math.min(sourceLines.length, element.span.end_line + 1);
+  const contextStart = Math.max(0, element.span.start_line - 1);
+  const contextEnd = Math.min(sourceLines.length, element.span.end_line);
   const contextSnippet = sourceLines.slice(contextStart, contextEnd).join("\n");
 
   return (
@@ -143,7 +143,7 @@ export function EditElementDialog() {
             fontSize: 11, color: "var(--text-muted)", marginLeft: 8,
             fontFamily: "var(--font-mono)",
           }}>
-            {getKindLabel(kindStr)} — Line {element.span.start_line + 1}
+            {getKindLabel(kindStr)} — Line {element.span.start_line}
           </span>
         </div>
 

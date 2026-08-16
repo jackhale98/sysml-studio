@@ -321,7 +321,8 @@ export function insertElement(
   const lines = source.split("\n");
 
   if (parentElement) {
-    const startLine = parentElement.span.start_line;
+    // Spans are 1-based (sysml-core convention); convert to array index.
+    const startLine = parentElement.span.start_line - 1;
     const closingBraceLine = findClosingBrace(lines, startLine);
 
     if (closingBraceLine >= 0) {
@@ -367,9 +368,10 @@ export function editElement(
   changes: { name?: string; typeRef?: string; doc?: string; shortName?: string; valueExpr?: string },
 ): string {
   const lines = source.split("\n");
-  const lineIdx = element.span.start_line;
+  // Spans are 1-based (sysml-core convention); convert to array index.
+  const lineIdx = element.span.start_line - 1;
 
-  if (lineIdx >= lines.length) return source;
+  if (lineIdx < 0 || lineIdx >= lines.length) return source;
 
   let line = lines[lineIdx];
 
@@ -431,7 +433,7 @@ export function editElement(
 
   // Handle doc comment changes
   if (changes.doc !== undefined) {
-    const docLineIdx = findDocLine(lines, lineIdx, element.span.end_line);
+    const docLineIdx = findDocLine(lines, lineIdx, element.span.end_line - 1);
     if (docLineIdx >= 0 && changes.doc) {
       // Replace existing doc
       lines[docLineIdx] = lines[docLineIdx].replace(
@@ -457,8 +459,9 @@ export function deleteElement(
   element: SysmlElement,
 ): string {
   const lines = source.split("\n");
-  const startLine = element.span.start_line;
-  let endLine = element.span.end_line;
+  // Spans are 1-based (sysml-core convention); convert to array index.
+  const startLine = element.span.start_line - 1;
+  let endLine = element.span.end_line - 1;
 
   // For definitions with braces, find the matching closing brace
   if (isDefinition(typeof element.kind === "string" ? element.kind : "")) {

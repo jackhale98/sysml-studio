@@ -55,7 +55,7 @@ export function ElementDetail() {
     ...(element.modifiers.length > 0 ? [{ label: "Modifiers", value: element.modifiers.join(", ") }] : []),
     ...(element.specializations.length > 0 ? [{ label: "Specializes", value: element.specializations.join(", ") }] : []),
     ...(element.short_name ? [{ label: "Short Name", value: element.short_name }] : []),
-    { label: "Line", value: String(element.span.start_line + 1) },
+    { label: "Line", value: String(element.span.start_line) },
   ];
 
   // Gather child elements (attributes, ports, parts, states, etc.)

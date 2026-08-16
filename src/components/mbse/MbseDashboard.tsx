@@ -35,7 +35,7 @@ function buildElementsCsv(model: SysmlModel): string {
     rows.push([
       String(el.id), k, el.name ?? "", el.qualified_name, el.category,
       el.type_ref ?? "", el.parent_id !== null ? String(el.parent_id) : "",
-      String(el.span.start_line + 1),
+      String(el.span.start_line),
     ]);
   }
   return rows.map(r => r.map(c => `"${c.replace(/"/g, '""')}"`).join(",")).join("\n");
@@ -555,7 +555,7 @@ function ExportTablesView({ model, traceability, validation }: {
                     <td style={cellStyle}>
                       {el.type_ref ?? <span style={{ color: "var(--text-muted)" }}>—</span>}
                     </td>
-                    <td style={{ ...cellStyle, textAlign: "right" }}>{el.span.start_line + 1}</td>
+                    <td style={{ ...cellStyle, textAlign: "right" }}>{el.span.start_line}</td>
                   </tr>
                 );
               })}
