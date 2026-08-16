@@ -30,6 +30,17 @@ pub struct BomNode {
     pub rollups: std::collections::HashMap<String, f64>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct BomResponse {
+    pub nodes: Vec<BomNode>,
+    /// Unit per attribute key (from `value [unit]` brackets), as
+    /// converted-to by the rollup engine.
+    pub units: std::collections::HashMap<String, Option<String>>,
+    /// Unit conversions the engine could not perform - non-empty means
+    /// a total is suspect. Surfaced, never swallowed.
+    pub warnings: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BomAttribute {
     pub name: String,
@@ -53,10 +64,15 @@ pub struct EvalResult {
 pub fn compute_bom(
     root_name: Option<String>,
     state: State<'_, AppState>,
-) -> Result<Vec<BomNode>, String> {
+) -> Result<BomResponse, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
     let model = model_lock.as_ref().ok_or("No model loaded")?;
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+    let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;
+    let merged = crate::adapter::merged_project_model(core_model, &siblings);
 
+    // Roots: the named element, or every part def at package level.
     let roots: Vec<&SysmlElement> = if let Some(ref name) = root_name {
         model.elements.iter()
             .filter(|e| e.name.as_deref() == Some(name.as_str()) &&
@@ -64,93 +80,130 @@ pub fn compute_bom(
             .collect()
     } else {
         model.elements.iter()
-            .filter(|e| matches!(e.kind, ElementKind::PartDef | ElementKind::PartUsage) &&
+            .filter(|e| matches!(e.kind, ElementKind::PartDef) &&
                 e.parent_id.map(|pid| model.elements.iter().find(|p| p.id == pid)
                     .map(|p| p.kind == ElementKind::Package).unwrap_or(false))
                     .unwrap_or(true))
             .collect()
     };
 
-    Ok(roots.iter()
-        .map(|r| build_bom_node(r, &model.elements, 1.0, &mut std::collections::HashSet::new()))
-        .collect())
+    let mut units: std::collections::HashMap<String, Option<String>> = Default::default();
+    let mut warnings: Vec<String> = Vec::new();
+    let nodes = roots.iter()
+        .map(|r| build_bom_node(r, model, &merged, &mut units, &mut warnings))
+        .collect();
+
+    warnings.sort();
+    warnings.dedup();
+    Ok(BomResponse { nodes, units, warnings })
 }
 
+/// Build the display tree from Studio elements (usage names, def types)
+/// and stamp every number from sysml-core's rollup engine - the same
+/// engine as the Rollup tab and `sysml rollup`, so the two can never
+/// disagree. Values parse unit brackets (`250 [SI::kg]`).
 fn build_bom_node(
     el: &SysmlElement,
-    all: &[SysmlElement],
-    multiplicity: f64,
-    visited: &mut std::collections::HashSet<ElementId>,
+    model: &SysmlModel,
+    merged: &sysml_core::model::Model,
+    units: &mut std::collections::HashMap<String, Option<String>>,
+    warnings: &mut Vec<String>,
 ) -> BomNode {
-    visited.insert(el.id);
+    use sysml_core::sim::rollup::{evaluate_rollup, AggregationMethod};
 
-    let attributes: Vec<BomAttribute> = all.iter()
+    // The def this node rolls up from: itself (def) or its type (usage).
+    let def_name: Option<String> = if el.kind == ElementKind::PartDef {
+        el.name.clone()
+    } else {
+        el.type_ref.as_ref().map(|t| t.rsplit("::").next().unwrap_or(t).to_string())
+    };
+
+    // Attribute keys reachable from this def, via the engine's target
+    // listing on the merged model.
+    let mut rollups: std::collections::HashMap<String, f64> = Default::default();
+    if let Some(ref dn) = def_name {
+        for attr in rollup_attr_keys(merged, dn) {
+            let r = evaluate_rollup(merged, dn, &attr, AggregationMethod::Sum);
+            rollups.insert(attr.clone(), r.total);
+            units.entry(attr).or_insert(r.unit.clone());
+            warnings.extend(r.conversion_warnings.iter().cloned());
+        }
+    }
+
+    let attributes: Vec<BomAttribute> = model.elements.iter()
         .filter(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::AttributeUsage)
-        .map(|attr| BomAttribute {
-            name: attr.name.clone().unwrap_or_default(),
-            value: attr.value_expr.as_ref().and_then(|v| v.trim().parse::<f64>().ok()),
-            unit: None,
-            type_ref: attr.type_ref.clone(),
+        .map(|attr| {
+            let parsed = attr.value_expr.as_deref()
+                .and_then(sysml_core::sim::resolve::parse_value_with_unit);
+            BomAttribute {
+                name: attr.name.clone().unwrap_or_default(),
+                value: parsed.as_ref().map(|(v, _)| *v),
+                unit: parsed.and_then(|(_, u)| u),
+                type_ref: attr.type_ref.clone(),
+            }
         })
         .collect();
 
-    let mut children = Vec::new();
-    for child in all.iter().filter(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::PartUsage) {
-        if visited.contains(&child.id) { continue; }
-        let child_mult = parse_multiplicity(child.multiplicity.as_deref());
+    // Children: part usages under this element (display structure only;
+    // numbers above already include them via the engine).
+    let children: Vec<BomNode> = model.elements.iter()
+        .filter(|c| c.parent_id == Some(el.id) && c.kind == ElementKind::PartUsage)
+        .map(|child| build_bom_node(child, model, merged, units, warnings))
+        .collect();
 
-        // Resolve type_ref → definition for richer attribute data
-        let resolved = child.type_ref.as_deref()
-            .and_then(|tref| all.iter().find(|e| e.kind.is_definition() && e.name.as_deref() == Some(tref)))
-            .filter(|def| !visited.contains(&def.id));
-
-        children.push(build_bom_node(
-            resolved.unwrap_or(child), all, child_mult, visited,
-        ));
-    }
-
-    // Rollups: compute per-unit value (own attrs + children), then scale by multiplicity
-    let mut rollups: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
-    for attr in &attributes {
-        if let Some(val) = attr.value {
-            *rollups.entry(attr.name.clone()).or_default() += val;
-        }
-    }
-    for child in &children {
-        for (key, &val) in &child.rollups {
-            *rollups.entry(key.clone()).or_default() += val;
-        }
-    }
-    // Apply this node's multiplicity to the entire rollup
-    for val in rollups.values_mut() {
-        *val *= multiplicity;
-    }
+    let quantity = el.multiplicity.as_deref()
+        .map(parse_multiplicity_quantity)
+        .unwrap_or(1.0);
 
     BomNode {
         element_id: el.id,
         name: el.name.clone().unwrap_or_else(|| "<unnamed>".into()),
         kind: el.kind.display_label().to_string(),
         type_ref: el.type_ref.clone(),
-        multiplicity,
+        multiplicity: quantity,
         attributes,
         children,
         rollups,
     }
 }
 
-fn parse_multiplicity(mult: Option<&str>) -> f64 {
-    match mult {
-        None => 1.0,
-        Some(s) => {
-            let s = s.trim().trim_start_matches('[').trim_end_matches(']');
-            if s.contains("..") {
-                s.split("..").last().and_then(|p| p.parse::<f64>().ok()).unwrap_or(1.0)
-            } else if s == "*" {
-                1.0
-            } else {
-                s.parse::<f64>().unwrap_or(1.0)
+/// Attribute names with numeric values reachable from a def in the
+/// merged model - the keys the rollup engine can aggregate.
+fn rollup_attr_keys(merged: &sysml_core::model::Model, def_name: &str) -> Vec<String> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut defs = vec![def_name.to_string()];
+    let mut seen = std::collections::HashSet::new();
+    while let Some(d) = defs.pop() {
+        if !seen.insert(d.clone()) { continue; }
+        for u in merged.usages.iter().filter(|u| u.parent_def.as_deref() == Some(d.as_str())) {
+            if u.kind == "attribute" {
+                if let Some(v) = u.value_expr.as_deref() {
+                    if sysml_core::sim::resolve::parse_value_with_unit(v).is_some() {
+                        if !keys.contains(&u.name) { keys.push(u.name.clone()); }
+                    }
+                }
+            } else if u.kind == "part" {
+                if let Some(t) = u.type_ref.as_deref() {
+                    defs.push(t.rsplit("::").next().unwrap_or(t).to_string());
+                }
             }
         }
+    }
+    keys.sort();
+    keys
+}
+
+/// Multiplicity as a display quantity. The engine handles multiplicity
+/// itself for totals; this is only the Qty column. `*`/unbounded shows
+/// as 1 with the raw string preserved elsewhere.
+fn parse_multiplicity_quantity(mult: &str) -> f64 {
+    let s = mult.trim().trim_start_matches('[').trim_end_matches(']');
+    if s.contains("..") {
+        s.split("..").last().and_then(|p| p.parse::<f64>().ok()).unwrap_or(1.0)
+    } else if s == "*" {
+        1.0
+    } else {
+        s.parse::<f64>().unwrap_or(1.0)
     }
 }
 
@@ -319,6 +372,10 @@ pub struct RollupResponse {
     pub method: String,
     pub total: f64,
     pub own_value: f64,
+    /// Unit all values were converted into (from `value [unit]` brackets).
+    pub unit: Option<String>,
+    /// Conversions the engine could not perform - total is suspect.
+    pub conversion_warnings: Vec<String>,
     pub contributions: Vec<RollupContribution>,
 }
 
@@ -341,6 +398,8 @@ fn convert_rollup_result(r: &sysml_core::sim::rollup::RollupResult) -> RollupRes
         method: r.method.label().to_string(),
         total: r.total,
         own_value: r.own_value,
+        unit: r.unit.clone(),
+        conversion_warnings: r.conversion_warnings.clone(),
         contributions: r.contributions.iter().map(convert_contribution).collect(),
     }
 }
@@ -677,110 +736,72 @@ mod tests {
         }
     }
 
+    /// End-to-end: parse real SysML, then assert the BOM tree's numbers
+    /// EQUAL sysml-core's rollup engine on the same model - the invariant
+    /// that the BOM tab and the Rollup tab can never disagree.
+    fn bom_from_source(source: &str, root: &str) -> (BomNode, std::collections::HashMap<String, Option<String>>, Vec<String>) {
+        let mut core = sysml_core::parser::parse_file("test.sysml", source);
+        sysml_core::model::qualify_model(&mut core);
+        let model = crate::adapter::convert_model(&core, 0.0);
+        let root_el = model
+            .elements
+            .iter()
+            .find(|e| e.name.as_deref() == Some(root) && e.kind == ElementKind::PartDef)
+            .expect("root def");
+        let mut units = Default::default();
+        let mut warnings = Vec::new();
+        let node = build_bom_node(root_el, &model, &core, &mut units, &mut warnings);
+        (node, units, warnings)
+    }
+
     #[test]
-    fn test_bom_rollup_mass_and_cost() {
-        // Build: Vehicle { mass=100, cost=500, engine:Engine, wheels:Wheel[4], chassis:Chassis }
-        // Engine { mass=150, cost=5000 }
-        // Wheel { mass=12.5, cost=200 }
-        // Chassis { mass=800, cost=3000 }
-        let elements = vec![
-            make_el(0, ElementKind::Package, "VehicleBOM", None, None, None, None),
-            // Definitions
-            make_el(1, ElementKind::PartDef, "Engine", Some(0), None, None, None),
-            make_el(2, ElementKind::AttributeUsage, "mass", Some(1), Some("Real"), Some("150.0"), None),
-            make_el(3, ElementKind::AttributeUsage, "cost", Some(1), Some("Real"), Some("5000.0"), None),
-            make_el(4, ElementKind::PartDef, "Wheel", Some(0), None, None, None),
-            make_el(5, ElementKind::AttributeUsage, "mass", Some(4), Some("Real"), Some("12.5"), None),
-            make_el(6, ElementKind::AttributeUsage, "cost", Some(4), Some("Real"), Some("200.0"), None),
-            make_el(7, ElementKind::PartDef, "Chassis", Some(0), None, None, None),
-            make_el(8, ElementKind::AttributeUsage, "mass", Some(7), Some("Real"), Some("800.0"), None),
-            make_el(9, ElementKind::AttributeUsage, "cost", Some(7), Some("Real"), Some("3000.0"), None),
-            // Vehicle definition
-            make_el(10, ElementKind::PartDef, "Vehicle", Some(0), None, None, None),
-            make_el(11, ElementKind::AttributeUsage, "mass", Some(10), Some("Real"), Some("100.0"), None),
-            make_el(12, ElementKind::AttributeUsage, "cost", Some(10), Some("Real"), Some("500.0"), None),
-            // Part usages inside Vehicle
-            make_el(13, ElementKind::PartUsage, "engine", Some(10), Some("Engine"), None, None),
-            make_el(14, ElementKind::PartUsage, "wheels", Some(10), Some("Wheel"), None, Some("4")),
-            make_el(15, ElementKind::PartUsage, "chassis", Some(10), Some("Chassis"), None, None),
-        ];
-
-        let mut visited = std::collections::HashSet::new();
-        let vehicle = &elements[10]; // Vehicle PartDef
-        let bom = build_bom_node(vehicle, &elements, 1.0, &mut visited);
-
-        // Vehicle's own: mass=100, cost=500
-        // + engine (Engine): mass=150, cost=5000
-        // + wheels (Wheel x4): mass=12.5*4=50, cost=200*4=800
-        // + chassis (Chassis): mass=800, cost=3000
-        // Total mass: 100 + 150 + 50 + 800 = 1100
-        // Total cost: 500 + 5000 + 800 + 3000 = 9300
-
-        let total_mass = bom.rollups.get("mass").copied().unwrap_or(0.0);
-        let total_cost = bom.rollups.get("cost").copied().unwrap_or(0.0);
+    fn test_bom_matches_rollup_engine() {
+        let source = r#"package P {
+            part def Wheel { attribute mass : Real = 12.5; }
+            part def Engine { attribute mass : Real = 150.0; }
+            part def Vehicle {
+                attribute mass : Real = 100.0;
+                part engine : Engine;
+                part wheels : Wheel[4];
+            }
+        }"#;
+        let (bom, _units, warnings) = bom_from_source(source, "Vehicle");
+        let mut core = sysml_core::parser::parse_file("test.sysml", source);
+        sysml_core::model::qualify_model(&mut core);
+        let engine_total = sysml_core::sim::rollup::evaluate_rollup(
+            &core, "Vehicle", "mass", sysml_core::sim::rollup::AggregationMethod::Sum,
+        ).total;
 
         assert_eq!(bom.name, "Vehicle");
-        assert_eq!(bom.children.len(), 3, "Vehicle should have 3 child parts");
-
-        // Check wheel multiplicity
-        let wheel_child = bom.children.iter().find(|c| c.name == "Wheel").expect("Wheel child");
-        assert_eq!(wheel_child.multiplicity, 4.0);
-        let wheel_mass = wheel_child.rollups.get("mass").copied().unwrap_or(0.0);
-        assert!((wheel_mass - 50.0).abs() < 0.01, "Wheel mass rollup should be 50, got {}", wheel_mass);
-
-        assert!((total_mass - 1100.0).abs() < 0.01, "Total mass should be 1100, got {}", total_mass);
-        assert!((total_cost - 9300.0).abs() < 0.01, "Total cost should be 9300, got {}", total_cost);
+        assert_eq!(bom.children.len(), 2, "engine + wheels");
+        let bom_total = bom.rollups.get("mass").copied().unwrap_or(0.0);
+        assert!((bom_total - engine_total).abs() < 1e-9,
+            "BOM total ({bom_total}) must equal the rollup engine ({engine_total})");
+        assert!(warnings.is_empty(), "no unit mixing here: {warnings:?}");
     }
 
     #[test]
-    fn test_bom_no_value_expr_skipped() {
-        // Attributes without value_expr should not contribute to rollups
-        let elements = vec![
-            make_el(0, ElementKind::PartDef, "Box", None, None, None, None),
-            make_el(1, ElementKind::AttributeUsage, "label", Some(0), Some("String"), None, None),
-            make_el(2, ElementKind::AttributeUsage, "mass", Some(0), Some("Real"), Some("25.0"), None),
-        ];
-
-        let mut visited = std::collections::HashSet::new();
-        let bom = build_bom_node(&elements[0], &elements, 1.0, &mut visited);
-
-        assert_eq!(bom.rollups.len(), 1, "Only 'mass' should roll up, not 'label'");
-        assert!((bom.rollups["mass"] - 25.0).abs() < 0.01);
+    fn test_bom_units_parsed_not_zeroed() {
+        // `250 [SI::kg]` used to contribute 0 (bare parse::<f64> failed).
+        let source = r#"package P {
+            part def Battery { attribute mass : Real = 250 [SI::kg]; }
+        }"#;
+        let (bom, units, _warnings) = bom_from_source(source, "Battery");
+        let total = bom.rollups.get("mass").copied().unwrap_or(0.0);
+        assert!((total - 250.0).abs() < 1e-9, "bracketed value must count: {total}");
+        assert_eq!(
+            units.get("mass").cloned().flatten().as_deref(),
+            Some("kg"),
+            "unit must survive to the UI"
+        );
     }
 
     #[test]
-    fn test_bom_nested_multiplicity() {
-        // Assembly[4] { SubPart (mass=10) }
-        // Total mass should be 4 * 10 = 40, not 10
-        let elements = vec![
-            make_el(0, ElementKind::Package, "Pkg", None, None, None, None),
-            make_el(1, ElementKind::PartDef, "Assembly", Some(0), None, None, None),
-            make_el(2, ElementKind::PartUsage, "sub", Some(1), Some("SubPart"), None, None),
-            make_el(3, ElementKind::PartDef, "SubPart", Some(0), None, None, None),
-            make_el(4, ElementKind::AttributeUsage, "mass", Some(3), Some("Real"), Some("10.0"), None),
-            // Top with 4x Assembly
-            make_el(5, ElementKind::PartDef, "Top", Some(0), None, None, None),
-            make_el(6, ElementKind::PartUsage, "assemblies", Some(5), Some("Assembly"), None, Some("4")),
-        ];
-
-        let mut visited = std::collections::HashSet::new();
-        let bom = build_bom_node(&elements[5], &elements, 1.0, &mut visited);
-
-        let asm = bom.children.iter().find(|c| c.name == "Assembly").expect("Assembly child");
-        let asm_mass = asm.rollups.get("mass").copied().unwrap_or(0.0);
-        assert!((asm_mass - 40.0).abs() < 0.01, "Assembly[4] with SubPart(mass=10) should roll up to 40, got {}", asm_mass);
-
-        let top_mass = bom.rollups.get("mass").copied().unwrap_or(0.0);
-        assert!((top_mass - 40.0).abs() < 0.01, "Top total mass should be 40, got {}", top_mass);
-    }
-
-    #[test]
-    fn test_parse_multiplicity_variants() {
-        assert_eq!(parse_multiplicity(None), 1.0);
-        assert_eq!(parse_multiplicity(Some("4")), 4.0);
-        assert_eq!(parse_multiplicity(Some("[4]")), 4.0);
-        assert_eq!(parse_multiplicity(Some("0..4")), 4.0);
-        assert_eq!(parse_multiplicity(Some("[0..4]")), 4.0);
-        assert_eq!(parse_multiplicity(Some("*")), 1.0);
+    fn test_parse_multiplicity_quantity_variants() {
+        assert_eq!(parse_multiplicity_quantity("4"), 4.0);
+        assert_eq!(parse_multiplicity_quantity("[4]"), 4.0);
+        assert_eq!(parse_multiplicity_quantity("0..4"), 4.0);
+        assert_eq!(parse_multiplicity_quantity("[0..4]"), 4.0);
+        assert_eq!(parse_multiplicity_quantity("*"), 1.0);
     }
 }

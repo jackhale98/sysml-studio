@@ -2,7 +2,7 @@ import type {
   SysmlModel, SysmlElement, ElementId,
   CompletenessReport, TraceabilityEntry,
   DiagramLayout, ValidationReport, HighlightToken,
-  BomNode, ConstraintModel, CalcModel, EvalResult,
+  BomNode, BomResponse, ConstraintModel, CalcModel, EvalResult,
   StateMachineModel, SimulationState,
   ActionModel, ActionExecState,
   RollupResponse, RollupTarget,
@@ -118,8 +118,8 @@ export async function getHighlightRanges(): Promise<HighlightToken[]> {
 }
 
 // Analysis Commands
-export async function computeBom(rootName?: string): Promise<BomNode[]> {
-  return tauriInvoke<BomNode[]>("compute_bom", { rootName: rootName ?? null });
+export async function computeBom(rootName?: string): Promise<BomResponse> {
+  return tauriInvoke<BomResponse>("compute_bom", { rootName: rootName ?? null });
 }
 
 export async function listConstraints(): Promise<ConstraintModel[]> {

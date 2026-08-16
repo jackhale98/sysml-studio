@@ -204,6 +204,14 @@ export interface ValidationReport {
 // ─── Analysis Types ───
 
 // Studio-specific BOM rollup
+export interface BomResponse {
+  nodes: BomNode[];
+  /** Unit per attribute key, as converted-to by the rollup engine. */
+  units: Record<string, string | null>;
+  /** Unit conversions the engine could not perform — totals suspect. */
+  warnings: string[];
+}
+
 export interface BomNode {
   element_id: ElementId;
   name: string;
@@ -357,6 +365,10 @@ export interface RollupResponse {
   method: string;
   total: number;
   own_value: number;
+  /** Unit all values were converted into (from `value [unit]` brackets). */
+  unit: string | null;
+  /** Conversions the engine could not perform — total is suspect. */
+  conversion_warnings: string[];
   contributions: RollupContribution[];
 }
 

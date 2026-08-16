@@ -123,6 +123,8 @@ function ownAttrValue(node: BomNode, key: string): number | null {
 function BomPanel() {
   const model = useModelStore((s) => s.model);
   const [bom, setBom] = useState<BomNode[]>([]);
+  const [bomUnits, setBomUnits] = useState<Record<string, string | null>>({});
+  const [bomWarnings, setBomWarnings] = useState<string[]>([]);
   const [scopeName, setScopeName] = useState<string>("");
   const [rollupKey, setRollupKey] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -131,8 +133,12 @@ function BomPanel() {
     setLoading(true);
     try {
       const result = await computeBom(scopeName || undefined);
-      setBom(result);
-    } catch { /* ignore */ }
+      setBom(result.nodes);
+      setBomUnits(result.units);
+      setBomWarnings(result.warnings);
+    } catch (e) {
+      setBomWarnings([String(e)]);
+    }
     setLoading(false);
   }, [scopeName]);
 
@@ -190,6 +196,13 @@ function BomPanel() {
         </div>
       )}
 
+      {/* Unit-conversion warnings — a suspect total must never be silent */}
+      {bomWarnings.length > 0 && (
+        <div style={{ ...card, marginBottom: 10, padding: "8px 12px", border: "1px solid var(--warning)", color: "var(--warning)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
+          {bomWarnings.map((w, i) => <div key={i}>{w}</div>)}
+        </div>
+      )}
+
       {/* Total banner */}
       {bom.length > 0 && rollupKey && total > 0 && (
         <div style={{
@@ -197,7 +210,7 @@ function BomPanel() {
           marginBottom: 10, padding: "8px 12px",
         }}>
           <span style={{ ...monoSmall, color: "var(--text-muted)", textTransform: "uppercase", fontSize: 10, letterSpacing: "0.06em" }}>
-            Total {rollupKey}
+            Total {rollupKey}{bomUnits[rollupKey] ? ` [${bomUnits[rollupKey]}]` : ""}
           </span>
           <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-mono)", color: "#f59e0b" }}>
             {fmtNum(total)}
@@ -1248,8 +1261,13 @@ function RollupPanel() {
                 {result.root} / {result.attribute} ({result.method})
               </div>
               <div style={{ ...monoSmall, fontSize: 16, fontWeight: 700, color: "var(--accent)", marginBottom: 8 }}>
-                Total: {fmtNum(result.total)}
+                Total: {fmtNum(result.total)}{result.unit ? ` [${result.unit}]` : ""}
               </div>
+              {result.conversion_warnings.length > 0 && (
+                <div style={{ ...monoSmall, color: "var(--warning)", marginBottom: 6 }}>
+                  {result.conversion_warnings.map((w, i) => <div key={i}>⚠ {w}</div>)}
+                </div>
+              )}
               {result.own_value > 0 && (
                 <div style={{ ...monoSmall, color: "var(--text-muted)", marginBottom: 4 }}>
                   Own: {fmtNum(result.own_value)}
