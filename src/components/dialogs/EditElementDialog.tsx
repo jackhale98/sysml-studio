@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
-import { editElement } from "../../lib/source-editor";
+import { editElementSource } from "../../lib/tauri-bridge";
 import { getKindLabel, SYSML_STDLIB_TYPES, TYPE_COLORS } from "../../lib/constants";
 import { TypeBadge } from "../shared/TypeBadge";
 import { SearchSelect } from "../shared/SearchSelect";
@@ -34,6 +34,7 @@ export function EditElementDialog() {
   const element = model?.elements.find((e) => e.id === editTargetId);
 
   const [name, setName] = useState(element?.name ?? "");
+  const [error, setError] = useState<string | null>(null);
   const [typeRef, setTypeRef] = useState(element?.type_ref ?? "");
   const [doc, setDoc] = useState(element?.doc ?? "");
   const [shortName, setShortName] = useState(element?.short_name ?? "");
@@ -93,9 +94,22 @@ export function EditElementDialog() {
       return;
     }
 
-    const newSource = editElement(source, element, changes);
-    updateSource(newSource);
-    closeDialog();
+    editElementSource(
+      source,
+      element.span.start_byte,
+      { name: element.name, typeRef: element.type_ref, valueExpr: element.value_expr },
+      {
+        name: changes.name,
+        type_ref: changes.typeRef,
+        value_expr: changes.valueExpr,
+        doc: changes.doc,
+      },
+    )
+      .then((out) => {
+        updateSource(out.new_source);
+        closeDialog();
+      })
+      .catch((e) => setError(String(e)));
   }
 
   // Show source context around this element
@@ -116,6 +130,11 @@ export function EditElementDialog() {
         borderTop: "2px solid #f59e0b",
         animation: "slideUp 0.2s ease-out",
       }}>
+        {error && (
+          <div style={{ color: "var(--error)", fontFamily: "var(--font-mono)", fontSize: 11, padding: "6px 8px", border: "1px solid var(--error)", borderRadius: 6, marginBottom: 8 }}>
+            {error}
+          </div>
+        )}
         {/* Header */}
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",

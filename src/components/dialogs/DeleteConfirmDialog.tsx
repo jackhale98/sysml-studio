@@ -1,7 +1,7 @@
-import React from "react";
+import React, { useState } from "react";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
-import { deleteElement } from "../../lib/source-editor";
+import { deleteElementSource } from "../../lib/tauri-bridge";
 import { getKindLabel } from "../../lib/constants";
 import { TypeBadge } from "../shared/TypeBadge";
 
@@ -10,6 +10,7 @@ export function DeleteConfirmDialog() {
   const editTargetId = useUIStore((s) => s.editTargetId);
   const selectElement = useUIStore((s) => s.selectElement);
   const source = useModelStore((s) => s.source);
+  const [error, setError] = useState<string | null>(null);
   const model = useModelStore((s) => s.model);
   const updateSource = useModelStore((s) => s.updateSource);
 
@@ -35,10 +36,13 @@ export function DeleteConfirmDialog() {
 
   function handleDelete() {
     if (!element) return;
-    const newSource = deleteElement(source, element);
-    selectElement(null);
-    updateSource(newSource);
-    closeDialog();
+    deleteElementSource(source, element.span.start_byte)
+      .then((out) => {
+        selectElement(null);
+        updateSource(out.new_source);
+        closeDialog();
+      })
+      .catch((e) => setError(String(e)));
   }
 
   return (
@@ -53,6 +57,11 @@ export function DeleteConfirmDialog() {
         borderTop: "2px solid var(--error)",
         animation: "slideUp 0.2s ease-out",
       }}>
+        {error && (
+          <div style={{ color: "var(--error)", fontFamily: "var(--font-mono)", fontSize: 11, padding: "6px 8px", border: "1px solid var(--error)", borderRadius: 6, marginBottom: 8 }}>
+            {error}
+          </div>
+        )}
         {/* Header */}
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",

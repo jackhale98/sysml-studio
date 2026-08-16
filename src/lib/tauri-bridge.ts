@@ -218,3 +218,46 @@ export async function evaluateSweep(
 export async function convertUnits(value: number, from: string, to: string): Promise<number> {
   return tauriInvoke<number>("convert_units", { value, from, to });
 }
+
+export interface EditOutcome {
+  new_source: string;
+  diff: string;
+  parse_errors: string[];
+}
+
+export async function editElementSource(
+  source: string,
+  startByte: number,
+  old: { name?: string | null; typeRef?: string | null; valueExpr?: string | null },
+  changes: { name?: string; type_ref?: string; value_expr?: string; doc?: string },
+): Promise<EditOutcome> {
+  return tauriInvoke<EditOutcome>("edit_element_source", {
+    source,
+    startByte,
+    oldName: old.name ?? null,
+    oldTypeRef: old.typeRef ?? null,
+    oldValueExpr: old.valueExpr ?? null,
+    changes: {
+      name: changes.name ?? null,
+      type_ref: changes.type_ref ?? null,
+      value_expr: changes.value_expr ?? null,
+      doc: changes.doc ?? null,
+    },
+  });
+}
+
+export async function deleteElementSource(source: string, startByte: number): Promise<EditOutcome> {
+  return tauriInvoke<EditOutcome>("delete_element_source", { source, startByte });
+}
+
+export async function insertElementSource(
+  source: string,
+  parentName: string | null,
+  elementText: string,
+): Promise<EditOutcome> {
+  return tauriInvoke<EditOutcome>("insert_element_source", {
+    source,
+    parentName,
+    elementText,
+  });
+}

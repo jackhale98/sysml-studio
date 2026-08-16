@@ -311,180 +311,9 @@ export function generateElementSource(opts: {
   return lines.join("\n");
 }
 
-/** Insert a new element into the source at the right location */
-export function insertElement(
-  source: string,
-  newElementSource: string,
-  parentElement: SysmlElement | null,
-  model: SysmlModel,
-): string {
-  const lines = source.split("\n");
-
-  if (parentElement) {
-    // Spans are 1-based (sysml-core convention); convert to array index.
-    const startLine = parentElement.span.start_line - 1;
-    const closingBraceLine = findClosingBrace(lines, startLine);
-
-    if (closingBraceLine >= 0) {
-      // Parent has braces — insert before the closing brace
-      const indent = getChildIndent(lines, startLine, closingBraceLine);
-      const indented = newElementSource.split("\n").map(l => indent + l).join("\n");
-      lines.splice(closingBraceLine, 0, indented);
-      return lines.join("\n");
-    }
-
-    // Parent has no braces (e.g. `part engine : Engine;`)
-    // Convert it from semicolon-terminated to block with the new child inside
-    const parentLine = lines[startLine];
-    if (parentLine) {
-      const semiIdx = parentLine.lastIndexOf(";");
-      if (semiIdx >= 0) {
-        const baseIndent = getLineIndent(parentLine);
-        const childIndent = baseIndent + "  ";
-        const indented = newElementSource.split("\n").map(l => childIndent + l).join("\n");
-        // Replace `;` with `{` and add child + closing `}`
-        lines[startLine] = parentLine.substring(0, semiIdx) + " {";
-        lines.splice(startLine + 1, 0, indented, baseIndent + "}");
-        return lines.join("\n");
-      }
-    }
-  }
-
-  // No parent or couldn't find insertion point — append before the last closing brace
-  const lastBrace = findLastTopLevelBrace(lines);
-  if (lastBrace >= 0) {
-    const indented = newElementSource.split("\n").map(l => "  " + l).join("\n");
-    lines.splice(lastBrace, 0, indented);
-  } else {
-    lines.push("", newElementSource);
-  }
-  return lines.join("\n");
-}
 
 /** Edit an element's name and/or type reference in the source */
-export function editElement(
-  source: string,
-  element: SysmlElement,
-  changes: { name?: string; typeRef?: string; doc?: string; shortName?: string; valueExpr?: string },
-): string {
-  const lines = source.split("\n");
-  // Spans are 1-based (sysml-core convention); convert to array index.
-  const lineIdx = element.span.start_line - 1;
 
-  if (lineIdx < 0 || lineIdx >= lines.length) return source;
-
-  let line = lines[lineIdx];
-
-  // Replace name
-  if (changes.name && element.name && changes.name !== element.name) {
-    // Replace the first occurrence of the old name on this line
-    line = line.replace(element.name, changes.name);
-  }
-
-  // Replace type reference
-  if (changes.typeRef !== undefined && element.type_ref !== changes.typeRef) {
-    if (element.type_ref && changes.typeRef) {
-      // Replace existing type ref
-      line = line.replace(`: ${element.type_ref}`, `: ${changes.typeRef}`);
-      line = line.replace(`:${element.type_ref}`, `:${changes.typeRef}`);
-    } else if (!element.type_ref && changes.typeRef) {
-      // Add type ref before semicolon or brace
-      line = line.replace(/(\s*)(;|{)/, ` : ${changes.typeRef}$1$2`);
-    }
-  }
-
-  // Handle short name changes
-  if (changes.shortName !== undefined && element.short_name !== changes.shortName) {
-    if (element.short_name && changes.shortName) {
-      // Replace existing short name
-      line = line.replace(`<${element.short_name}>`, `<${changes.shortName}>`);
-    } else if (!element.short_name && changes.shortName) {
-      // Add short name after the element name
-      const nameToFind = changes.name ?? element.name;
-      if (nameToFind) {
-        const nameIdx = line.indexOf(nameToFind);
-        if (nameIdx >= 0) {
-          const afterName = nameIdx + nameToFind.length;
-          line = line.slice(0, afterName) + ` <${changes.shortName}>` + line.slice(afterName);
-        }
-      }
-    } else if (element.short_name && !changes.shortName) {
-      // Remove short name
-      line = line.replace(` <${element.short_name}>`, "");
-      line = line.replace(`<${element.short_name}>`, "");
-    }
-  }
-
-  // Handle value expression changes (e.g. `attribute mass : Real = 180;`)
-  if (changes.valueExpr !== undefined && element.value_expr !== changes.valueExpr) {
-    if (element.value_expr && changes.valueExpr) {
-      // Replace existing value
-      line = line.replace(`= ${element.value_expr}`, `= ${changes.valueExpr}`);
-    } else if (!element.value_expr && changes.valueExpr) {
-      // Add value before semicolon
-      line = line.replace(/\s*;/, ` = ${changes.valueExpr};`);
-    } else if (element.value_expr && !changes.valueExpr) {
-      // Remove value expression
-      line = line.replace(new RegExp(`\\s*=\\s*${element.value_expr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), "");
-    }
-  }
-
-  lines[lineIdx] = line;
-
-  // Handle doc comment changes
-  if (changes.doc !== undefined) {
-    const docLineIdx = findDocLine(lines, lineIdx, element.span.end_line - 1);
-    if (docLineIdx >= 0 && changes.doc) {
-      // Replace existing doc
-      lines[docLineIdx] = lines[docLineIdx].replace(
-        /doc\s+\/\*.*?\*\//,
-        `doc /* ${changes.doc} */`
-      );
-    } else if (docLineIdx >= 0 && !changes.doc) {
-      // Remove doc line
-      lines.splice(docLineIdx, 1);
-    } else if (changes.doc && isDefinition(typeof element.kind === "string" ? element.kind : "")) {
-      // Add doc line after the opening brace
-      const indent = getLineIndent(lines[lineIdx]) + "  ";
-      lines.splice(lineIdx + 1, 0, `${indent}doc /* ${changes.doc} */`);
-    }
-  }
-
-  return lines.join("\n");
-}
-
-/** Delete an element from the source */
-export function deleteElement(
-  source: string,
-  element: SysmlElement,
-): string {
-  const lines = source.split("\n");
-  // Spans are 1-based (sysml-core convention); convert to array index.
-  const startLine = element.span.start_line - 1;
-  let endLine = element.span.end_line - 1;
-
-  // For definitions with braces, find the matching closing brace
-  if (isDefinition(typeof element.kind === "string" ? element.kind : "")) {
-    const closingBrace = findClosingBrace(lines, startLine);
-    if (closingBrace >= 0) endLine = closingBrace;
-  }
-
-  // Clamp
-  const safeStart = Math.max(0, startLine);
-  const safeEnd = Math.min(lines.length - 1, endLine);
-
-  // Remove lines and any trailing blank line
-  const deleteCount = safeEnd - safeStart + 1;
-  lines.splice(safeStart, deleteCount);
-
-  // Clean up consecutive blank lines
-  if (safeStart < lines.length && safeStart > 0 &&
-    lines[safeStart - 1].trim() === "" && lines[safeStart]?.trim() === "") {
-    lines.splice(safeStart, 1);
-  }
-
-  return lines.join("\n");
-}
 
 /** Get potential parent elements where a new element can be inserted */
 export function getInsertTargets(model: SysmlModel): SysmlElement[] {
@@ -546,19 +375,6 @@ function isUsage(kind: string): boolean {
   return kind.endsWith("_usage");
 }
 
-function findClosingBrace(lines: string[], startLine: number): number {
-  let depth = 0;
-  for (let i = startLine; i < lines.length; i++) {
-    for (const ch of lines[i]) {
-      if (ch === "{") depth++;
-      if (ch === "}") {
-        depth--;
-        if (depth === 0) return i;
-      }
-    }
-  }
-  return -1;
-}
 
 function findLastTopLevelBrace(lines: string[]): number {
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -567,29 +383,12 @@ function findLastTopLevelBrace(lines: string[]): number {
   return -1;
 }
 
-function getChildIndent(lines: string[], startLine: number, endLine: number): string {
-  // Look for the first non-empty child line inside the block
-  for (let i = startLine + 1; i < endLine; i++) {
-    const trimmed = lines[i].trim();
-    if (trimmed && trimmed !== "{" && trimmed !== "}") {
-      const match = lines[i].match(/^(\s*)/);
-      return match ? match[1] : "  ";
-    }
-  }
-  return getLineIndent(lines[startLine]) + "  ";
-}
 
 function getLineIndent(line: string): string {
   const match = line.match(/^(\s*)/);
   return match ? match[1] : "";
 }
 
-function findDocLine(lines: string[], startLine: number, endLine: number): number {
-  for (let i = startLine + 1; i <= Math.min(endLine, lines.length - 1); i++) {
-    if (lines[i].trim().startsWith("doc")) return i;
-  }
-  return -1;
-}
 
 /** Available element kinds grouped by category for the create dialog */
 export const CREATE_OPTIONS = [

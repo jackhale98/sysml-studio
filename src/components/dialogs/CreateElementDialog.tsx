@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from "react";
+import { insertElementSource } from "../../lib/tauri-bridge";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
 import {
   CREATE_OPTIONS,
   generateElementSource,
-  insertElement,
   getInsertTargets,
 } from "../../lib/source-editor";
 import { SearchSelect } from "../shared/SearchSelect";
@@ -93,6 +93,7 @@ export function CreateElementDialog() {
 
   // Specialized fields
   const [specializes, setSpecializes] = useState("");
+  const [error, setError] = useState<string | null>(null);
   const [multiplicity, setMultiplicity] = useState("");
   const [connSource, setConnSource] = useState("");
   const [connTarget, setConnTarget] = useState("");
@@ -714,9 +715,12 @@ export function CreateElementDialog() {
       children: childLines.length > 0 ? childLines : undefined,
     });
 
-    const newSource = insertElement(source, src, selectedParent, model);
-    updateSource(newSource);
-    closeDialog();
+    insertElementSource(source, selectedParent?.name ?? null, src)
+      .then((out) => {
+        updateSource(out.new_source);
+        closeDialog();
+      })
+      .catch((e) => setError(String(e)));
   }
 
   const previewOpts = canCreate ? buildOpts() : null;
@@ -740,6 +744,11 @@ export function CreateElementDialog() {
         borderTop: "2px solid var(--accent)",
         animation: "slideUp 0.2s ease-out",
       }}>
+        {error && (
+          <div style={{ color: "var(--error)", fontFamily: "var(--font-mono)", fontSize: 11, padding: "6px 8px", border: "1px solid var(--error)", borderRadius: 6, marginBottom: 8 }}>
+            {error}
+          </div>
+        )}
         {/* Header */}
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
