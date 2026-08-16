@@ -105,8 +105,7 @@ fn word_replace_in_range(
     }
 }
 
-#[tauri::command]
-pub fn edit_element_source(
+fn edit_element_source_impl(
     source: String,
     start_byte: usize,
     old_name: Option<String>,
@@ -207,8 +206,7 @@ pub fn edit_element_source(
     apply_validated(&source, &plan)
 }
 
-#[tauri::command]
-pub fn delete_element_source(source: String, start_byte: usize) -> Result<EditOutcome, String> {
+fn delete_element_source_impl(source: String, start_byte: usize) -> Result<EditOutcome, String> {
     let model = parse(&source);
     let (span_start, span_end) =
         element_span_at(&model, start_byte).ok_or("element not found at span")?;
@@ -236,8 +234,7 @@ pub fn delete_element_source(source: String, start_byte: usize) -> Result<EditOu
     apply_validated(&source, &plan)
 }
 
-#[tauri::command]
-pub fn insert_element_source(
+fn insert_element_source_impl(
     source: String,
     parent_name: Option<String>,
     element_text: String,
@@ -252,6 +249,35 @@ pub fn insert_element_source(
     };
     plan.add(edit);
     apply_validated(&source, &plan)
+}
+
+
+// ─── Tauri command wrappers (async: run off the IPC thread) ───
+
+#[tauri::command]
+pub async fn edit_element_source(
+    source: String,
+    start_byte: usize,
+    old_name: Option<String>,
+    old_type_ref: Option<String>,
+    old_value_expr: Option<String>,
+    changes: ElementChanges,
+) -> Result<EditOutcome, String> {
+    edit_element_source_impl(source, start_byte, old_name, old_type_ref, old_value_expr, changes)
+}
+
+#[tauri::command]
+pub async fn delete_element_source(source: String, start_byte: usize) -> Result<EditOutcome, String> {
+    delete_element_source_impl(source, start_byte)
+}
+
+#[tauri::command]
+pub async fn insert_element_source(
+    source: String,
+    parent_name: Option<String>,
+    element_text: String,
+) -> Result<EditOutcome, String> {
+    insert_element_source_impl(source, parent_name, element_text)
 }
 
 #[cfg(test)]
@@ -280,7 +306,7 @@ mod tests {
         // The old line editor turned `wheelMass` into `enginewheelMass`
         // when renaming Wheel. Word boundaries prevent that.
         let start = span_of(SRC, "Wheel");
-        let out = edit_element_source(
+        let out = edit_element_source_impl(
             SRC.to_string(),
             start,
             Some("Wheel".into()),
@@ -304,7 +330,7 @@ mod tests {
     #[test]
     fn delete_removes_whole_element_only() {
         let start = span_of(SRC, "Wheel");
-        let out = delete_element_source(SRC.to_string(), start).expect("delete ok");
+        let out = delete_element_source_impl(SRC.to_string(), start).expect("delete ok");
         assert!(!out.new_source.contains("Wheel {"));
         assert!(out.new_source.contains("part def Vehicle"), "sibling untouched");
         assert!(out.parse_errors.is_empty());
@@ -313,7 +339,7 @@ mod tests {
     #[test]
     fn edit_that_would_break_parse_is_rejected() {
         let start = span_of(SRC, "Wheel");
-        let result = edit_element_source(
+        let result = edit_element_source_impl(
             SRC.to_string(),
             start,
             Some("Wheel".into()),
@@ -331,7 +357,7 @@ mod tests {
 
     #[test]
     fn insert_member_lands_inside_parent() {
-        let out = insert_element_source(
+        let out = insert_element_source_impl(
             SRC.to_string(),
             Some("Vehicle".into()),
             "attribute mass : Real = 100.0;".into(),
@@ -346,7 +372,7 @@ mod tests {
     #[test]
     fn value_edit_replaces_only_the_value() {
         let start = span_of(SRC, "wheelMass");
-        let out = edit_element_source(
+        let out = edit_element_source_impl(
             SRC.to_string(),
             start,
             None,

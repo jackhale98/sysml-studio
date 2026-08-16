@@ -69,7 +69,7 @@ fn build_core_context(
 }
 
 #[tauri::command]
-pub fn parse_source(
+pub async fn parse_source(
     source: String,
     path: Option<String>,
     state: State<'_, AppState>,
@@ -106,16 +106,16 @@ pub fn parse_source(
 }
 
 #[tauri::command]
-pub fn open_file(path: String, state: State<'_, AppState>) -> Result<(SysmlModel, String), String> {
+pub async fn open_file(path: String, state: State<'_, AppState>) -> Result<(SysmlModel, String), String> {
     let source = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let model = parse_source(source.clone(), Some(path), state)?;
+    let model = parse_source(source.clone(), Some(path), state).await?;
     Ok((model, source))
 }
 
 /// Atomic save: write to a temp file in the same directory, then rename
 /// over the target — a crash mid-write can no longer truncate the model.
 #[tauri::command]
-pub fn save_file(path: String, source: String) -> Result<(), String> {
+pub async fn save_file(path: String, source: String) -> Result<(), String> {
     use std::path::Path;
     let target = Path::new(&path);
     let dir = target.parent().ok_or("invalid path")?;
@@ -128,7 +128,7 @@ pub fn save_file(path: String, source: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn filter_elements(
+pub async fn filter_elements(
     categories: Vec<String>,
     search_term: Option<String>,
     parent_name: Option<String>,
@@ -152,7 +152,7 @@ pub fn filter_elements(
 
 /// MBSE: Get impact analysis for an element
 #[tauri::command]
-pub fn impact_analysis(
+pub async fn impact_analysis(
     element_id: ElementId,
     state: State<'_, AppState>,
 ) -> Result<Vec<SysmlElement>, String> {
@@ -173,7 +173,7 @@ pub fn impact_analysis(
 
 /// MBSE: Get completeness report
 #[tauri::command]
-pub fn check_completeness(
+pub async fn check_completeness(
     state: State<'_, AppState>,
 ) -> Result<CompletenessReport, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
@@ -186,7 +186,7 @@ pub fn check_completeness(
 
 /// MBSE: Get traceability matrix for requirements
 #[tauri::command]
-pub fn get_traceability_matrix(
+pub async fn get_traceability_matrix(
     state: State<'_, AppState>,
 ) -> Result<Vec<TraceabilityEntry>, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
@@ -199,7 +199,7 @@ pub fn get_traceability_matrix(
 
 /// MBSE: Run model validation — combines Studio checks with sysml-core lint checks
 #[tauri::command]
-pub fn get_validation(
+pub async fn get_validation(
     state: State<'_, AppState>,
 ) -> Result<ValidationReport, String> {
     // Validation is sysml-core's 16 registered checks plus the
@@ -240,7 +240,7 @@ pub fn get_validation(
 
 /// Get connected elements for a given element (for diagram highlighting)
 #[tauri::command]
-pub fn get_connected_elements(
+pub async fn get_connected_elements(
     element_id: ElementId,
     state: State<'_, AppState>,
 ) -> Result<Vec<ElementId>, String> {
@@ -263,7 +263,7 @@ pub struct HighlightToken {
 /// in the frontend via the browser-side grammar. In the future we can use
 /// tree-sitter queries from sysml-core for richer highlighting.
 #[tauri::command]
-pub fn get_highlight_ranges(_state: State<'_, AppState>) -> Result<Vec<HighlightToken>, String> {
+pub async fn get_highlight_ranges(_state: State<'_, AppState>) -> Result<Vec<HighlightToken>, String> {
     // The frontend CodeMirror editor handles its own syntax highlighting.
     // This command exists for backwards compatibility.
     Ok(vec![])

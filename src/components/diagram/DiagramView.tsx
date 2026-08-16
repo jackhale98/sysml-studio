@@ -347,11 +347,11 @@ export function DiagramView() {
           }}
         >
           <optgroup label="Diagrams">
-            <option value="bdd">Block Definition Diagram</option>
+            <option value="bdd">General View (definitions)</option>
             <option value="stm">State Machine Diagram</option>
             <option value="req">Requirements Diagram</option>
             <option value="ucd">Use Case Diagram</option>
-            <option value="ibd">Internal Block Diagram</option>
+            <option value="ibd">Interconnection View (internal structure)</option>
             <option value="act">Activity Diagram</option>
           </optgroup>
           {customViews.length > 0 && (

@@ -30,9 +30,22 @@ const PANEL_LABELS: { id: AnalysisPanel; label: string }[] = [
   { id: "whatif", label: "What-If" },
 ];
 
+/**
+ * Analysis commands used to swallow every failure (`catch { }`), making
+ * a wrong or missing result indistinguishable from an empty model.
+ * Panels report through this context; the banner renders once at the
+ * top of the Analysis view.
+ */
+const AnalysisErrorContext = React.createContext<(msg: string | null) => void>(() => {});
+function usePanelError() {
+  return React.useContext(AnalysisErrorContext);
+}
+
 export function AnalysisView() {
   const model = useModelStore((s) => s.model);
   const [panel, setPanel] = useState<AnalysisPanel>("bom");
+  const [panelError, setPanelError] = useState<string | null>(null);
+  useEffect(() => { setPanelError(null); }, [panel, model]);
 
   if (!model) {
     return (
@@ -43,6 +56,16 @@ export function AnalysisView() {
   }
 
   return (
+    <AnalysisErrorContext.Provider value={setPanelError}>
+    {panelError && (
+      <div style={{
+        margin: "8px 0", padding: "6px 10px", borderRadius: 6,
+        border: "1px solid var(--error)", color: "var(--error)",
+        fontFamily: "var(--font-mono)", fontSize: 11,
+      }}>
+        {panelError}
+      </div>
+    )}
     <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
       {/* Panel selector */}
       <div style={{
@@ -77,6 +100,7 @@ export function AnalysisView() {
         {panel === "whatif" && <WhatIfPanel />}
       </div>
     </div>
+    </AnalysisErrorContext.Provider>
   );
 }
 
@@ -349,6 +373,7 @@ function getAvailableEvents(machine: StateMachineModel): string[] {
 }
 
 function StateMachinePanel() {
+  const reportError = usePanelError();
   const model = useModelStore((s) => s.model);
   const [machines, setMachines] = useState<StateMachineModel[]>([]);
   const [selected, setSelected] = useState<string>("");
@@ -376,7 +401,7 @@ function StateMachinePanel() {
     try {
       const res = await simulateStateMachine(selected, eventQueue);
       setResult(res);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 
@@ -642,6 +667,7 @@ function describeSteps(steps: unknown[], prefix = ""): { label: string; kind: st
 }
 
 function ActionFlowPanel() {
+  const reportError = usePanelError();
   const model = useModelStore((s) => s.model);
   const [actions, setActions] = useState<ActionModel[]>([]);
   const [selected, setSelected] = useState<string>("");
@@ -665,7 +691,7 @@ function ActionFlowPanel() {
     try {
       const res = await executeAction(selected, maxSteps);
       setResult(res);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 
@@ -1201,6 +1227,7 @@ const paramInput: React.CSSProperties = {
 // ─── Rollup Panel ───
 
 function RollupPanel() {
+  const reportError = usePanelError();
   const model = useModelStore((s) => s.model);
   const [targets, setTargets] = useState<RollupTarget[]>([]);
   const [selectedRoot, setSelectedRoot] = useState("");
@@ -1227,7 +1254,7 @@ function RollupPanel() {
     try {
       const r = await computeRollup(selectedRoot, selectedAttr, method);
       setResult(r);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 
@@ -1302,6 +1329,7 @@ function RollupRow({ contribution: c, depth }: { contribution: import("../../lib
 // ─── Analysis Case Panel ───
 
 function AnalysisCasePanel() {
+  const reportError = usePanelError();
   const model = useModelStore((s) => s.model);
   const [cases, setCases] = useState<AnalysisCaseInfo[]>([]);
   const [selected, setSelected] = useState("");
@@ -1324,7 +1352,7 @@ function AnalysisCasePanel() {
     try {
       const r = await evaluateAnalysisCase(selected, {});
       setEvalResult(r);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 
@@ -1334,7 +1362,7 @@ function AnalysisCasePanel() {
     try {
       const r = await evaluateTradeStudy(selected);
       setTradeResult(r);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 
@@ -1426,6 +1454,7 @@ function AnalysisCasePanel() {
 // ─── What-If & Sensitivity Panel ───
 
 function WhatIfPanel() {
+  const reportError = usePanelError();
   const model = useModelStore((s) => s.model);
   const [targets, setTargets] = useState<RollupTarget[]>([]);
   const [rootDef, setRootDef] = useState("");
@@ -1464,7 +1493,7 @@ function WhatIfPanel() {
     try {
       const r = await evaluateWhatIf(rootDef, attribute, scenarios, method);
       setWhatIfResult(r);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 
@@ -1475,7 +1504,7 @@ function WhatIfPanel() {
       const sweep: SweepInput = { parameter: sweepParam, start: sweepStart, end: sweepEnd, steps: sweepSteps };
       const r = await evaluateSweep(rootDef, attribute, sweep, method);
       setSweepResult(r);
-    } catch { /* ignore */ }
+    } catch (e) { console.error("sysml-studio: analysis command failed", e); reportError(String(e)); }
     setLoading(false);
   };
 

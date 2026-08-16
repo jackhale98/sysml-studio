@@ -1,6 +1,6 @@
-mod adapter;
-mod model;
-mod commands;
+pub mod adapter;
+pub mod model;
+pub mod commands;
 
 use commands::parse_commands::AppState;
 use std::sync::Mutex;

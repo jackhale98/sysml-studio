@@ -61,7 +61,7 @@ pub struct EvalResult {
 // ─── BOM Rollup ───
 
 #[tauri::command]
-pub fn compute_bom(
+pub async fn compute_bom(
     root_name: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<BomResponse, String> {
@@ -211,7 +211,7 @@ fn parse_multiplicity_quantity(mult: &str) -> f64 {
 
 /// Returns sysml-core's ConstraintModel directly — already Serialize
 #[tauri::command]
-pub fn list_constraints(state: State<'_, AppState>) -> Result<Vec<ConstraintModel>, String> {
+pub async fn list_constraints(state: State<'_, AppState>) -> Result<Vec<ConstraintModel>, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
     if source.is_empty() { return Ok(vec![]); }
     Ok(sysml_core::sim::constraint_eval::extract_constraints("<buffer>", &source))
@@ -219,14 +219,14 @@ pub fn list_constraints(state: State<'_, AppState>) -> Result<Vec<ConstraintMode
 
 /// Returns sysml-core's CalcModel directly
 #[tauri::command]
-pub fn list_calculations(state: State<'_, AppState>) -> Result<Vec<CalcModel>, String> {
+pub async fn list_calculations(state: State<'_, AppState>) -> Result<Vec<CalcModel>, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
     if source.is_empty() { return Ok(vec![]); }
     Ok(sysml_core::sim::constraint_eval::extract_calculations("<buffer>", &source))
 }
 
 #[tauri::command]
-pub fn evaluate_constraint(
+pub async fn evaluate_constraint(
     constraint_name: String,
     bindings: std::collections::HashMap<String, f64>,
     state: State<'_, AppState>,
@@ -247,7 +247,7 @@ pub fn evaluate_constraint(
 }
 
 #[tauri::command]
-pub fn evaluate_calculation(
+pub async fn evaluate_calculation(
     calc_name: String,
     bindings: std::collections::HashMap<String, f64>,
     state: State<'_, AppState>,
@@ -276,7 +276,7 @@ pub fn evaluate_calculation(
 
 /// Returns sysml-core's StateMachineModel directly
 #[tauri::command]
-pub fn list_state_machines(state: State<'_, AppState>) -> Result<Vec<StateMachineModel>, String> {
+pub async fn list_state_machines(state: State<'_, AppState>) -> Result<Vec<StateMachineModel>, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
     if source.is_empty() { return Ok(vec![]); }
     let src = source.clone();
@@ -287,7 +287,7 @@ pub fn list_state_machines(state: State<'_, AppState>) -> Result<Vec<StateMachin
 
 /// Returns sysml-core's SimulationState directly
 #[tauri::command]
-pub fn simulate_state_machine(
+pub async fn simulate_state_machine(
     machine_name: String,
     events: Vec<String>,
     max_steps: Option<usize>,
@@ -317,7 +317,7 @@ pub fn simulate_state_machine(
 
 /// Returns sysml-core's ActionModel directly
 #[tauri::command]
-pub fn list_actions(state: State<'_, AppState>) -> Result<Vec<ActionModel>, String> {
+pub async fn list_actions(state: State<'_, AppState>) -> Result<Vec<ActionModel>, String> {
     let source = state.current_source.lock().map_err(|e| e.to_string())?;
     if source.is_empty() { return Ok(vec![]); }
     let src = source.clone();
@@ -328,7 +328,7 @@ pub fn list_actions(state: State<'_, AppState>) -> Result<Vec<ActionModel>, Stri
 
 /// Returns sysml-core's ActionExecState directly
 #[tauri::command]
-pub fn execute_action(
+pub async fn execute_action(
     action_name: String,
     max_steps: Option<usize>,
     state: State<'_, AppState>,
@@ -405,7 +405,7 @@ fn convert_rollup_result(r: &sysml_core::sim::rollup::RollupResult) -> RollupRes
 }
 
 #[tauri::command]
-pub fn compute_rollup(
+pub async fn compute_rollup(
     root_def: String,
     attribute: String,
     method: Option<String>,
@@ -427,7 +427,7 @@ pub fn compute_rollup(
 
 /// List all part definitions that could be rollup roots + their numeric attributes
 #[tauri::command]
-pub fn list_rollup_targets(
+pub async fn list_rollup_targets(
     state: State<'_, AppState>,
 ) -> Result<Vec<RollupTarget>, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
@@ -502,7 +502,7 @@ pub struct AlternativeScoreResult {
 }
 
 #[tauri::command]
-pub fn list_analysis_cases(state: State<'_, AppState>) -> Result<Vec<AnalysisCaseInfo>, String> {
+pub async fn list_analysis_cases(state: State<'_, AppState>) -> Result<Vec<AnalysisCaseInfo>, String> {
     let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
     let core_model = core_lock.as_ref().ok_or("No model loaded")?;
 
@@ -531,7 +531,7 @@ pub fn list_analysis_cases(state: State<'_, AppState>) -> Result<Vec<AnalysisCas
 }
 
 #[tauri::command]
-pub fn evaluate_analysis_case(
+pub async fn evaluate_analysis_case(
     case_name: String,
     bindings: std::collections::HashMap<String, f64>,
     state: State<'_, AppState>,
@@ -556,7 +556,7 @@ pub fn evaluate_analysis_case(
 }
 
 #[tauri::command]
-pub fn evaluate_trade_study(
+pub async fn evaluate_trade_study(
     case_name: String,
     state: State<'_, AppState>,
 ) -> Result<TradeStudyResult, String> {
@@ -627,7 +627,7 @@ pub struct SweepResponse {
 }
 
 #[tauri::command]
-pub fn evaluate_what_if(
+pub async fn evaluate_what_if(
     root_def: String,
     attribute: String,
     method: Option<String>,
@@ -667,7 +667,7 @@ pub fn evaluate_what_if(
 }
 
 #[tauri::command]
-pub fn evaluate_sweep(
+pub async fn evaluate_sweep(
     root_def: String,
     attribute: String,
     method: Option<String>,
@@ -704,7 +704,7 @@ pub fn evaluate_sweep(
 // ─── Unit Conversion ───
 
 #[tauri::command]
-pub fn convert_units(value: f64, from: String, to: String) -> Result<f64, String> {
+pub async fn convert_units(value: f64, from: String, to: String) -> Result<f64, String> {
     sysml_core::sim::units::convert(value, &from, &to)
         .map_err(|e| e.message)
 }
@@ -812,7 +812,7 @@ mod tests {
 /// as a RenderedTable computed by the same engine as `sysml view`, so
 /// Studio and the CLI render identical reports.
 #[tauri::command]
-pub fn render_model_view(
+pub async fn render_model_view(
     view_name: String,
     state: State<'_, AppState>,
 ) -> Result<sysml_core::view_render::RenderedTable, String> {
@@ -839,7 +839,7 @@ pub struct ViewInfo {
 
 /// Every view def in scope, labeled by how it renders.
 #[tauri::command]
-pub fn list_model_views(state: State<'_, AppState>) -> Result<Vec<ViewInfo>, String> {
+pub async fn list_model_views(state: State<'_, AppState>) -> Result<Vec<ViewInfo>, String> {
     let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
     let core_model = core_lock.as_ref().ok_or("No model loaded")?;
     let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;

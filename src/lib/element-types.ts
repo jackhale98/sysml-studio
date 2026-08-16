@@ -40,7 +40,6 @@ export type ElementKind =
   | "fork_node" | "join_node" | "merge_node" | "decide_node"
   | "if_action" | "while_action" | "for_action" | "send_action" | "assign_action"
   | "terminate_statement" | "succession_usage" | "succession_flow_usage" | "succession_branch"
-  | "accept_action"
   | "binding_usage" | "boolean_expression_usage" | "invariant_usage" | "result_expression"
   | "do_action" | "entry_action" | "exit_action" | "else_action" | "inline_transition"
   | "textual_representation"

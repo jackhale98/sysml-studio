@@ -15,11 +15,11 @@ Built with **Tauri 2.0** + **React 19** + **TypeScript** + **Rust**, powered by 
 - Swipe actions on element rows: swipe left to delete, swipe right for add/edit (mobile)
 
 ### Diagram Views
-- **BDD** (Block Definition Diagram) — definitions with composition and specialization edges
+- **General View** (`bdd`, SysML v1 alias) — definitions with composition and specialization edges
 - **STM** (State Machine Diagram) — states and transitions with smart edge routing
 - **REQ** (Requirements Diagram) — requirement hierarchy with satisfy/verify edges
 - **UCD** (Use Case Diagram) — actors (stick figures) and use case ellipses with include/association edges
-- **IBD** (Internal Block Diagram) — block container with internal parts, ports, and connection edges
+- **Interconnection View** (`ibd`, SysML v1 alias) — a part's internal parts, ports, and connection edges
 
 All diagrams support:
 - Touch/mouse pan and zoom, node tap highlighting, auto-fit scaling

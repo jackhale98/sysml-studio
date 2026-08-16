@@ -158,7 +158,7 @@ fn position_tree(
 
 /// Compute Block Definition Diagram layout
 #[tauri::command]
-pub fn compute_bdd_layout(
+pub async fn compute_bdd_layout(
     root_name: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<DiagramLayout, String> {
@@ -412,7 +412,7 @@ pub fn compute_bdd_layout(
 
 /// Compute State Machine Diagram layout
 #[tauri::command]
-pub fn compute_stm_layout(
+pub async fn compute_stm_layout(
     state_def_name: String,
     state: State<'_, AppState>,
 ) -> Result<DiagramLayout, String> {
@@ -575,7 +575,7 @@ pub fn compute_stm_layout(
 
 /// Compute Requirements Diagram layout
 #[tauri::command]
-pub fn compute_req_layout(
+pub async fn compute_req_layout(
     state: State<'_, AppState>,
 ) -> Result<DiagramLayout, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
@@ -707,7 +707,7 @@ pub fn compute_req_layout(
 
 /// Compute Use Case Diagram layout
 #[tauri::command]
-pub fn compute_ucd_layout(
+pub async fn compute_ucd_layout(
     state: State<'_, AppState>,
 ) -> Result<DiagramLayout, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
@@ -872,7 +872,7 @@ pub fn compute_ucd_layout(
 
 /// Compute Internal Block Diagram layout
 #[tauri::command]
-pub fn compute_ibd_layout(
+pub async fn compute_ibd_layout(
     block_name: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<DiagramLayout, String> {
@@ -1144,7 +1144,7 @@ fn connect_nodes(from: &DiagramNode, to: &DiagramNode) -> Vec<(f64, f64)> {
 // ─── Activity Diagram (ACT) ───
 
 #[tauri::command]
-pub fn compute_act_layout(
+pub async fn compute_act_layout(
     action_def_name: String,
     state: State<'_, AppState>,
 ) -> Result<DiagramLayout, String> {
