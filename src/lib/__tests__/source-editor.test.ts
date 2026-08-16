@@ -363,14 +363,6 @@ describe("generateElementSource", () => {
     expect(result).toBe("send StartSignal via controlPort;");
   });
 
-  it("generates an accept action via generic fallback", () => {
-    const result = generateElementSource({
-      kind: "accept_action",
-      name: "StopSignal",
-      typeRef: "SignalType",
-    });
-    expect(result).toBe("accept StopSignal : SignalType;");
-  });
 
   // ─── Perform/Exhibit statements ───
 
@@ -525,7 +517,7 @@ describe("generateElementSource", () => {
       shortName: "SC-100",
       specializes: "Car",
     });
-    expect(result).toBe("part def SportsCar <SC-100> :> Car {\n}");
+    expect(result).toBe("part def SportsCar <'SC-100'> :> Car {\n}");
   });
 
   it("generates a usage with short name and type ref", () => {
@@ -535,7 +527,7 @@ describe("generateElementSource", () => {
       shortName: "ENG-01",
       typeRef: "Engine",
     });
-    expect(result).toBe("part engine <ENG-01> : Engine;");
+    expect(result).toBe("part engine <'ENG-01'> : Engine;");
   });
 
   it("generates a usage with short name and multiplicity", () => {

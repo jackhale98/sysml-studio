@@ -805,3 +805,64 @@ mod tests {
         assert_eq!(parse_multiplicity_quantity("*"), 1.0);
     }
 }
+
+// ─── Model-defined views (@TableRendering) — sysml-core's view engine ───
+
+/// Render a model-defined view. Table views (@TableRendering) come back
+/// as a RenderedTable computed by the same engine as `sysml view`, so
+/// Studio and the CLI render identical reports.
+#[tauri::command]
+pub fn render_model_view(
+    view_name: String,
+    state: State<'_, AppState>,
+) -> Result<sysml_core::view_render::RenderedTable, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+    let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;
+
+    let mut models: Vec<sysml_core::model::Model> = Vec::with_capacity(siblings.len() + 1);
+    models.push(core_model.clone());
+    models.extend(siblings.iter().cloned());
+
+    sysml_core::view_render::render_view(&models, &view_name)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ViewInfo {
+    pub name: String,
+    pub file: String,
+    /// Carries a @TableRendering spec (renders as a table).
+    pub renderable_table: bool,
+    /// `render as ...` clause, when declared (renders as a diagram).
+    pub render_as: Option<String>,
+}
+
+/// Every view def in scope, labeled by how it renders.
+#[tauri::command]
+pub fn list_model_views(state: State<'_, AppState>) -> Result<Vec<ViewInfo>, String> {
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+    let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;
+
+    let mut models: Vec<sysml_core::model::Model> = Vec::with_capacity(siblings.len() + 1);
+    models.push(core_model.clone());
+    models.extend(siblings.iter().cloned());
+
+    let tables = sysml_core::view_render::available_views(&models);
+    Ok(tables
+        .into_iter()
+        .map(|(name, file, renderable)| {
+            let render_as = models
+                .iter()
+                .flat_map(|m| &m.views)
+                .find(|v| v.name == name)
+                .and_then(|v| v.render_as.clone());
+            ViewInfo {
+                name,
+                file,
+                renderable_table: renderable,
+                render_as,
+            }
+        })
+        .collect())
+}

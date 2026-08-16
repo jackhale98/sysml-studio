@@ -62,6 +62,7 @@ export function generateElementSource(opts: {
   forCollection?: string;
   forBody?: string;
   sendVia?: string;
+  relationBy?: string;
 }): string {
   const { kind, name, typeRef, doc, children, specializes, multiplicity,
           shortName, flowItemType, flowSource, flowTarget,
@@ -76,8 +77,11 @@ export function generateElementSource(opts: {
           ifCondition, ifBody, elseBody,
           whileCondition, whileBody,
           forItem, forType, forCollection, forBody,
-          sendVia } = opts;
-  const alias = shortName ? ` <${shortName}>` : "";
+          sendVia, relationBy } = opts;
+  // Conformant SysML: short names with hyphens/spaces (e.g. RV-01) and
+  // names that are not plain identifiers must use the quoted-name form.
+  const quoteIfNeeded = (n: string) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(n) ? n : `'${n}'`);
+  const alias = shortName ? ` <${quoteIfNeeded(shortName)}>` : "";
   const lines: string[] = [];
 
   // Map kind to SysML keyword syntax
@@ -264,9 +268,11 @@ export function generateElementSource(opts: {
       lines.push(`transition ${name};`);
     }
   } else if (kind === "satisfy_statement") {
-    lines.push(`satisfy ${name};`);
+    // `satisfy R by element;` binds the requirement's subject. The bare
+    // form is only meaningful nested inside the satisfying usage.
+    lines.push(relationBy ? `satisfy ${name} by ${relationBy};` : `satisfy ${name};`);
   } else if (kind === "verify_statement") {
-    lines.push(`verify ${name};`);
+    lines.push(relationBy ? `verify ${name} by ${relationBy};` : `verify ${name};`);
   } else if (kind === "dependency_statement") {
     const parts = ["dependency"];
     if (name) parts.push(name);
@@ -344,8 +350,8 @@ function kindToKeyword(kind: string): string {
     viewpoint_def: "viewpoint def", viewpoint_usage: "viewpoint",
     enumeration_def: "enum def",
     flow_def: "flow def", flow_usage: "flow",
-    analysis_case_def: "analysis case def", analysis_usage: "analysis",
-    verification_case_def: "verification case def", verification_usage: "verification",
+    analysis_case_def: "analysis def", analysis_usage: "analysis",
+    verification_case_def: "verification def", verification_usage: "verification",
     occurrence_def: "occurrence def", occurrence_usage: "occurrence",
     calc_def: "calc def", calc_usage: "calc",
     metadata_def: "metadata def", metadata_usage: "metadata",
@@ -359,7 +365,6 @@ function kindToKeyword(kind: string): string {
     perform_statement: "perform action",
     exhibit_statement: "exhibit state",
     send_action: "send",
-    accept_action: "accept",
     if_action: "if",
     while_action: "while",
     for_action: "for",
@@ -416,7 +421,6 @@ export const CREATE_OPTIONS = [
       { kind: "while_action", label: "While Loop" },
       { kind: "for_action", label: "For Loop" },
       { kind: "send_action", label: "Send Action" },
-      { kind: "accept_action", label: "Accept Action" },
       { kind: "perform_statement", label: "Perform Action", needsType: true },
       { kind: "exhibit_statement", label: "Exhibit State", needsType: true },
     ],

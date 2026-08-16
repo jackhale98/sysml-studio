@@ -3,456 +3,198 @@ import { AppShell } from "./components/layout/AppShell";
 import { useUIStore } from "./stores/ui-store";
 import "./styles/globals.css";
 
-// Sample SysML source for development/demo
-export const SAMPLE_SOURCE = `package VehicleSystem {
-  part def Vehicle {
-    doc /* Top-level vehicle assembly — mass and cost roll up from children */
+// Demo model: standard-conformant SysML v2, validated against the OMG
+// pilot implementation (zero errors/warnings) and `sysml check`.
+// Covers structure, ports/connections, requirements with <ID> short
+// names and satisfy/verify (incl. a nested sub-requirement referenced
+// by feature chain), a state machine, a fork/join action, analysis
+// scaffolding, and view defs/usages with standard render clauses.
+export const SAMPLE_SOURCE = `package ReliefValve {
+    doc
+    /*
+     * Demo: a spring-loaded pressure relief valve, from parts and
+     * ports through requirements, behavior, analysis, and views.
+     * Standard-conformant SysML v2 - validated against the OMG pilot
+     * implementation.
+     */
 
-    attribute passengerCount : Real = 4;
-    attribute passengerMass : Real = 75;
-    attribute efficiency : Real = 15;
-    attribute velocity : Real = 120;
-    attribute friction : Real = 0.7;
-    attribute gravity : Real = 9.81;
-    attribute laborCost : Real = 2000;
-    attribute overheadRate : Real = 0.35;
+    private import ScalarValues::*;
+    // Rendering methods (asTreeDiagram, asElementTable, ...) live in the
+    // standard Views library.
+    private import Views::*;
 
-    part engine : Engine;
-    part transmission : Transmission;
-    part brakeSystem : BrakeSystem;
-    part electricalSystem : ElectricalSystem;
-    part wheels[4] : WheelAssembly;
-    part body : BodyStructure;
+    // --- Structure -----------------------------------------------------
 
-    port fuelIn : FuelPort;
-    port powerOut : DrivePort;
-  }
-
-  part def Engine {
-    attribute mass : Real = 180;
-    attribute cost : Real = 4500;
-    attribute displacement : Real = 2.0;
-
-    port fuelIn : FuelPort;
-    port torqueOut : TorquePort;
-
-    state def EngineStates {
-      state off;
-      state idle;
-      state running;
-
-      transition off_to_idle
-        first off accept StartSignal then idle;
-      transition idle_to_running
-        first idle accept ThrottleSignal then running;
-      transition running_to_idle
-        first running accept IdleSignal then idle;
-      transition idle_to_off
-        first idle accept StopSignal then off;
-    }
-  }
-
-  part def Transmission {
-    attribute mass : Real = 75;
-    attribute cost : Real = 2200;
-    port torqueIn : TorquePort;
-    port driveOut : DrivePort;
-  }
-
-  part def WheelAssembly {
-    doc /* Each wheel is a tire + rim sub-assembly */
-    part tire : Tire;
-    part rim : Rim;
-  }
-
-  part def Tire {
-    attribute mass : Real = 10;
-    attribute cost : Real = 120;
-  }
-
-  part def Rim {
-    attribute mass : Real = 9;
-    attribute cost : Real = 180;
-  }
-
-  part def BodyStructure {
-    attribute mass : Real = 350;
-    attribute cost : Real = 5200;
-  }
-
-  part def BrakeSystem {
-    doc /* Brake assembly — mass/cost from brake components */
-    part frontBrakes[2] : DiscBrake;
-    part rearBrakes[2] : DrumBrake;
-    part abs : ABSController;
-  }
-
-  part def DiscBrake {
-    attribute mass : Real = 4.5;
-    attribute cost : Real = 180;
-  }
-
-  part def DrumBrake {
-    attribute mass : Real = 3.2;
-    attribute cost : Real = 95;
-  }
-
-  part def ABSController {
-    attribute mass : Real = 1.8;
-    attribute cost : Real = 350;
-  }
-
-  part def ElectricalSystem {
-    doc /* Electrical sub-assembly — mass/cost from components */
-    part battery : Battery;
-    part alternator : Alternator;
-    part ecu : ECU;
-    part sensors[6] : Sensor;
-  }
-
-  part def Battery {
-    attribute mass : Real = 20;
-    attribute cost : Real = 800;
-    attribute capacity : Real = 70;
-  }
-
-  part def Alternator {
-    attribute mass : Real = 7;
-    attribute cost : Real = 350;
-  }
-
-  part def ECU {
-    attribute mass : Real = 0.8;
-    attribute cost : Real = 600;
-  }
-
-  part def Sensor {
-    attribute mass : Real = 0.15;
-    attribute cost : Real = 45;
-  }
-
-  enum def FuelKind {
-    enum gasoline;
-    enum diesel;
-    enum hydrogen;
-  }
-
-  // Port type definitions (SysML v2 §7.14)
-  port def FuelPort {
-    attribute flowRate : Real;
-  }
-
-  port def TorquePort {
-    attribute torque : Real;
-  }
-
-  port def DrivePort {
-    attribute speed : Real;
-  }
-
-  port def ElectricalPort {
-    attribute voltage : Real;
-    attribute current : Real;
-  }
-
-  // Interface definitions (SysML v2 §7.14)
-  interface def PowerTrain {
-    end source : TorquePort;
-    end target : TorquePort;
-  }
-
-  interface def FuelDelivery {
-    end supply : FuelPort;
-    end intake : FuelPort;
-  }
-
-  connection def DriveConnection {
-    end source : DrivePort;
-    end target : DrivePort;
-  }
-
-  // System-level connections (SysML v2 §7.14)
-  part def VehicleAssembly {
-    part engine : Engine;
-    part transmission : Transmission;
-    part wheels[4] : WheelAssembly;
-
-    connect engine.torqueOut to transmission.torqueIn;
-    connect transmission.driveOut to engine.fuelIn;
-  }
-
-  // Sequential driving procedure with explicit succession (SysML v2 §7.13)
-  action def Drive {
-    action startEngine;
-    action checkMirrors;
-    action releaseBrake;
-    action accelerate;
-    action cruise;
-    action decelerate;
-    action applyBrake;
-    action stopEngine;
-
-    first startEngine then checkMirrors;
-    first checkMirrors then releaseBrake;
-    first releaseBrake then accelerate;
-    first accelerate then cruise;
-    first cruise then decelerate;
-    first decelerate then applyBrake;
-    first applyBrake then stopEngine;
-  }
-
-  // Parallel workflow with fork/join (adapted from SysML v2 Annex A — TransportPassenger)
-  action def TransportPassenger {
-    // Declare action steps
-    action driverGetIn;
-    action passengerGetIn;
-    action checkSafety;
-    action driveToDestination;
-    action providePower;
-    action monitorSystems;
-    action driverGetOut;
-    action passengerGetOut;
-
-    // Declare control flow nodes
-    fork forkBoard;
-    join joinBoard;
-    fork forkDrive;
-    join joinDrive;
-    fork forkExit;
-    join joinExit;
-
-    // Phase 1: Boarding — driver and passenger board in parallel
-    first start then forkBoard;
-      then driverGetIn;
-      then passengerGetIn;
-    first driverGetIn then joinBoard;
-    first passengerGetIn then joinBoard;
-
-    // Phase 2: Safety check, then 3 concurrent driving activities
-    first joinBoard then checkSafety;
-    first checkSafety then forkDrive;
-      then driveToDestination;
-      then providePower;
-      then monitorSystems;
-    first driveToDestination then joinDrive;
-    first providePower then joinDrive;
-    first monitorSystems then joinDrive;
-
-    // Phase 3: Disembark — driver and passenger exit in parallel
-    first joinDrive then forkExit;
-      then driverGetOut;
-      then passengerGetOut;
-    first driverGetOut then joinExit;
-    first passengerGetOut then joinExit;
-
-    first joinExit then done;
-  }
-
-  // Emergency response: strictly sequential critical path
-  action def EmergencyStop {
-    action detectObstacle;
-    action activateABS;
-    action applyFullBrake;
-    action activateHazardLights;
-    action callEmergencyServices;
-
-    first detectObstacle then activateABS;
-    first activateABS then applyFullBrake;
-    first applyFullBrake then activateHazardLights;
-    first activateHazardLights then callEmergencyServices;
-  }
-
-  calc def GrossVehicleMass {
-    in mass : Real;
-    in passengerCount : Real;
-    in passengerMass : Real;
-    return result : Real = mass + passengerCount * passengerMass;
-  }
-
-  calc def FuelRange {
-    in capacity : Real;
-    in efficiency : Real;
-    return result : Real = capacity * efficiency;
-  }
-
-  calc def BrakingDistance {
-    in velocity : Real;
-    in friction : Real;
-    in gravity : Real;
-    return result : Real = velocity * velocity / (2 * friction * gravity);
-  }
-
-  calc def UnitCost {
-    in cost : Real;
-    in laborCost : Real;
-    in overheadRate : Real;
-    return result : Real = cost + laborCost * (1 + overheadRate);
-  }
-
-  requirement def MaxSpeed {
-    doc /* The vehicle shall achieve a top speed of 200 km/h */
-  }
-
-  requirement def Efficiency {
-    doc /* The vehicle shall achieve 15 km/L fuel efficiency */
-  }
-
-  requirement def SafetyReq {
-    doc /* The vehicle shall meet all safety regulations */
-    requirement safetyBraking;
-    requirement safetyAirbag;
-  }
-
-  part def Driver {
-    doc /* Primary vehicle operator */
-  }
-
-  use case def DriveVehicle {
-    doc /* Driver operates the vehicle */
-    actor driver : Driver;
-  }
-
-  use case def RefuelVehicle {
-    doc /* Driver refuels the vehicle */
-    actor driver : Driver;
-  }
-
-  use case def PerformMaintenance {
-    doc /* Maintain vehicle systems */
-    actor mechanic : Driver;
-  }
-
-  part def VehicleVerification {
-    doc /* Verification activities for the vehicle */
-    verify MaxSpeed;
-    verify Efficiency;
-    verify SafetyReq;
-  }
-
-  part def VehicleDesign {
-    doc /* Vehicle design satisfying requirements */
-    satisfy MaxSpeed;
-    satisfy Efficiency;
-  }
-
-  // Constraint definitions (SysML v2 §7.12)
-  constraint def MassLimit {
-    in totalMass : Real;
-    in maxMass : Real;
-    totalMass <= maxMass;
-  }
-
-  constraint def CostBudget {
-    in totalCost : Real;
-    in budget : Real;
-    totalCost <= budget;
-  }
-
-  // Allocations (SysML v2 §7.15)
-  part def SystemArchitecture {
-    doc /* Logical to physical allocation */
-    part processing : ECU;
-    part powerSupply : Battery;
-    allocate SafetyReq to processing;
-    allocate Efficiency to powerSupply;
-  }
-
-  // Analysis case with trade study (SysML v2 §7.16)
-  analysis def PowertrainTradeStudy {
-    doc /* Compare powertrain configurations for mass vs cost */
-    subject vehicle : Vehicle;
-    objective minimizeObj {
-      doc /* Minimize total vehicle mass */
+    port def FluidPort {
+        attribute pressure : Real;
     }
 
-    part alternative1 : Vehicle {
-      doc /* Lightweight aluminum */
-    }
-    part alternative2 : Vehicle {
-      doc /* Standard steel */
-    }
-    part alternative3 : Vehicle {
-      doc /* Carbon fiber composite */
+    part def ValveBody {
+        attribute mass : Real = 0.45;
+        attribute seatDepth : Real = 30.0;
+        port inlet : FluidPort;
+        port outlet : FluidPort;
     }
 
-    return tradeScore : Real;
-  }
-
-  analysis def FuelEfficiencyAnalysis {
-    doc /* Analyze fuel efficiency across operating conditions */
-    subject vehicle : Vehicle;
-    objective maximizeObj {
-      doc /* Maximize range per unit fuel */
+    part def Piston {
+        attribute mass : Real = 0.12;
+        attribute length : Real = 28.0;
     }
-    return rangeEstimate : Real;
-  }
 
-  // Parallel startup with decision (activity diagram showcase)
-  action def VehicleStartup {
-    action insertKey;
-    action checkDashboard;
-    action fastenerSeatbelt;
-    action adjustMirrors;
-    action startIgnition;
-    action warmUpEngine;
-    action checkInstruments;
+    part def Spring {
+        attribute mass : Real = 0.03;
+        attribute solidHeight : Real = 1.5;
+        attribute rate : Real = 8.6;
+    }
 
-    fork forkPrep;
-    join joinPrep;
-    fork forkWarmup;
-    join joinWarmup;
+    part def ReliefValveAsm {
+        attribute mass : Real = 0.02;
+        part body : ValveBody;
+        part piston : Piston;
+        part spring : Spring;
+        port systemIn : FluidPort;
+        port ventOut : FluidPort;
+        connection supply : Connection connect systemIn to body.inlet;
+        connection vent : Connection connect body.outlet to ventOut;
+    }
 
-    // Insert key, then prepare cabin in parallel
-    first start then insertKey;
-    first insertKey then forkPrep;
-      then checkDashboard;
-      then fastenerSeatbelt;
-      then adjustMirrors;
-    first checkDashboard then joinPrep;
-    first fastenerSeatbelt then joinPrep;
-    first adjustMirrors then joinPrep;
+    connection def Connection {
+        end a : FluidPort;
+        end b : FluidPort;
+    }
 
-    // Start engine, then warm up and check in parallel
-    first joinPrep then startIgnition;
-    first startIgnition then forkWarmup;
-      then warmUpEngine;
-      then checkInstruments;
-    first warmUpEngine then joinWarmup;
-    first checkInstruments then joinWarmup;
+    part relief : ReliefValveAsm;
 
-    first joinWarmup then done;
-  }
+    // --- Requirements --------------------------------------------------
 
-  // User-defined views (SysML v2 §7.18)
-  view def StructureOverview {
-    expose VehicleSystem::**;
-    filter @SysML::PartDef;
-    render asTreeDiagram;
-  }
+    requirement def <'SYS-1'> OverpressureProtectionReq {
+        doc
+        /*
+         * Vessel pressure shall never exceed the maximum allowable
+         * accumulation (110% of rated pressure).
+         */
+        subject valve : ReliefValveAsm;
+    }
 
-  view def ComponentInventory {
-    expose VehicleSystem::**;
-    filter @SysML::Part;
-    render asTableDiagram;
-  }
+    requirement def <'RV-1'> MinTravelReq {
+        doc /* The piston shall retain at least 0.2 mm travel clearance. */
+        subject valve : ReliefValveAsm;
+    }
 
-  view def BehaviorView {
-    expose VehicleSystem::**;
-    filter @SysML::ActionDef;
-  }
+    requirement overpressureProtection : OverpressureProtectionReq {
+        requirement minTravel : MinTravelReq;
+    }
 
-  view def SystemInterconnection {
-    expose VehicleSystem::Vehicle;
-    expose VehicleSystem::Engine;
-    expose VehicleSystem::Transmission;
-    expose VehicleSystem::BrakeSystem;
-    expose VehicleSystem::ElectricalSystem;
-    expose VehicleSystem::WheelAssembly;
-    expose VehicleSystem::BodyStructure;
-    render asInterconnectionDiagram;
-  }
-}
-`;
+    satisfy overpressureProtection by relief;
+    satisfy overpressureProtection.minTravel by relief;
+
+    verification def PopTest {
+        doc /* Pressurize past the set point; confirm full relief. */
+        subject valve : ReliefValveAsm;
+        objective {
+            verify overpressureProtection;
+        }
+    }
+
+    verification def TravelClearanceTest {
+        doc /* Measure piston travel at spring solid on 30 assemblies. */
+        subject valve : ReliefValveAsm;
+        objective {
+            verify overpressureProtection.minTravel;
+        }
+    }
+
+    // --- Behavior ------------------------------------------------------
+
+    state def ValveStates {
+        entry; then closed;
+        state closed;
+        state open;
+        transition closedToOpen
+            first closed
+            if systemPressure > setPoint
+            then open;
+        transition openToClosed
+            first open
+            if systemPressure <= reseatPoint
+            then closed;
+        attribute systemPressure : Real;
+        attribute setPoint : Real = 10.0;
+        attribute reseatPoint : Real = 9.2;
+    }
+
+    action def ProofTestValve {
+        doc /* Bench proof test: prep in parallel, then pop test. */
+        action mountValve;
+        action connectGauge;
+        action fillReservoir;
+        action raisePressure;
+        action recordPopPressure;
+
+        first start then mountValve;
+        first mountValve then prepFork;
+        fork prepFork;
+            then connectGauge;
+            then fillReservoir;
+        join prepJoin;
+        first connectGauge then prepJoin;
+        first fillReservoir then prepJoin;
+        first prepJoin then raisePressure;
+        first raisePressure then recordPopPressure;
+        first recordPopPressure then done;
+    }
+
+    // --- Analysis ------------------------------------------------------
+
+    calc def SpringForce {
+        in deflection : Real;
+        in rate : Real;
+        return : Real = deflection * rate;
+    }
+
+    constraint def MassLimit {
+        in totalMass : Real;
+        in limit : Real;
+        totalMass <= limit
+    }
+
+    analysis def TravelGapAnalysis {
+        doc /* Piston travel at spring solid: seatDepth - length - solidHeight. */
+        subject valve : ReliefValveAsm;
+        return gap : Real;
+    }
+
+    // --- Views ---------------------------------------------------------
+
+    // A view DEFINITION declares what it filters and how it renders;
+    // a view USAGE exposes the elements to render. (The pilot rejects
+    // \`expose\` inside a view def.)
+    view def StructureOverview {
+        filter @SysML::PartDefinition;
+        render asTreeDiagram;
+    }
+
+    view def InterconnectionOverview {
+        render asInterconnectionDiagram;
+    }
+
+    view def PartsTable {
+        filter @SysML::PartUsage;
+        render asElementTable;
+    }
+
+    view structureOverview : StructureOverview {
+        expose ReliefValve::*;
+    }
+
+    view systemInterconnection : InterconnectionOverview {
+        expose ReliefValve::ReliefValveAsm;
+    }
+
+    view partsTable : PartsTable {
+        expose ReliefValve::*;
+    }
+}`;
 
 function App() {
   const theme = useUIStore((s) => s.theme);

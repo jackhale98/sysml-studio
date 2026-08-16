@@ -24,6 +24,8 @@ pub fn run() {
             commands::edit_commands::edit_element_source,
             commands::edit_commands::delete_element_source,
             commands::edit_commands::insert_element_source,
+            commands::analysis_commands::render_model_view,
+            commands::analysis_commands::list_model_views,
             commands::parse_commands::filter_elements,
             commands::parse_commands::impact_analysis,
             commands::parse_commands::check_completeness,

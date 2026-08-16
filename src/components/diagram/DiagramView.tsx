@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { listModelViews, renderModelView } from "../../lib/tauri-bridge";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
 import { computeBddLayout, computeStmLayout, computeReqLayout, computeUcdLayout, computeIbdLayout, computeActLayout } from "../../lib/tauri-bridge";
@@ -47,6 +48,23 @@ export function DiagramView() {
     const matched = evaluateView(resolved, model.elements);
     return { view: resolved, elements: matched };
   }, [viewMode, selectedViewName, model, customViews]);
+
+  const [renderedTable, setRenderedTable] = useState<import("../../lib/tauri-bridge").RenderedTable | null>(null);
+  const [viewInfos, setViewInfos] = useState<import("../../lib/tauri-bridge").ViewInfo[]>([]);
+  useEffect(() => {
+    if (!model) { setViewInfos([]); return; }
+    listModelViews().then(setViewInfos).catch(() => setViewInfos([]));
+  }, [model]);
+  useEffect(() => {
+    setRenderedTable(null);
+    if (viewMode !== "custom" || !selectedViewName) return;
+    const info = viewInfos.find((v) => v.name === selectedViewName);
+    if (info?.renderable_table) {
+      renderModelView(selectedViewName)
+        .then(setRenderedTable)
+        .catch(() => setRenderedTable(null));
+    }
+  }, [viewMode, selectedViewName, viewInfos]);
 
   const [layout, setLayout] = useState<DiagramLayout | null>(null);
   const [zoom, setZoom] = useState(0.85);
@@ -373,8 +391,38 @@ export function DiagramView() {
         </div>
       )}
 
-      {/* Custom view content */}
-      {viewMode === "custom" && customViewResult && (
+      {/* Model-defined table view — rendered by sysml-core's view
+          engine, identical to `sysml view <name>` */}
+      {viewMode === "custom" && renderedTable && (
+        <div style={{ flex: 1, overflow: "auto", padding: 12 }}>
+          <table style={{ borderCollapse: "collapse", fontFamily: "var(--font-mono)", fontSize: 11, width: "100%" }}>
+            <thead>
+              <tr>
+                {renderedTable.columns.map((c) => (
+                  <th key={c} style={{ textAlign: "left", padding: "4px 10px", borderBottom: "1px solid var(--border)", color: "var(--text-secondary)", position: "sticky", top: 0, background: "var(--bg-primary)" }}>{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {renderedTable.rows.map((row, i) => (
+                <tr key={i}>
+                  {row.map((cell, j) => (
+                    <td key={j} style={{ padding: "3px 10px", borderBottom: "1px solid var(--bg-tertiary)", color: "var(--text-primary)", whiteSpace: "nowrap" }}>{cell}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(renderedTable.warnings ?? []).length > 0 && (
+            <div style={{ color: "var(--warning)", fontFamily: "var(--font-mono)", fontSize: 11, paddingTop: 8 }}>
+              {(renderedTable.warnings ?? []).map((w, i) => <div key={i}>⚠ {w}</div>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Custom view content (render-as diagram views) */}
+      {viewMode === "custom" && !renderedTable && customViewResult && (
         <CustomViewPanel
           view={customViewResult.view}
           elements={customViewResult.elements}

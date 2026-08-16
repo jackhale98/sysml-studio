@@ -261,3 +261,25 @@ export async function insertElementSource(
     elementText,
   });
 }
+
+export interface RenderedTable {
+  view: string;
+  columns: string[];
+  rows: string[][];
+  warnings?: string[];
+}
+
+export interface ViewInfo {
+  name: string;
+  file: string;
+  renderable_table: boolean;
+  render_as: string | null;
+}
+
+export async function renderModelView(viewName: string): Promise<RenderedTable> {
+  return tauriInvoke<RenderedTable>("render_model_view", { viewName });
+}
+
+export async function listModelViews(): Promise<ViewInfo[]> {
+  return tauriInvoke<ViewInfo[]>("list_model_views");
+}
