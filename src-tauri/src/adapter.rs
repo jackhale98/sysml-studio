@@ -875,3 +875,207 @@ mod tests {
         assert_eq!(element_kind_to_category(&ElementKind::FrameUsage), Category::Auxiliary);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Core-driven traceability, coverage, and gates
+// ---------------------------------------------------------------------------
+
+/// Merge the active model with its project siblings — the same model
+/// `sysml trace`/`coverage` operate on, so Studio's numbers match the
+/// CLI's exactly.
+pub fn merged_project_model(core_model: &Model, siblings: &[Model]) -> Model {
+    let mut merged = core_model.clone();
+    for s in siblings {
+        merged.merge(s.clone());
+    }
+    merged
+}
+
+fn find_element_link(
+    elements: &[crate::model::elements::SysmlElement],
+    name: &str,
+) -> crate::model::query::TraceLink {
+    use sysml_core::model::unquote_name;
+    let simple = unquote_name(name.rsplit("::").next().unwrap_or(name))
+        .rsplit('.')
+        .next()
+        .unwrap_or(name)
+        .to_string();
+    elements
+        .iter()
+        .find(|e| {
+            e.name.as_deref().map(|n| unquote_name(n) == simple).unwrap_or(false)
+                || e.short_name.as_deref().map(|s| unquote_name(s) == simple).unwrap_or(false)
+        })
+        .map(|e| crate::model::query::TraceLink {
+            element_id: e.id,
+            element_name: e.name.clone().or_else(|| e.short_name.clone()).unwrap_or_else(|| name.to_string()),
+            element_kind: e.kind.display_label().to_string(),
+        })
+        .unwrap_or(crate::model::query::TraceLink {
+            element_id: 0,
+            element_name: name.to_string(),
+            element_kind: String::new(),
+        })
+}
+
+/// Requirements traceability via sysml-core's `trace_requirements`:
+/// satisfy/verify targets resolve through requirement usages, feature
+/// chains, `<'ID'>` short names, and the specialization closure — the
+/// exact semantics of `sysml trace`.
+pub fn core_traceability(
+    core_model: &Model,
+    siblings: &[Model],
+    elements: &[crate::model::elements::SysmlElement],
+) -> Vec<crate::model::query::TraceabilityEntry> {
+    let merged = merged_project_model(core_model, siblings);
+    let rows = sysml_core::query::trace_requirements(&merged);
+
+    rows.into_iter()
+        .map(|row| {
+            let req_link = find_element_link(elements, &row.requirement);
+            let requirement_name = match &row.id {
+                Some(id) => format!("<{}> {}", id, row.requirement),
+                None => row.requirement.clone(),
+            };
+            // Allocations involving this requirement, either direction.
+            let allocated_to: Vec<_> = merged
+                .allocations
+                .iter()
+                .filter_map(|a| {
+                    use sysml_core::model::target_matches;
+                    if target_matches(&a.source, &row.requirement, row.id.as_deref()) {
+                        Some(find_element_link(elements, &a.target))
+                    } else if target_matches(&a.target, &row.requirement, row.id.as_deref()) {
+                        Some(find_element_link(elements, &a.source))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            crate::model::query::TraceabilityEntry {
+                requirement_id: req_link.element_id,
+                requirement_name,
+                satisfied_by: row
+                    .satisfied_by
+                    .iter()
+                    .map(|n| find_element_link(elements, n))
+                    .collect(),
+                verified_by: row
+                    .verified_by
+                    .iter()
+                    .map(|n| find_element_link(elements, n))
+                    .collect(),
+                allocated_to,
+            }
+        })
+        .collect()
+}
+
+/// Completeness via sysml-core's `coverage_report` (model-declared
+/// `QualityScore` weighting when present) plus the model-declared CI
+/// gates (`QualityGate`/`TraceGate`) — what `sysml coverage --check`
+/// and `sysml trace --check` evaluate.
+pub fn core_completeness(
+    core_model: &Model,
+    siblings: &[Model],
+    elements: &[crate::model::elements::SysmlElement],
+) -> crate::model::query::CompletenessReport {
+    use crate::model::query::{CompleteStat, GateStatus};
+
+    let merged = merged_project_model(core_model, siblings);
+    let report = sysml_core::query::coverage_report(&merged);
+    let s = &report.summary;
+
+    let ids_for = |items: &[sysml_core::query::CoverageItem]| -> Vec<crate::model::elements::ElementId> {
+        items
+            .iter()
+            .map(|i| find_element_link(elements, &i.name).element_id)
+            .filter(|id| *id != 0)
+            .collect()
+    };
+
+    let req_count = merged
+        .definitions
+        .iter()
+        .filter(|d| d.kind == sysml_core::model::DefKind::Requirement)
+        .count() as u32;
+
+    let pct_to_count = |pct: f64, total: u32| -> u32 {
+        ((pct / 100.0) * total as f64).round() as u32
+    };
+
+    let total_usages = merged.usages.len() as u32;
+    let total_defs = report.summary.total_defs as u32;
+
+    let summary = vec![
+        CompleteStat {
+            label: "Requirements Satisfied".into(),
+            total: req_count,
+            complete: req_count - report.unsatisfied_reqs.len().min(req_count as usize) as u32,
+        },
+        CompleteStat {
+            label: "Requirements Verified".into(),
+            total: req_count,
+            complete: req_count - report.unverified_reqs.len().min(req_count as usize) as u32,
+        },
+        CompleteStat {
+            label: "Usages Typed".into(),
+            total: total_usages,
+            complete: pct_to_count(s.typed_usages_pct, total_usages),
+        },
+        CompleteStat {
+            label: "Definitions Documented".into(),
+            total: total_defs,
+            complete: pct_to_count(s.documented_pct, total_defs),
+        },
+    ];
+
+    // Model-declared CI gates, evaluated exactly as the CLI does.
+    let mut gates = Vec::new();
+    let quality_metrics = [
+        ("score", s.overall_score),
+        ("documented", s.documented_pct),
+        ("typedUsages", s.typed_usages_pct),
+        ("reqSatisfied", s.req_satisfaction_pct),
+        ("reqVerified", s.req_verification_pct),
+    ];
+    if let Some(outcome) = sysml_core::query::evaluate_gate(&merged, "QualityGate", &quality_metrics) {
+        gates.push(GateStatus {
+            name: "QualityGate".into(),
+            passed: outcome.passed,
+            failed_expressions: outcome.failed,
+        });
+    }
+    let trace_rows = sysml_core::query::trace_requirements(&merged);
+    let coverage = sysml_core::query::trace_coverage(&trace_rows);
+    if coverage.total_requirements > 0 {
+        let pct = |n: usize| 100.0 * n as f64 / coverage.total_requirements as f64;
+        if let Some(outcome) = sysml_core::query::evaluate_gate(
+            &merged,
+            "TraceGate",
+            &[
+                ("satisfied", pct(coverage.satisfied_count)),
+                ("verified", pct(coverage.verified_count)),
+                ("traced", pct(coverage.fully_traced_count)),
+            ],
+        ) {
+            gates.push(GateStatus {
+                name: "TraceGate".into(),
+                passed: outcome.passed,
+                failed_expressions: outcome.failed,
+            });
+        }
+    }
+
+    crate::model::query::CompletenessReport {
+        unsatisfied_requirements: ids_for(&report.unsatisfied_reqs),
+        unverified_requirements: ids_for(&report.unverified_reqs),
+        unconnected_ports: Vec::new(),
+        untyped_usages: ids_for(&report.untyped_usages),
+        score: s.overall_score / 100.0,
+        score_source: s.score_source.clone(),
+        summary,
+        gates,
+    }
+}

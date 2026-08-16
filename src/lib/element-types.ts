@@ -116,6 +116,12 @@ export interface SysmlModel {
 }
 
 // MBSE Types
+export interface GateStatus {
+  name: string;
+  passed: boolean;
+  failed_expressions: string[];
+}
+
 export interface CompletenessReport {
   unsatisfied_requirements: ElementId[];
   unverified_requirements: ElementId[];
@@ -123,6 +129,8 @@ export interface CompletenessReport {
   untyped_usages: ElementId[];
   score: number;
   summary: CompleteStat[];
+  score_source?: string;
+  gates?: GateStatus[];
 }
 
 export interface CompleteStat {

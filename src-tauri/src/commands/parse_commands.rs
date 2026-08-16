@@ -178,11 +178,10 @@ pub fn check_completeness(
 ) -> Result<CompletenessReport, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
     let model = model_lock.as_ref().ok_or("No model loaded")?;
-
-    let graph_lock = state.current_graph.lock().map_err(|e| e.to_string())?;
-    let graph = graph_lock.as_ref().ok_or("No graph built")?;
-
-    Ok(query::check_completeness(&model.elements, graph))
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+    let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;
+    Ok(adapter::core_completeness(core_model, &siblings, &model.elements))
 }
 
 /// MBSE: Get traceability matrix for requirements
@@ -192,11 +191,10 @@ pub fn get_traceability_matrix(
 ) -> Result<Vec<TraceabilityEntry>, String> {
     let model_lock = state.current_model.lock().map_err(|e| e.to_string())?;
     let model = model_lock.as_ref().ok_or("No model loaded")?;
-
-    let graph_lock = state.current_graph.lock().map_err(|e| e.to_string())?;
-    let graph = graph_lock.as_ref().ok_or("No graph built")?;
-
-    Ok(query::build_traceability_matrix(&model.elements, graph))
+    let core_lock = state.core_model.lock().map_err(|e| e.to_string())?;
+    let core_model = core_lock.as_ref().ok_or("No model loaded")?;
+    let siblings = state.sibling_models.lock().map_err(|e| e.to_string())?;
+    Ok(adapter::core_traceability(core_model, &siblings, &model.elements))
 }
 
 /// MBSE: Run model validation — combines Studio checks with sysml-core lint checks

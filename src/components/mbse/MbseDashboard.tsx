@@ -121,6 +121,25 @@ export function MbseDashboard() {
               {Math.round(completeness.score * 100)}%
             </div>
             <div style={{ flex: 1 }}>
+              {completeness.score_source && completeness.score_source !== "built-in" && (
+                <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-muted)", paddingBottom: 2 }}>
+                  weighting: {completeness.score_source}
+                </div>
+              )}
+              {(completeness.gates ?? []).map((gate) => (
+                <div key={gate.name} style={{
+                  display: "flex", justifyContent: "space-between",
+                  fontSize: 11, fontFamily: "var(--font-mono)", padding: "2px 0",
+                }}>
+                  <span style={{ color: "var(--text-muted)" }}
+                        title={gate.failed_expressions.join("; ")}>
+                    {gate.name} (model-declared gate)
+                  </span>
+                  <span style={{ color: gate.passed ? "var(--success)" : "var(--error)", fontWeight: 700 }}>
+                    {gate.passed ? "PASS" : "FAIL"}
+                  </span>
+                </div>
+              ))}
               {completeness.summary.map((stat) => (
                 <div key={stat.label} style={{
                   display: "flex", justifyContent: "space-between",

@@ -1,6 +1,5 @@
 use serde::{Serialize, Deserialize};
 use super::elements::*;
-use super::graph::{ElementGraph, RelationshipType};
 
 /// Result of a model completeness check — critical for MBSE
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,8 +14,23 @@ pub struct CompletenessReport {
     pub untyped_usages: Vec<ElementId>,
     /// Overall completeness score (0.0 - 1.0)
     pub score: f64,
+    /// Where the score came from: "model:QualityScore" when the model
+    /// declares the scoring calc, "built-in" otherwise.
+    #[serde(default)]
+    pub score_source: String,
     /// Summary statistics
     pub summary: Vec<CompleteStat>,
+    /// Model-declared CI gates (QualityGate / TraceGate), evaluated
+    /// exactly as `sysml coverage --check` / `sysml trace --check` do.
+    #[serde(default)]
+    pub gates: Vec<GateStatus>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateStatus {
+    pub name: String,
+    pub passed: bool,
+    pub failed_expressions: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,87 +149,7 @@ pub fn filter_elements(elements: &[SysmlElement], criteria: &FilterCriteria) -> 
 }
 
 /// MBSE: Generate completeness report
-pub fn check_completeness(elements: &[SysmlElement], graph: &ElementGraph) -> CompletenessReport {
-    let requirements: Vec<_> = elements.iter()
-        .filter(|e| matches!(e.kind, ElementKind::RequirementDef | ElementKind::RequirementUsage))
-        .collect();
-
-    let ports: Vec<_> = elements.iter()
-        .filter(|e| matches!(e.kind, ElementKind::PortDef | ElementKind::PortUsage))
-        .collect();
-
-    let usages: Vec<_> = elements.iter()
-        .filter(|e| e.kind.is_usage())
-        .collect();
-
-    let mut unsatisfied = Vec::new();
-    let mut unverified = Vec::new();
-
-    for req in &requirements {
-        let (satisfied, verified) = graph.requirement_traceability(req.id);
-        if satisfied.is_empty() {
-            unsatisfied.push(req.id);
-        }
-        if verified.is_empty() {
-            unverified.push(req.id);
-        }
-    }
-
-    let unconnected_ports: Vec<_> = ports.iter()
-        .filter(|p| {
-            let connections = graph.outgoing_from(p.id).iter()
-                .chain(graph.incoming_to(p.id).iter())
-                .any(|r| matches!(r.rel_type, RelationshipType::Connection | RelationshipType::Flow));
-            !connections
-        })
-        .map(|p| p.id)
-        .collect();
-
-    let untyped: Vec<_> = usages.iter()
-        .filter(|u| u.type_ref.is_none() && !matches!(u.kind,
-            ElementKind::FeatureUsage | ElementKind::EnumMember |
-            ElementKind::TransitionStatement | ElementKind::StateUsage
-        ))
-        .map(|u| u.id)
-        .collect();
-
-    // Compute score
-    let mut total_checks = 0u32;
-    let mut passed_checks = 0u32;
-
-    let req_total = requirements.len() as u32;
-    let satisfied_count = req_total - unsatisfied.len() as u32;
-    let verified_count = req_total - unverified.len() as u32;
-    let connected_count = ports.len() as u32 - unconnected_ports.len() as u32;
-    let typed_count = usages.len() as u32 - untyped.len() as u32;
-
-    total_checks += req_total * 2 + ports.len() as u32 + usages.len() as u32;
-    passed_checks += satisfied_count + verified_count + connected_count + typed_count;
-
-    let score = if total_checks > 0 {
-        passed_checks as f64 / total_checks as f64
-    } else {
-        1.0
-    };
-
-    let summary = vec![
-        CompleteStat { label: "Requirements Satisfied".into(), total: req_total, complete: satisfied_count },
-        CompleteStat { label: "Requirements Verified".into(), total: req_total, complete: verified_count },
-        CompleteStat { label: "Ports Connected".into(), total: ports.len() as u32, complete: connected_count },
-        CompleteStat { label: "Usages Typed".into(), total: usages.len() as u32, complete: typed_count },
-    ];
-
-    CompletenessReport {
-        unsatisfied_requirements: unsatisfied,
-        unverified_requirements: unverified,
-        unconnected_ports,
-        untyped_usages: untyped,
-        score,
-        summary,
-    }
-}
-
-/// Validation issue
+/// Validation issue from core checks.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationIssue {
     pub element_id: ElementId,
@@ -252,42 +186,6 @@ pub fn element_at_line(elements: &[SysmlElement], line: u32) -> Option<ElementId
         .filter(|e| e.span.start_line <= line && line <= e.span.end_line)
         .min_by_key(|e| e.span.end_line - e.span.start_line)
         .map(|e| e.id)
-}
-
-/// MBSE: Generate traceability matrix
-pub fn build_traceability_matrix(elements: &[SysmlElement], graph: &ElementGraph) -> Vec<TraceabilityEntry> {
-    elements.iter()
-        .filter(|e| matches!(e.kind, ElementKind::RequirementDef | ElementKind::RequirementUsage))
-        .map(|req| {
-            let (satisfied_ids, verified_ids) = graph.requirement_traceability(req.id);
-            // Check both directions: allocations FROM req and allocations TO req
-            let mut allocated_ids = graph.allocations_from(req.id);
-            allocated_ids.extend(graph.allocations_to(req.id));
-
-            let to_link = |id: ElementId| -> TraceLink {
-                elements.iter()
-                    .find(|e| e.id == id)
-                    .map(|e| TraceLink {
-                        element_id: e.id,
-                        element_name: e.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-                        element_kind: e.kind.display_label().to_string(),
-                    })
-                    .unwrap_or(TraceLink {
-                        element_id: id,
-                        element_name: "<unknown>".into(),
-                        element_kind: "unknown".into(),
-                    })
-            };
-
-            TraceabilityEntry {
-                requirement_id: req.id,
-                requirement_name: req.name.clone().unwrap_or_else(|| "<unnamed>".into()),
-                satisfied_by: satisfied_ids.into_iter().map(&to_link).collect(),
-                verified_by: verified_ids.into_iter().map(&to_link).collect(),
-                allocated_to: allocated_ids.into_iter().map(to_link).collect(),
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -357,17 +255,4 @@ mod tests {
         assert_eq!(filtered[0].name, Some("Engine".into()));
     }
 
-    #[test]
-    fn test_completeness_all_requirements_unsatisfied() {
-        let elements = vec![
-            make_el(0, ElementKind::RequirementDef, "SafeStop", Category::Requirement),
-            make_el(1, ElementKind::RequirementDef, "MaxSpeed", Category::Requirement),
-        ];
-        let graph = ElementGraph::build_from_model(&elements);
-        let report = check_completeness(&elements, &graph);
-
-        assert_eq!(report.unsatisfied_requirements.len(), 2);
-        assert_eq!(report.unverified_requirements.len(), 2);
-        assert!(report.score < 1.0);
-    }
 }

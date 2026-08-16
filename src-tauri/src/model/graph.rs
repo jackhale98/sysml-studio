@@ -275,39 +275,8 @@ impl ElementGraph {
     }
 
     /// MBSE: Get traceability chain for requirements
-    /// Returns (satisfied_by, verified_by) element IDs
-    pub fn requirement_traceability(&self, req_id: ElementId) -> (Vec<ElementId>, Vec<ElementId>) {
-        let mut satisfied_by = Vec::new();
-        let mut verified_by = Vec::new();
 
-        for rel in self.incoming_to(req_id) {
-            match rel.rel_type {
-                RelationshipType::Satisfy => satisfied_by.push(rel.from_id),
-                RelationshipType::Verify => verified_by.push(rel.from_id),
-                _ => {}
-            }
-        }
 
-        (satisfied_by, verified_by)
-    }
-
-    /// MBSE: Get all allocations from an element (outgoing)
-    pub fn allocations_from(&self, id: ElementId) -> Vec<ElementId> {
-        self.outgoing_from(id)
-            .iter()
-            .filter(|r| r.rel_type == RelationshipType::Allocation)
-            .map(|r| r.to_id)
-            .collect()
-    }
-
-    /// MBSE: Get all allocations to an element (incoming)
-    pub fn allocations_to(&self, id: ElementId) -> Vec<ElementId> {
-        self.incoming_to(id)
-            .iter()
-            .filter(|r| r.rel_type == RelationshipType::Allocation)
-            .map(|r| r.from_id)
-            .collect()
-    }
 
     /// Get relationships of a specific type
     pub fn relationships_of_type(&self, rel_type: &RelationshipType) -> Vec<&Relationship> {
