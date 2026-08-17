@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { insertElementSource } from "../../lib/tauri-bridge";
 import { useUIStore } from "../../stores/ui-store";
+import { useDialogBehavior } from "../../hooks/useDialogBehavior";
 import { useModelStore } from "../../stores/model-store";
 import {
   CREATE_OPTIONS,
@@ -77,6 +78,7 @@ const CHILD_COLORS: Record<string, string> = {
 
 export function CreateElementDialog() {
   const closeDialog = useUIStore((s) => s.closeDialog);
+  const { containerRef, keyboardInset } = useDialogBehavior(closeDialog);
   const createContext = useUIStore((s) => s.createContext);
   const source = useModelStore((s) => s.source);
   const model = useModelStore((s) => s.model);
@@ -738,7 +740,15 @@ export function CreateElementDialog() {
       position: "absolute", inset: 0, zIndex: 50,
       background: "rgba(0,0,0,0.6)", display: "flex",
       flexDirection: "column", justifyContent: "flex-end",
-    }} onClick={(e) => { if (e.target === e.currentTarget) closeDialog(); }}>
+      // Keep the sheet (and its primary button) above the on-screen
+      // keyboard instead of underneath it.
+      paddingBottom: keyboardInset,
+    }}
+    role="dialog"
+    aria-modal="true"
+    aria-label="Create element"
+    ref={containerRef}
+    onClick={(e) => { if (e.target === e.currentTarget) closeDialog(); }}>
       <div style={{
         background: "var(--bg-secondary)", borderRadius: "16px 16px 0 0",
         maxHeight: "88%", overflow: "auto", padding: "20px 16px",

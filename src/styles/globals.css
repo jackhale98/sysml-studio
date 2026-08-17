@@ -8,7 +8,9 @@
   --border-active: #3b82f6;
   --text-primary: #e2e8f0;
   --text-secondary: #94a3b8;
-  --text-muted: #475569;
+  /* Was #475569 (~2.8:1 on --bg-primary) — below the 4.5:1
+     minimum while used for labels, counts, and column headers. */
+  --text-muted: #94a3b8;
   --accent: #3b82f6;
   --accent-hover: #60a5fa;
   --success: #4ade80;
