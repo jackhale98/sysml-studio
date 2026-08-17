@@ -18,6 +18,9 @@ export interface OpenFile {
   filePath: string | null;
   /** Has unsaved changes */
   dirty: boolean;
+  /** Source snapshots for undo/redo (most recent last). */
+  history: string[];
+  future: string[];
 }
 
 let nextUntitledId = 1;
@@ -39,10 +42,21 @@ interface ModelState {
   source: string;
   filePath: string | null;
   dirty: boolean;
+  /** True when there is a snapshot to undo/redo on the active file. */
+  canUndo: boolean;
+  canRedo: boolean;
 
   loadSource: (source: string, filePath?: string) => Promise<void>;
   loadFile: (path: string) => Promise<void>;
   updateSource: (source: string) => Promise<void>;
+  /**
+   * Structural edits (create/edit/delete dialogs) replace the whole
+   * document, and CodeMirror's own history cannot undo them. These
+   * snapshot the source first so any change is reversible.
+   */
+  applyEdit: (source: string) => Promise<void>;
+  undo: () => Promise<void>;
+  redo: () => Promise<void>;
   saveCurrentFile: () => Promise<void>;
   saveAs: (path: string) => Promise<void>;
   setActiveFile: (id: string) => void;
@@ -76,6 +90,8 @@ function mirrorActive(files: Record<string, OpenFile>, activeId: string | null) 
     source: f?.source ?? "",
     filePath: f?.filePath ?? null,
     dirty: f?.dirty ?? false,
+    canUndo: (f?.history?.length ?? 0) > 0,
+    canRedo: (f?.future?.length ?? 0) > 0,
   };
 }
 
@@ -91,12 +107,14 @@ export const useModelStore = create<ModelState>((set, get) => ({
   source: "",
   filePath: null,
   dirty: false,
+  canUndo: false,
+  canRedo: false,
 
   loadSource: async (source, filePath) => {
     const id = filePath ?? `untitled-${nextUntitledId++}.sysml`;
     const name = filePath?.split("/").pop()?.split("\\").pop() ?? id;
     const newFile: OpenFile = {
-      id, name, source, filePath: filePath ?? null, dirty: false,
+      id, name, source, filePath: filePath ?? null, dirty: false, history: [], future: [],
     };
     const files = { ...get().openFiles, [id]: newFile };
     set({ openFiles: files, activeFileId: id, loading: true, error: null, ...mirrorActive(files, id) });
@@ -131,7 +149,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
       const name = path.split("/").pop()?.split("\\").pop() ?? "file.sysml";
       const newFile: OpenFile = {
-        id: path, name, source: rawSource, filePath: path, dirty: false,
+        id: path, name, source: rawSource, filePath: path, dirty: false, history: [], future: [],
       };
       const files = { ...get().openFiles, [path]: newFile };
       set({ openFiles: files, activeFileId: path, ...mirrorActive(files, path) });
@@ -150,7 +168,7 @@ export const useModelStore = create<ModelState>((set, get) => ({
 
     const updated = { ...openFiles[activeFileId], source, dirty: true };
     const files = { ...openFiles, [activeFileId]: updated };
-    set({ openFiles: files, source, dirty: true });
+    set({ openFiles: files, ...mirrorActive(files, activeFileId) });
 
     try {
       const model = await reparseAll(files, activeFileId);
@@ -159,6 +177,55 @@ export const useModelStore = create<ModelState>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
     }
+  },
+
+  /** Snapshot, then apply — the entry point for dialog-driven edits. */
+  applyEdit: async (source) => {
+    const { activeFileId, openFiles } = get();
+    if (!activeFileId || !openFiles[activeFileId]) return;
+    const prev = openFiles[activeFileId];
+    if (prev.source === source) return;
+    const updated = {
+      ...prev,
+      // Cap the stack so a long session cannot grow without bound.
+      history: [...prev.history, prev.source].slice(-50),
+      future: [],
+    };
+    const files = { ...openFiles, [activeFileId]: updated };
+    set({ openFiles: files });
+    await get().updateSource(source);
+  },
+
+  undo: async () => {
+    const { activeFileId, openFiles } = get();
+    if (!activeFileId) return;
+    const file = openFiles[activeFileId];
+    if (!file || file.history.length === 0) return;
+    const previous = file.history[file.history.length - 1];
+    const updated = {
+      ...file,
+      history: file.history.slice(0, -1),
+      future: [...file.future, file.source].slice(-50),
+    };
+    const files = { ...openFiles, [activeFileId]: updated };
+    set({ openFiles: files });
+    await get().updateSource(previous);
+  },
+
+  redo: async () => {
+    const { activeFileId, openFiles } = get();
+    if (!activeFileId) return;
+    const file = openFiles[activeFileId];
+    if (!file || file.future.length === 0) return;
+    const next = file.future[file.future.length - 1];
+    const updated = {
+      ...file,
+      history: [...file.history, file.source].slice(-50),
+      future: file.future.slice(0, -1),
+    };
+    const files = { ...openFiles, [activeFileId]: updated };
+    set({ openFiles: files });
+    await get().updateSource(next);
   },
 
   saveCurrentFile: async () => {

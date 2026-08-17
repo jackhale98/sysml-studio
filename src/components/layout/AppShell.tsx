@@ -101,6 +101,35 @@ export function AppShell() {
   const highlightedNodeId = useUIStore((s) => s.highlightedNodeId);
   const model = useModelStore((s) => s.model);
   const hasFiles = Object.keys(useModelStore((s) => s.openFiles)).length > 0;
+  const error = useModelStore((s) => s.error);
+  const clearError = useModelStore((s) => s.clearError);
+  const undo = useModelStore((s) => s.undo);
+  const redo = useModelStore((s) => s.redo);
+  const saveCurrentFile = useModelStore((s) => s.saveCurrentFile);
+
+  // App-level shortcuts. Structural edits (dialogs) are undoable
+  // through the store; CodeMirror keeps its own history for typing.
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const inEditor = (e.target as HTMLElement | null)?.closest?.(".cm-editor");
+      const key = e.key.toLowerCase();
+      if (key === "s") {
+        e.preventDefault();
+        void saveCurrentFile();
+      } else if (key === "z" && !inEditor) {
+        e.preventDefault();
+        if (e.shiftKey) void redo();
+        else void undo();
+      } else if (key === "y" && !inEditor) {
+        e.preventDefault();
+        void redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo, saveCurrentFile]);
 
   return (
     <div style={{
@@ -110,6 +139,35 @@ export function AppShell() {
     }}>
       <Header />
 
+      {/* Failures were previously only an 8px dot with a tooltip — which
+          does not exist on touch. A failed open, save, or parse must be
+          readable. */}
+      {error && (
+        <div
+          role="alert"
+          style={{
+            display: "flex", alignItems: "flex-start", gap: 8,
+            margin: "8px 12px 0", padding: "8px 10px", borderRadius: 8,
+            border: "1px solid var(--error)", background: "rgba(239,68,68,0.12)",
+            color: "var(--error)", fontFamily: "var(--font-mono)", fontSize: 11,
+            lineHeight: 1.5, flexShrink: 0,
+          }}
+        >
+          <span style={{ flex: 1, wordBreak: "break-word" }}>{error}</span>
+          <button
+            onClick={clearError}
+            aria-label="Dismiss error"
+            style={{
+              background: "none", border: "none", color: "var(--error)",
+              fontSize: 16, lineHeight: 1, cursor: "pointer", padding: "0 4px",
+              minHeight: "auto",
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       {!hasFiles ? (
         <WelcomeScreen />
       ) : (
@@ -117,7 +175,14 @@ export function AppShell() {
           <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
             {activeTab === "browser" && <ElementBrowser />}
             {activeTab === "diagram" && <DiagramView />}
-            {activeTab === "editor" && <EditorView />}
+            {/* Always mounted: unmounting destroyed CodeMirror's undo
+                history, scroll position, and folds on every tab switch. */}
+            <div style={{
+              display: activeTab === "editor" ? "flex" : "none",
+              flexDirection: "column", flex: 1, minHeight: 0,
+            }}>
+              <EditorView />
+            </div>
             {activeTab === "mbse" && <MbseDashboard />}
             {activeTab === "analysis" && <AnalysisView />}
           </div>

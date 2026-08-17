@@ -13,6 +13,10 @@ export function Header() {
   const openFiles = useModelStore((s) => s.openFiles);
   const activeFileId = useModelStore((s) => s.activeFileId);
   const setActiveFile = useModelStore((s) => s.setActiveFile);
+  const canUndo = useModelStore((s) => s.canUndo);
+  const canRedo = useModelStore((s) => s.canRedo);
+  const undo = useModelStore((s) => s.undo);
+  const redo = useModelStore((s) => s.redo);
   const closeFile = useModelStore((s) => s.closeFile);
   const loadFile = useModelStore((s) => s.loadFile);
   const loadSource = useModelStore((s) => s.loadSource);
@@ -54,12 +58,29 @@ export function Header() {
   }
 
   async function handleSave() {
-    if (filePath) {
-      await saveCurrentFile();
-    } else {
+    // A path with no directory component (mobile "open" gives a bare
+    // filename) would write into the app sandbox where the user can
+    // never reach it — treat that as "not saved yet" and ask.
+    const hasRealPath = !!filePath && /[/\\]/.test(filePath);
+    try {
+      if (hasRealPath) {
+        await saveCurrentFile();
+        return;
+      }
       const { pickSaveFile } = await import("../../lib/tauri-bridge");
-      const path = await pickSaveFile("model.sysml");
-      if (path) await saveAs(path);
+      const path = await pickSaveFile(filePath || "model.sysml");
+      if (path) {
+        await saveAs(path);
+      } else {
+        useModelStore.setState({
+          error: "Save cancelled — choose a location to write the model.",
+        });
+      }
+    } catch (e) {
+      // Previously this rejected unhandled and the button did nothing.
+      useModelStore.setState({
+        error: `Save failed: ${String(e)}. On mobile, use Share/Export to write the file somewhere reachable.`,
+      });
     }
   }
 
@@ -155,6 +176,33 @@ export function Header() {
               <span style={{ color: "var(--error)" }}>{model.stats.errors}err</span>
             )}
           </div>
+        )}
+
+        {/* Undo / redo — keyboard alone is undiscoverable, and there
+            is no keyboard on a phone. */}
+        {activeFile && canUndo && (
+          <button
+            onClick={() => void undo()}
+            style={iconBtnStyle}
+            title="Undo (Ctrl+Z)"
+            aria-label="Undo"
+          >
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a5 5 0 015 5v2M3 10l4-4M3 10l4 4" />
+            </svg>
+          </button>
+        )}
+        {activeFile && canRedo && (
+          <button
+            onClick={() => void redo()}
+            style={iconBtnStyle}
+            title="Redo (Ctrl+Shift+Z)"
+            aria-label="Redo"
+          >
+            <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M21 10H11a5 5 0 00-5 5v2M21 10l-4-4M21 10l-4 4" />
+            </svg>
+          </button>
         )}
 
         {/* Save (only when dirty) */}

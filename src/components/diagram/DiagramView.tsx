@@ -535,6 +535,23 @@ export function DiagramView() {
               // Remove the transform group's transform
               const g = svgClone.querySelector("g");
               if (g) g.setAttribute("transform", "");
+
+              // Every fill/stroke in the live diagram is a CSS custom
+              // property. A detached clone has no :root, so those would
+              // resolve to nothing and the PNG would come out blank —
+              // copy the COMPUTED values across, node for node.
+              const liveNodes = svgRef.current.querySelectorAll("*");
+              const cloneNodes = svgClone.querySelectorAll("*");
+              const COPIED = ["fill", "stroke", "stroke-width", "opacity", "font-size", "font-family", "font-weight"] as const;
+              liveNodes.forEach((live, i) => {
+                const target = cloneNodes[i] as SVGElement | undefined;
+                if (!target) return;
+                const computed = window.getComputedStyle(live);
+                for (const prop of COPIED) {
+                  const value = computed.getPropertyValue(prop);
+                  if (value && value !== "none") target.setAttribute(prop, value);
+                }
+              });
               const serializer = new XMLSerializer();
               const svgString = serializer.serializeToString(svgClone);
               const canvas = document.createElement("canvas");
@@ -542,8 +559,18 @@ export function DiagramView() {
               canvas.height = h * 2;
               const ctx = canvas.getContext("2d");
               const img = new Image();
+              img.onerror = () => {
+                useModelStore.setState({ error: "Diagram export failed while rendering the image." });
+              };
               img.onload = () => {
-                ctx?.drawImage(img, 0, 0);
+                if (!ctx) return;
+                // Opaque background: a transparent PNG of light-on-dark
+                // text is unreadable wherever it is pasted.
+                ctx.fillStyle = window.getComputedStyle(document.documentElement)
+                  .getPropertyValue("--bg-primary")
+                  .trim() || "#020617";
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0);
                 canvas.toBlob((blob) => {
                   if (!blob) return;
                   const url = URL.createObjectURL(blob);

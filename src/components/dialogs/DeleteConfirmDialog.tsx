@@ -12,7 +12,7 @@ export function DeleteConfirmDialog() {
   const source = useModelStore((s) => s.source);
   const [error, setError] = useState<string | null>(null);
   const model = useModelStore((s) => s.model);
-  const updateSource = useModelStore((s) => s.updateSource);
+  const applyEdit = useModelStore((s) => s.applyEdit);
 
   const element = model?.elements.find((e) => e.id === editTargetId);
   if (!element) return null;
@@ -39,7 +39,7 @@ export function DeleteConfirmDialog() {
     deleteElementSource(source, element.span.start_byte)
       .then((out) => {
         selectElement(null);
-        updateSource(out.new_source);
+        applyEdit(out.new_source);
         closeDialog();
       })
       .catch((e) => setError(String(e)));

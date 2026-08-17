@@ -80,7 +80,7 @@ export function CreateElementDialog() {
   const createContext = useUIStore((s) => s.createContext);
   const source = useModelStore((s) => s.source);
   const model = useModelStore((s) => s.model);
-  const updateSource = useModelStore((s) => s.updateSource);
+  const applyEdit = useModelStore((s) => s.applyEdit);
 
   const [selectedCategory, setSelectedCategory] = useState(createContext?.suggestedCategory ?? 0);
   const [selectedKind, setSelectedKind] = useState(createContext?.suggestedKind ?? "");
@@ -717,7 +717,7 @@ export function CreateElementDialog() {
 
     insertElementSource(source, selectedParent?.name ?? null, src)
       .then((out) => {
-        updateSource(out.new_source);
+        applyEdit(out.new_source);
         closeDialog();
       })
       .catch((e) => setError(String(e)));

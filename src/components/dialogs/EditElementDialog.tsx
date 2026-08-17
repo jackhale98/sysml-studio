@@ -29,7 +29,7 @@ export function EditElementDialog() {
   const editTargetId = useUIStore((s) => s.editTargetId);
   const source = useModelStore((s) => s.source);
   const model = useModelStore((s) => s.model);
-  const updateSource = useModelStore((s) => s.updateSource);
+  const applyEdit = useModelStore((s) => s.applyEdit);
 
   const element = model?.elements.find((e) => e.id === editTargetId);
 
@@ -106,7 +106,7 @@ export function EditElementDialog() {
       },
     )
       .then((out) => {
-        updateSource(out.new_source);
+        applyEdit(out.new_source);
         closeDialog();
       })
       .catch((e) => setError(String(e)));
