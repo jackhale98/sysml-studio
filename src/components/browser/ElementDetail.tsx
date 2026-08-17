@@ -3,6 +3,7 @@ import { useModelStore } from "../../stores/model-store";
 import { useUIStore } from "../../stores/ui-store";
 import { TypeBadge } from "../shared/TypeBadge";
 import { getKindLabel, getBestDiagramType } from "../../lib/constants";
+import type { SysmlElement } from "../../lib/element-types";
 
 export function ElementDetail() {
   const selectedId = useUIStore((s) => s.selectedElementId);
@@ -169,6 +170,11 @@ export function ElementDetail() {
         ))}
       </div>
 
+      {/* Impact: what would be affected by changing this element.
+          Answers the most-asked MBSE question; the backend was already
+          there and called by nothing. */}
+      <ImpactSection elementId={element.id} />
+
       <div style={{ display: "flex", gap: 6, marginTop: 14 }}>
         <button
           onClick={() => navigateToEditor(element.span.start_line)}
@@ -220,6 +226,75 @@ export function ElementDetail() {
           Delete
         </button>
       </div>
+    </div>
+  );
+}
+
+/** Dependents of an element, resolved lazily on expand. */
+function ImpactSection({ elementId }: { elementId: number }) {
+  const [open, setOpen] = React.useState(false);
+  const [items, setItems] = React.useState<SysmlElement[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+  const selectElement = useUIStore((s) => s.selectElement);
+
+  React.useEffect(() => {
+    setItems(null);
+    setError(null);
+    setOpen(false);
+  }, [elementId]);
+
+  const load = async () => {
+    setOpen((o) => !o);
+    if (items || !elementId) return;
+    try {
+      const { getImpactAnalysis } = await import("../../lib/tauri-bridge");
+      setItems(await getImpactAnalysis(elementId));
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <button
+        onClick={load}
+        aria-expanded={open}
+        style={{
+          width: "100%", textAlign: "left", padding: "8px 10px", borderRadius: 8,
+          border: "1px solid var(--border)", background: "var(--bg-tertiary)",
+          color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 11,
+          cursor: "pointer", minHeight: 40,
+        }}
+      >
+        {open ? "▾" : "▸"} Impact — what changes if this changes
+        {items ? ` (${items.length})` : ""}
+      </button>
+      {open && (
+        <div style={{ padding: "6px 4px" }}>
+          {error && (
+            <div style={{ color: "var(--error)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{error}</div>
+          )}
+          {items && items.length === 0 && (
+            <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: 11 }}>
+              Nothing refers to this element.
+            </div>
+          )}
+          {items?.map((el) => (
+            <div
+              key={el.id}
+              onClick={() => selectElement(el.id)}
+              style={{
+                padding: "4px 6px", fontFamily: "var(--font-mono)", fontSize: 11,
+                color: "var(--text-primary)", cursor: "pointer",
+                borderBottom: "1px solid var(--bg-tertiary)",
+              }}
+            >
+              {el.name ?? "<unnamed>"}{" "}
+              <span style={{ color: "var(--text-secondary)" }}>{getKindLabel(String(el.kind))}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

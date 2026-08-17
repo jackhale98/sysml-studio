@@ -26,6 +26,8 @@ interface UIState {
   activeDialog: DialogType;
   editTargetId: ElementId | null;
   scrollToLine: number | null;
+  /** Unified diff of the last structural edit, shown as a confirmation. */
+  lastEditDiff: string | null;
   theme: ThemeMode;
 
   setTab: (tab: TabId) => void;
@@ -41,6 +43,7 @@ interface UIState {
   openDialog: (type: DialogType, elementId?: ElementId, context?: { suggestedKind?: string; suggestedParentId?: number; suggestedCategory?: number }) => void;
   closeDialog: () => void;
   clearScrollToLine: () => void;
+  setLastEditDiff: (diff: string | null) => void;
   toggleTheme: () => void;
 }
 
@@ -57,6 +60,7 @@ export const useUIStore = create<UIState>((set) => ({
   editTargetId: null,
   createContext: null,
   scrollToLine: null,
+  lastEditDiff: null,
   theme: (localStorage.getItem("sysml-theme") as ThemeMode) ?? "dark",
 
   setTab: (tab) => set({ activeTab: tab, showDetailSheet: false }),
@@ -103,6 +107,7 @@ export const useUIStore = create<UIState>((set) => ({
   }),
 
   clearScrollToLine: () => set({ scrollToLine: null }),
+  setLastEditDiff: (diff) => set({ lastEditDiff: diff }),
 
   openDialog: (type, elementId, context) => set({
     activeDialog: type,

@@ -107,6 +107,7 @@ export function EditElementDialog() {
     )
       .then((out) => {
         applyEdit(out.new_source);
+        useUIStore.getState().setLastEditDiff(out.diff);
         closeDialog();
       })
       .catch((e) => setError(String(e)));

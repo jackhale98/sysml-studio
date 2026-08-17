@@ -197,3 +197,42 @@ fn foreign_model_dimension_uses_symmetric_tolerance() {
         "redefined tolerance is visible: {dim_values:?}"
     );
 }
+
+#[test]
+fn impact_analysis_reports_dependents_not_the_containment_subtree() {
+    use sysml_studio_lib::model::graph::ElementGraph;
+
+    let (_source, core) = fixture();
+    let model = adapter::convert_model(&core, 0.0);
+    let graph = ElementGraph::build_from_model(&model.elements);
+
+    let pkg = model
+        .elements
+        .iter()
+        .find(|e| e.kind == ElementKind::Package)
+        .expect("package");
+    let pkg_impact = graph.impact_analysis(pkg.id);
+    assert!(
+        pkg_impact.len() < model.elements.len() / 2,
+        "a package must not report the whole model as impacted (got {} of {})",
+        pkg_impact.len(),
+        model.elements.len()
+    );
+
+    // Changing a part def must reach the usages typed by it.
+    let spring = model
+        .elements
+        .iter()
+        .find(|e| e.name.as_deref() == Some("Spring") && e.kind == ElementKind::PartDef)
+        .expect("Spring def");
+    let impacted = graph.impact_analysis(spring.id);
+    let names: Vec<&str> = impacted
+        .iter()
+        .filter_map(|id| model.elements.iter().find(|e| e.id == *id))
+        .filter_map(|e| e.name.as_deref())
+        .collect();
+    assert!(
+        names.contains(&"spring"),
+        "the usage typed by Spring is impacted: {names:?}"
+    );
+}

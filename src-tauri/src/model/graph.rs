@@ -243,35 +243,62 @@ impl ElementGraph {
         result
     }
 
-    /// MBSE: Impact analysis — find all elements transitively affected by changes to given element
+    /// MBSE: impact analysis — what would be affected by a change to
+    /// this element.
+    ///
+    /// This follows DEPENDENCY edges, not containment. Following
+    /// containment outward made "impact of a package" the entire model,
+    /// which answers nothing: the question is "what breaks if I change
+    /// this", i.e. what refers to it (usages typed by it, subtypes,
+    /// connections, satisfy/verify/allocation), transitively — plus,
+    /// for a requirement, what claims to satisfy or verify it.
     pub fn impact_analysis(&self, id: ElementId) -> Vec<ElementId> {
+        fn is_dependency(rel: &RelationshipType) -> bool {
+            matches!(
+                rel,
+                RelationshipType::TypeReference
+                    | RelationshipType::Specialization
+                    | RelationshipType::Composition
+                    | RelationshipType::Connection
+                    | RelationshipType::Flow
+                    | RelationshipType::Satisfy
+                    | RelationshipType::Verify
+                    | RelationshipType::Allocation
+            )
+        }
+
         let mut visited = HashSet::new();
         let mut queue = vec![id];
         visited.insert(id);
 
         while let Some(current) = queue.pop() {
-            // Follow outgoing containment, composition, type references
-            for rel in self.outgoing_from(current) {
-                if !visited.contains(&rel.to_id) {
-                    visited.insert(rel.to_id);
-                    queue.push(rel.to_id);
-                }
-            }
-            // Also follow incoming type references (things that USE this element)
+            // Dependents: everything that refers to `current`.
             for rel in self.incoming_to(current) {
-                if matches!(rel.rel_type,
-                    RelationshipType::TypeReference |
-                    RelationshipType::Composition |
-                    RelationshipType::Specialization
-                ) && !visited.contains(&rel.from_id) {
+                if is_dependency(&rel.rel_type) && !visited.contains(&rel.from_id) {
                     visited.insert(rel.from_id);
                     queue.push(rel.from_id);
+                }
+            }
+            // Outgoing trace edges: a requirement's satisfiers and
+            // verifiers are affected when the requirement changes.
+            for rel in self.outgoing_from(current) {
+                if matches!(
+                    rel.rel_type,
+                    RelationshipType::Satisfy
+                        | RelationshipType::Verify
+                        | RelationshipType::Allocation
+                ) && !visited.contains(&rel.to_id)
+                {
+                    visited.insert(rel.to_id);
+                    queue.push(rel.to_id);
                 }
             }
         }
 
         visited.remove(&id);
-        visited.into_iter().collect()
+        let mut out: Vec<ElementId> = visited.into_iter().collect();
+        out.sort_unstable();
+        out
     }
 
 

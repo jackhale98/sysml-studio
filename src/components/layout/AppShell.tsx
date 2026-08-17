@@ -168,6 +168,11 @@ export function AppShell() {
         </div>
       )}
 
+      {/* What changed: the backend already returns a unified diff for
+          every structural edit; showing it turns a silent whole-file
+          rewrite into a reviewable change. */}
+      <EditDiffToast />
+
       {!hasFiles ? (
         <WelcomeScreen />
       ) : (
@@ -228,6 +233,63 @@ export function AppShell() {
 
           <TabBar />
         </>
+      )}
+    </div>
+  );
+}
+
+/** Confirmation of the last structural edit, dismissible. */
+function EditDiffToast() {
+  const diff = useUIStore((s) => s.lastEditDiff);
+  const setDiff = useUIStore((s) => s.setLastEditDiff);
+  const [expanded, setExpanded] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!diff) return;
+    setExpanded(false);
+    const t = setTimeout(() => setDiff(null), 8000);
+    return () => clearTimeout(t);
+  }, [diff, setDiff]);
+
+  if (!diff) return null;
+  const changed = diff
+    .split("\n")
+    .filter((l) => (l.startsWith("+") || l.startsWith("-")) && !l.startsWith("+++") && !l.startsWith("---"));
+
+  return (
+    <div style={{
+      margin: "8px 12px 0", padding: "8px 10px", borderRadius: 8,
+      border: "1px solid var(--success)", background: "rgba(34,197,94,0.10)",
+      fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-primary)",
+      flexShrink: 0,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ flex: 1, color: "var(--success)" }}>
+          Applied — {changed.length} line{changed.length === 1 ? "" : "s"} changed
+        </span>
+        <button
+          onClick={() => setExpanded((e) => !e)}
+          style={{ background: "none", border: "none", color: "var(--success)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, minHeight: "auto" }}
+        >
+          {expanded ? "hide" : "show"}
+        </button>
+        <button
+          onClick={() => setDiff(null)}
+          aria-label="Dismiss"
+          style={{ background: "none", border: "none", color: "var(--text-secondary)", cursor: "pointer", fontSize: 16, lineHeight: 1, minHeight: "auto", padding: "0 4px" }}
+        >
+          ×
+        </button>
+      </div>
+      {expanded && (
+        <pre style={{
+          margin: "6px 0 0", maxHeight: 160, overflow: "auto",
+          whiteSpace: "pre-wrap", wordBreak: "break-word",
+        }}>
+          {changed.map((l, i) => (
+            <div key={i} style={{ color: l.startsWith("+") ? "var(--success)" : "var(--error)" }}>{l}</div>
+          ))}
+        </pre>
       )}
     </div>
   );
