@@ -12,6 +12,7 @@ import { EditElementDialog } from "../dialogs/EditElementDialog";
 import { DeleteConfirmDialog } from "../dialogs/DeleteConfirmDialog";
 import { useUIStore } from "../../stores/ui-store";
 import { useModelStore } from "../../stores/model-store";
+import { useViewport } from "../../hooks/useViewport";
 import { pickFile, readBrowserFile } from "../../lib/tauri-bridge";
 import { SAMPLE_SOURCE } from "../../App";
 
@@ -82,12 +83,12 @@ function WelcomeScreen() {
           New Model
         </button>
       </div>
-      <button onClick={() => loadSource(SAMPLE_SOURCE, "VehicleSystem.sysml")} style={{
+      <button onClick={() => loadSource(SAMPLE_SOURCE, "ReliefValve.sysml")} style={{
         ...btnStyle, padding: "8px 20px", fontSize: 12,
         background: "none", color: "var(--text-muted)",
         border: "1px solid var(--border)",
       }}>
-        Load Example (Vehicle System)
+        Load Example (Relief Valve)
       </button>
     </div>
   );
@@ -103,6 +104,7 @@ export function AppShell() {
   const hasFiles = Object.keys(useModelStore((s) => s.openFiles)).length > 0;
   const error = useModelStore((s) => s.error);
   const clearError = useModelStore((s) => s.clearError);
+  const viewport = useViewport();
   const undo = useModelStore((s) => s.undo);
   const redo = useModelStore((s) => s.redo);
   const saveCurrentFile = useModelStore((s) => s.saveCurrentFile);
@@ -177,14 +179,27 @@ export function AppShell() {
         <WelcomeScreen />
       ) : (
         <>
-          <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          <div style={{
+            flex: 1, overflow: "hidden", display: "flex",
+            // Wide viewports keep the element browser visible beside the
+            // active view; compact ones show one panel at a time.
+            flexDirection: viewport === "wide" ? "row" : "column",
+          }}>
+            {viewport === "wide" && activeTab !== "browser" && (
+              <div style={{
+                width: 320, flexShrink: 0, borderRight: "1px solid var(--border)",
+                display: "flex", flexDirection: "column", overflow: "hidden",
+              }}>
+                <ElementBrowser />
+              </div>
+            )}
             {activeTab === "browser" && <ElementBrowser />}
             {activeTab === "diagram" && <DiagramView />}
             {/* Always mounted: unmounting destroyed CodeMirror's undo
                 history, scroll position, and folds on every tab switch. */}
             <div style={{
               display: activeTab === "editor" ? "flex" : "none",
-              flexDirection: "column", flex: 1, minHeight: 0,
+              flexDirection: "column", flex: 1, minHeight: 0, minWidth: 0,
             }}>
               <EditorView />
             </div>
