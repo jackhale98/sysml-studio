@@ -17,38 +17,44 @@ Status key: **[fixed]** resolved in this pass · **[open]** outstanding.
 
 ## Blocking
 
-**B1. No undo, and dialogs mutate the file irreversibly.** [open]
+**B1. No undo, and dialogs mutate the file irreversibly.** [fixed]
 Create/Edit/Delete each replace the whole document via `updateSource`.
 CodeMirror's own history is destroyed on every tab switch because
 `AppShell` conditionally mounts `EditorView`, so a delete performed in
 the Browser cannot be undone from the Editor. Rename is whole-file and
 unpreviewed.
-→ Keep a source-snapshot stack in `model-store` with a global Ctrl/Cmd+Z,
-and render `EditorView` always (hide with CSS) instead of unmounting.
+Fixed: per-file source snapshots (capped at 50) with `applyEdit`,
+Ctrl/Cmd+Z, Ctrl+Shift+Z / Ctrl+Y, header undo/redo buttons, and the
+editor now always mounted (hidden with CSS) so its own history, scroll
+position, and folds survive tab switches. Ctrl+S saves from anywhere.
 
-**B2. Errors are computed and then discarded.** [partly fixed]
+**B2. Errors are computed and then discarded.** [fixed]
 `model-store` sets `error` on every failure path and nothing renders it;
 the only consumer colours an 8×8px dot with a `title` tooltip, which
 does not exist on touch. Analysis panels now report through a shared
 banner **[fixed]**, and the new Risk/Tolerance/Run-Calc panels surface
-their own failures **[fixed]**, but the store-level `error` (failed
-open, failed save, parse failure) is still invisible **[open]**.
-→ Render `error` as a dismissible banner in `AppShell`.
+their own failures, and the store-level `error` (failed open, save, or
+parse) now renders as a dismissible `role="alert"` banner in `AppShell`.
 
-**B3. On mobile you cannot get anything out.** [open]
+**B3. On mobile you cannot get anything out.** [fixed]
 Save writes into the app sandbox when `filePath` is a bare filename;
 `pickSaveFile` has no mobile implementation and `handleSave` has no
 try/catch, so the button silently does nothing. CSV and PNG export use
 `<a download>`, which WKWebView ignores.
-→ Route save/export through Tauri fs + the share sheet; force Save-As
-when `filePath` has no directory.
+Fixed: `src/lib/export.ts` routes every export through the Tauri save
+dialog and a real file write (the anchor remains only as a browser-dev
+fallback); save forces Save-As when the path has no directory component,
+and a rejected save reports why. CSV export also added to the BOM and
+Run Calc panels, which had none.
 
-**B4. PNG export produces a broken image everywhere.** [open]
+**B4. PNG export produces a broken image everywhere.** [fixed]
 The exporter serializes a detached SVG clone whose fills are CSS custom
 properties (`var(--text-primary)`, …). Detached from `:root` they
 resolve to nothing, and the canvas gets no background — the only visual
 deliverable the app produces does not look like what is on screen.
-→ Inline computed colours into the clone; paint the background first.
+Fixed: computed fill/stroke/font values are copied node-for-node into
+the clone, the canvas is painted with `--bg-primary` first, and an
+`onerror` handler reports failure instead of doing nothing.
 
 **B5. Creating a "satisfy" produces a relationship the app then reports
 as missing.** [fixed]
@@ -61,24 +67,23 @@ given.
 
 ## Friction
 
-**Information architecture.** Cross-tab navigation clears the selection
-context. Desktop gets the phone layout verbatim — there is no responsive
-code at all, while the window opens at 1280×800, so a desktop user gets
-one full-width view and a bottom tab bar instead of the browser+editor+
-diagram tri-pane the work calls for. No global shortcuts (save, open,
-new, undo, go-to-element).
+**Information architecture.** [partly fixed] A `useViewport` hook now
+keeps the element browser beside the active view at ≥900px, and Ctrl+S /
+Ctrl+Z / Ctrl+Shift+Z are global. Still open: cross-tab navigation
+clears the selection context, and there is no open/new/go-to-element
+shortcut.
 
 **Creation.** The Browser's Add action passes the parent's *kind* as the
 suggested kind and never passes the category, so the kind selector and
 the form below it disagree. No duplicate-name check. Multiplicity is
 free text with no validation. "New Model" produces an empty package —
 no scaffold with the imports, a requirement, a part, and a view that a
-real model starts from. The bundled example is mislabelled ("Vehicle
-System"; it is a relief valve). **[open]**
+real model starts from. **[open]** The Add-action kind/category desync
+and the mislabelled example are **[fixed]**.
 
-**Editing.** The backend computes a unified diff and post-edit parse
-errors and the front end reads neither — a "here is what changed"
-confirmation is one binding away. Edit exposes only name/short
+**Editing.** [partly fixed] The unified diff is now shown as a
+dismissible confirmation (expandable to the changed lines). Still open:
+edit exposes only name/short
 name/type/value/doc, so multiplicity, specialization, redefinition,
 port direction, guards, and requirement text are authorable at creation
 but not afterwards. Doc is a single-line input. No batch or multi-select
@@ -89,17 +94,14 @@ rename. **[open]**
 first match arbitrarily, and presents the result as fact — with no way
 to override the binding. What-If and Sweep require typing dotted paths
 by hand with no picker and no feedback when a path matches nothing. No
-export from the analysis tab at all, and no way to record a result back
-into the model, so the loop ends in a screenshot. Results are now
-clickable in the three new panels **[fixed]**; the older panels still
-dead-end **[open]**.
+no way to record a result back into the model, so the loop still ends
+outside the model **[open]**. CSV export and clickable rows that select
+the contributing element are **[fixed]** for the BOM and Run Calc
+panels; the remaining panels still dead-end **[open]**.
 
-**Mobile.** Good bones: 44px targets, safe-area insets, bottom sheets,
-a well-built swipe row, hand-rolled pinch/pan. But there is no keyboard
-handling anywhere (`visualViewport` is never consulted) while every
-dialog is bottom-anchored — the primary button sits exactly where the
-keyboard appears. Swipe actions are undiscoverable and have no desktop
-equivalent. Zoom is disabled app-wide alongside 9–11px mono text.
+**Mobile.** [partly fixed] Dialogs now track `visualViewport` and sit
+above the on-screen keyboard, and pinch-zoom is re-enabled. Still open:
+swipe actions are undiscoverable and have no desktop equivalent.
 
 **Feedback and trust.** Loading is a coloured dot. When a parse fails
 the last-good model stays on screen unmarked. Numbers were not traceable
@@ -107,19 +109,23 @@ to their source; the new panels link every row to its source line
 **[fixed]**, and derived values name the calc that produced them
 **[fixed]**, but BOM totals still offer no drill-through **[open]**.
 
-**Accessibility.** No ARIA anywhere, no focus trapping or restoration,
-no Escape-to-close, and `--text-muted` on `--bg-primary` is ≈2.8:1 —
-below the 4.5:1 threshold — while being used for labels, counts, and
-column headers. Interactive `<div onClick>` throughout is not keyboard
-reachable. **[open]**
+**Accessibility.** [partly fixed] Dialogs close on Escape, trap and
+restore focus, and carry `role="dialog"`/`aria-modal`/`aria-label`;
+`--text-muted` went from ≈2.8:1 to ≈7.8:1. Still open: interactive
+`<div onClick>` throughout is not keyboard reachable, tabs lack
+`role="tab"`, and diagram nodes are bare `<rect onClick>`. **[open]**
 
 ---
 
 ## Gaps against the domain
 
-Absent entirely: impact analysis (implemented in Rust, registered, and
-called by no component — "what breaks if I change this?" is one import
-away); version comparison or diff against a baseline; reporting or
+Impact analysis is now wired into the element detail sheet, and its
+traversal was corrected — it followed containment outward, so a
+package's "impact" was the whole model; it now follows dependency edges
+(what refers to this element, transitively, plus a requirement's
+satisfiers and verifiers). **[fixed]**
+
+Absent entirely: version comparison or diff against a baseline; reporting or
 deliverable generation beyond three CSVs and a broken PNG; a
 requirements table editor (ID / text / rationale / verification method /
 status); review and collaboration state; project/library browsing; and a
@@ -135,17 +141,23 @@ panel is its ad-hoc counterpart. **[fixed]**
 
 ---
 
-## Suggested order
+## Remaining work, in order
 
-1. Surface store-level errors (B2 remainder) — everything else is
-   unverifiable while failures are invisible.
-2. Global undo + persistent editor mount (B1) — makes editing safe.
-3. Mobile save/share and correct PNG (B3, B4) — makes the mobile target
-   viable at all.
-4. Wire the existing `EditOutcome.diff` into a post-edit confirmation and
-   `getImpactAnalysis` into the detail sheet — two complete backends
-   waiting for a small amount of UI each.
-5. Make the older analysis results clickable (every payload already
-   carries `element_id`) and add CSV export to the analysis tab.
-6. Responsive desktop layout; then accessibility (focus, Escape, ARIA,
-   contrast).
+All five blocking findings are fixed. What is left:
+
+1. Record analysis results back into the model (write a computed value
+   into an attribute, attach a verdict to a verification case) — the
+   analysis loop still ends outside the model.
+2. Editing parity with creation: multiplicity, specialization,
+   redefinition, port direction, guards, requirement text, and
+   multi-line docs are authorable at creation but not afterwards; add
+   batch/multi-select editing.
+3. Editor as a first-class path: completion, go-to-definition, hover,
+   rename — the LSP-shaped features the CLI's server already implements.
+4. Model scaffolds for "New Model", duplicate-name checks, and
+   multiplicity validation.
+5. Remaining accessibility: keyboard-reachable rows and diagram nodes,
+   `role="tab"` on the tab bar, light-theme type badges.
+6. Domain gaps: model diff against a baseline, reporting/deliverables, a
+   requirements table editor, project/library browsing, parametric
+   diagrams.
