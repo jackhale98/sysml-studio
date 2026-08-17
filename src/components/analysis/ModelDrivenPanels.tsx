@@ -13,6 +13,7 @@ import { listCalcs, runCalcOverRows } from "../../lib/tauri-bridge";
 import type { CalcInfo, ComputedRow } from "../../lib/tauri-bridge";
 import { useModelStore } from "../../stores/model-store";
 import { useUIStore } from "../../stores/ui-store";
+import { exportCsv } from "../../lib/export";
 
 const mono: React.CSSProperties = { fontFamily: "var(--font-mono)", fontSize: 11 };
 const card: React.CSSProperties = {
@@ -105,6 +106,20 @@ export function CalcRunnerPanel() {
         <button style={{ ...btn, background: "var(--accent)", color: "#fff", border: "none" }} onClick={run} disabled={!calc}>
           Run
         </button>
+        {rows.length > 0 && (
+          <button
+            style={btn}
+            onClick={() =>
+              void exportCsv(
+                `${calc || "calc"}-results.csv`,
+                ["Element", calc || "Value", "Note", "Line"],
+                rows.map((r) => [r.element_name, r.value ?? "", r.error ?? "", r.line]),
+              )
+            }
+          >
+            Export CSV
+          </button>
+        )}
       </div>
 
       {selected?.expression && (

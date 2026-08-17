@@ -1,18 +1,15 @@
 import React, { useState } from "react";
 import { useModelStore } from "../../stores/model-store";
+import { saveTextFile } from "../../lib/export";
 import { useUIStore } from "../../stores/ui-store";
 import type { SysmlModel, TraceabilityEntry, ValidationReport } from "../../lib/element-types";
 
 type ExportTab = "analysis" | "table";
 
 function downloadCsv(filename: string, csv: string) {
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  // Goes through the Tauri save dialog: `<a download>` is ignored by
+  // WKWebView, so these buttons were inert on iOS.
+  void saveTextFile(filename, csv, "csv");
 }
 
 function buildTraceabilityCsv(traceability: TraceabilityEntry[]): string {

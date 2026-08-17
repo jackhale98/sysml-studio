@@ -135,7 +135,21 @@ export function ElementBrowser() {
               onToggle={toggleExpand}
               selected={selectedId === row.element.id}
               onSelect={(e) => selectElement(e.id)}
-              onAdd={(e) => openDialog("create", undefined, { suggestedParentId: e.id, suggestedKind: typeof e.kind === "string" ? e.kind : undefined })}
+              onAdd={(e) => {
+                // Adding "on" an element means adding a member INSIDE
+                // it. Suggesting the parent's own kind offered to create
+                // another part next to the part you tapped, and the
+                // category was never passed, so the kind selector and
+                // the form below it disagreed.
+                const { kind, category } = suggestedMemberFor(
+                  typeof e.kind === "string" ? e.kind : "",
+                );
+                openDialog("create", undefined, {
+                  suggestedParentId: e.id,
+                  suggestedKind: kind,
+                  suggestedCategory: category,
+                });
+              }}
               onEdit={(e) => openDialog("edit", e.id)}
               onDelete={(e) => openDialog("delete", e.id)}
             />
@@ -151,4 +165,19 @@ export function ElementBrowser() {
       </div>
     </>
   );
+}
+
+/**
+ * What a user most likely wants to add inside an element of this kind,
+ * with the create dialog's category index so the selector and the form
+ * agree. Category indices: 0 Structure, 1 Behavior, 2 Requirements.
+ */
+function suggestedMemberFor(parentKind: string): { kind: string; category: number } {
+  if (parentKind.startsWith("state")) return { kind: "state_usage", category: 1 };
+  if (parentKind.startsWith("action")) return { kind: "action_usage", category: 1 };
+  if (parentKind.startsWith("requirement")) return { kind: "requirement_usage", category: 2 };
+  if (parentKind.startsWith("port")) return { kind: "attribute_usage", category: 0 };
+  if (parentKind.startsWith("package")) return { kind: "part_def", category: 0 };
+  // Structural parents: an attribute is the most common member.
+  return { kind: "attribute_usage", category: 0 };
 }

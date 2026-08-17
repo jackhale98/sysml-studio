@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useModelStore } from "../../stores/model-store";
+import { useUIStore } from "../../stores/ui-store";
+import { exportCsv } from "../../lib/export";
 import { CalcRunnerPanel } from "./ModelDrivenPanels";
 import type {
   BomNode, ConstraintModel, CalcModel, EvalResult,
@@ -216,6 +218,31 @@ function BomPanel() {
         }}>
           {loading ? "..." : "Refresh"}
         </button>
+        {bom.length > 0 && (
+          <button
+            onClick={() => {
+              const rows: unknown[][] = [];
+              const walk = (n: BomNode, depth: number) => {
+                rows.push([
+                  "  ".repeat(depth) + n.name, n.kind, n.type_ref ?? "",
+                  n.multiplicity, rollupKey, n.rollups[rollupKey] ?? "",
+                  bomUnits[rollupKey] ?? "",
+                ]);
+                n.children.forEach((c) => walk(c, depth + 1));
+              };
+              bom.forEach((n) => walk(n, 0));
+              void exportCsv("bom.csv",
+                ["Element", "Kind", "Type", "Qty", "Attribute", "Total", "Unit"], rows);
+            }}
+            style={{
+              padding: "6px 12px", borderRadius: 6, border: "1px solid var(--border)",
+              background: "var(--bg-tertiary)", color: "var(--text-primary)",
+              fontSize: 11, fontFamily: "var(--font-mono)", cursor: "pointer",
+            }}
+          >
+            Export CSV
+          </button>
+        )}
       </div>
 
       {bom.length === 0 && !loading && (
@@ -332,8 +359,17 @@ function BomTreeNode({ node, depth, isLast, rollupKey }: { node: BomNode; depth:
           </span>
         )}
 
-        {/* Name and type */}
-        <span style={{ ...monoSmall, fontWeight: 600, color: depth === 0 ? "#3b82f6" : "#93c5fd", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>
+        {/* Name and type — clicking the name selects the element, so a
+            number in the BOM leads back to what produced it. */}
+        <span
+          onClick={(e) => {
+            if (!node.element_id) return;
+            e.stopPropagation();
+            useUIStore.getState().selectElement(node.element_id);
+          }}
+          title={node.element_id ? "Select this element" : undefined}
+          style={{ ...monoSmall, fontWeight: 600, color: depth === 0 ? "#3b82f6" : "#93c5fd", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0, cursor: node.element_id ? "pointer" : "inherit", textDecoration: node.element_id ? "underline dotted" : "none" }}
+        >
           {node.name}
           {node.type_ref && (
             <span style={{ fontWeight: 400, color: "var(--text-muted)" }}> : {node.type_ref}</span>
