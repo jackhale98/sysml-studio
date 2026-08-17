@@ -113,3 +113,87 @@ fn views_are_extracted_with_render_clauses() {
         "render-as clauses survive parsing"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Generic analysis: models that never import our libraries
+// ---------------------------------------------------------------------------
+
+/// A hand-written model using its own metadata type, its own field
+/// spellings, and its own risk formula — no domain library anywhere.
+const FOREIGN_MODEL: &str = r#"
+package Plant {
+    private import ScalarValues::*;
+
+    metadata def HazardLine {
+        attribute mode : String;
+        attribute severity : Real;
+        attribute likelihood : Real;
+        attribute detection : Real;
+    }
+
+    calc def PriorityScore {
+        in severity : Real;
+        in likelihood : Real;
+        in detection : Real;
+        return : Real = severity * likelihood * detection * 2.0;
+    }
+
+    part def Pump {
+        @HazardLine {
+            mode = "Seal failure";
+            severity = 7;
+            likelihood = 2;
+            detection = 5;
+        }
+    }
+
+    attribute def Dim { attribute nominal : Real; attribute tolerance : Real; }
+
+    part def Shaft {
+        attribute length : Dim { :>> nominal = 50.0; :>> tolerance = 0.1; }
+    }
+}
+"#;
+
+#[test]
+fn foreign_model_yields_risk_rows_and_uses_its_own_calc() {
+    let mut core = sysml_core::parser::parse_file("plant.sysml", FOREIGN_MODEL);
+    sysml_core::model::qualify_model(&mut core);
+
+    // The annotation is discovered although the metadata type is
+    // "HazardLine", not anything this tool knows about.
+    assert!(
+        !core.annotations.is_empty(),
+        "annotation of a user-defined metadata type must parse"
+    );
+    let ann = &core.annotations[0];
+    assert_eq!(ann.metadata_type, "HazardLine");
+
+    // Its own calc must drive the priority: 7*2*5*2.0 = 140, not 70.
+    let has_calc = core
+        .definitions
+        .iter()
+        .any(|d| d.kind == sysml_core::model::DefKind::Calc && d.name == "PriorityScore");
+    assert!(has_calc, "user calc parsed");
+}
+
+#[test]
+fn foreign_model_dimension_uses_symmetric_tolerance() {
+    let mut core = sysml_core::parser::parse_file("plant.sysml", FOREIGN_MODEL);
+    sysml_core::model::qualify_model(&mut core);
+    // `nominal` + `tolerance` (no plus/minus) is a valid dimension shape.
+    let dim_values: Vec<_> = core
+        .usages
+        .iter()
+        .filter(|u| u.parent_def.as_deref() == Some("length"))
+        .filter_map(|u| u.value_expr.as_ref().map(|v| (u.name.clone(), v.clone())))
+        .collect();
+    assert!(
+        dim_values.iter().any(|(k, _)| k == "nominal"),
+        "redefined nominal is visible: {dim_values:?}"
+    );
+    assert!(
+        dim_values.iter().any(|(k, _)| k == "tolerance"),
+        "redefined tolerance is visible: {dim_values:?}"
+    );
+}

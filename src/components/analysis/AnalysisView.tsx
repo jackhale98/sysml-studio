@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useModelStore } from "../../stores/model-store";
+import { RiskPanel, TolerancePanel, CalcRunnerPanel } from "./ModelDrivenPanels";
 import type {
   BomNode, ConstraintModel, CalcModel, EvalResult,
   StateMachineModel, SimulationState, SimStep,
@@ -18,9 +19,11 @@ import {
   evaluateWhatIf, evaluateSweep,
 } from "../../lib/tauri-bridge";
 
-type AnalysisPanel = "bom" | "stm" | "action" | "calcs" | "rollup" | "analysis" | "whatif";
+type AnalysisPanel = "risk" | "tolerance" | "bom" | "stm" | "action" | "calcs" | "rollup" | "analysis" | "whatif" | "runcalc";
 
 const PANEL_LABELS: { id: AnalysisPanel; label: string }[] = [
+  { id: "risk", label: "Risk" },
+  { id: "tolerance", label: "Tolerance" },
   { id: "bom", label: "BOM" },
   { id: "rollup", label: "Rollup" },
   { id: "stm", label: "State Machine" },
@@ -28,6 +31,7 @@ const PANEL_LABELS: { id: AnalysisPanel; label: string }[] = [
   { id: "calcs", label: "Calcs" },
   { id: "analysis", label: "Analysis" },
   { id: "whatif", label: "What-If" },
+  { id: "runcalc", label: "Run Calc" },
 ];
 
 /**
@@ -70,8 +74,9 @@ export function AnalysisView() {
       {/* Panel selector */}
       <div style={{
         display: "flex", gap: 0, margin: "10px 14px 0",
-        borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)",
-        flexShrink: 0,
+        borderRadius: 8, overflowX: "auto", overflowY: "hidden",
+        border: "1px solid var(--border)", flexShrink: 0,
+        WebkitOverflowScrolling: "touch",
       }}>
         {PANEL_LABELS.map((p) => (
           <button
@@ -91,6 +96,9 @@ export function AnalysisView() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: 14 }}>
+        {panel === "risk" && <RiskPanel />}
+        {panel === "tolerance" && <TolerancePanel />}
+        {panel === "runcalc" && <CalcRunnerPanel />}
         {panel === "bom" && <BomPanel />}
         {panel === "rollup" && <RollupPanel />}
         {panel === "stm" && <StateMachinePanel />}
