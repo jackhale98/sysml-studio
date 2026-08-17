@@ -25,6 +25,9 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          # Include the toolchain in the key: a cached staticlib built
+          # against an older iOS SDK fails to link against a newer one.
+          key: xcode26-ios16
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -105,6 +108,9 @@ jobs:
         uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
+          # Include the toolchain in the key: a cached staticlib built
+          # against an older iOS SDK fails to link against a newer one.
+          key: xcode26-ios16
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
