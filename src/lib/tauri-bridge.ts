@@ -286,76 +286,6 @@ export async function listModelViews(): Promise<ViewInfo[]> {
 
 // ─── Model-driven analysis (generic primitives + presets) ───
 
-export interface FmeaItem {
-  element_id: number;
-  element_name: string;
-  source: string;
-  annotation_type: string | null;
-  failure_mode: string | null;
-  cause: string | null;
-  effect: string | null;
-  category: string | null;
-  action: string | null;
-  severity: number | null;
-  occurrence: number | null;
-  detection: number | null;
-  rpn: number | null;
-  rpn_source: string | null;
-  criticality: number | null;
-  criticality_source: string | null;
-  extra_fields: [string, string][];
-  line: number;
-}
-
-export interface RiskMatrixCell {
-  severity: number;
-  occurrence: number;
-  count: number;
-  element_ids: number[];
-}
-
-export interface ToleranceDimension {
-  element_id: number;
-  name: string;
-  qualified_name: string;
-  owner: string;
-  nominal: number;
-  plus: number;
-  minus: number;
-  unit: string | null;
-  form: string;
-  line: number;
-}
-
-export interface StackupContributionResult {
-  dimension: string;
-  sense: number;
-  quantity: number;
-  nominal: number;
-  plus: number;
-  minus: number;
-  variance_share: number;
-}
-
-export interface StackupResult {
-  nominal: number;
-  worst_case_min: number;
-  worst_case_max: number;
-  worst_case_margin: number | null;
-  worst_case_verdict: string | null;
-  rss_sigma: number;
-  rss_min: number;
-  rss_max: number;
-  rss_margin: number | null;
-  rss_verdict: string | null;
-  cp: number | null;
-  cpk: number | null;
-  sigma_source: string;
-  unit: string | null;
-  contributions: StackupContributionResult[];
-  warnings: string[];
-}
-
 export interface CalcInfo {
   name: string;
   parameters: string[];
@@ -370,30 +300,6 @@ export interface ComputedRow {
   value: number | null;
   error: string | null;
   line: number;
-}
-
-export async function listFmeaItems(): Promise<FmeaItem[]> {
-  return tauriInvoke<FmeaItem[]>("list_fmea_items");
-}
-
-export async function fmeaRiskMatrix(): Promise<RiskMatrixCell[]> {
-  return tauriInvoke<RiskMatrixCell[]>("fmea_risk_matrix");
-}
-
-export async function listToleranceDimensions(): Promise<ToleranceDimension[]> {
-  return tauriInvoke<ToleranceDimension[]>("list_tolerance_dimensions");
-}
-
-export async function computeStackup(
-  contributions: { dimension: string; sense: number; quantity: number }[],
-  lowerLimit?: number,
-  upperLimit?: number,
-): Promise<StackupResult> {
-  return tauriInvoke<StackupResult>("compute_stackup", {
-    contributions,
-    lowerLimit: lowerLimit ?? null,
-    upperLimit: upperLimit ?? null,
-  });
 }
 
 export async function listCalcs(): Promise<CalcInfo[]> {

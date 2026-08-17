@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useModelStore } from "../../stores/model-store";
-import { RiskPanel, TolerancePanel, CalcRunnerPanel } from "./ModelDrivenPanels";
+import { CalcRunnerPanel } from "./ModelDrivenPanels";
 import type {
   BomNode, ConstraintModel, CalcModel, EvalResult,
   StateMachineModel, SimulationState, SimStep,
@@ -19,11 +19,9 @@ import {
   evaluateWhatIf, evaluateSweep,
 } from "../../lib/tauri-bridge";
 
-type AnalysisPanel = "risk" | "tolerance" | "bom" | "stm" | "action" | "calcs" | "rollup" | "analysis" | "whatif" | "runcalc";
+type AnalysisPanel = "bom" | "stm" | "action" | "calcs" | "rollup" | "analysis" | "whatif" | "runcalc";
 
 const PANEL_LABELS: { id: AnalysisPanel; label: string }[] = [
-  { id: "risk", label: "Risk" },
-  { id: "tolerance", label: "Tolerance" },
   { id: "bom", label: "BOM" },
   { id: "rollup", label: "Rollup" },
   { id: "stm", label: "State Machine" },
@@ -96,8 +94,6 @@ export function AnalysisView() {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden", padding: 14 }}>
-        {panel === "risk" && <RiskPanel />}
-        {panel === "tolerance" && <TolerancePanel />}
         {panel === "runcalc" && <CalcRunnerPanel />}
         {panel === "bom" && <BomPanel />}
         {panel === "rollup" && <RollupPanel />}

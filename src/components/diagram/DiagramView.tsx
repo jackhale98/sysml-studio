@@ -391,6 +391,28 @@ export function DiagramView() {
         </div>
       )}
 
+      {/* No model views: say what to write, since this is where a
+          model's own analyses (worksheets, matrices, summaries) show up */}
+      {viewMode === "custom" && customViews.length === 0 && (
+        <div style={{
+          padding: 16, fontFamily: "var(--font-mono)", fontSize: 11,
+          color: "var(--text-secondary)", lineHeight: 1.7,
+        }}>
+          This model declares no views. A view def in the model decides
+          what is shown and how — a table (rows, columns, sorting,
+          pivots) or a diagram:
+          <pre style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{`view def FailureModes {
+    @TableRendering {
+        rows = "@Fmea";
+        columns = "element; failureMode; severity; likelihood; detection";
+        sortBy = "-severity";
+    }
+}`}</pre>
+          Whatever the model declares appears here, rendered by the same
+          engine the CLI uses for `sysml view`.
+        </div>
+      )}
+
       {/* Model-defined table view — rendered by sysml-core's view
           engine, identical to `sysml view <name>` */}
       {viewMode === "custom" && renderedTable && (
