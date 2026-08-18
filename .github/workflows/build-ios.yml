@@ -137,6 +137,25 @@ jobs:
             echo "Warning: Icon directories not found"
           fi
 
+      - name: Declare export compliance
+        run: |
+          set -euo pipefail
+          # Without this key every upload lands in TestFlight as
+          # "Missing Compliance" and cannot be tested until someone
+          # answers the export question by hand. The app uses only
+          # standard HTTPS/system crypto, which is exempt.
+          PLIST=$(find src-tauri/gen/apple -name "Info.plist" -path "*_iOS*" | head -1)
+          if [ -z "$PLIST" ]; then
+            PLIST=$(find src-tauri/gen/apple -name "Info.plist" | head -1)
+          fi
+          if [ -n "$PLIST" ]; then
+            /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" "$PLIST"
+            echo "Declared ITSAppUsesNonExemptEncryption=false in $PLIST"
+          else
+            echo "::warning::No Info.plist found; export compliance must be answered manually"
+          fi
+
       - name: Prepare App Store Connect API key
         env:
           API_KEY: ${{ secrets.APP_STORE_CONNECT_API_KEY }}
