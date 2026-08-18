@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1 — 2026-08-17
+
+iOS release plumbing; no application changes.
+
+- Build with Xcode 26 on `macos-26`: App Store Connect now rejects
+  anything not built with the iOS 26 SDK. A "Select newest Xcode" step
+  picks the highest installed Xcode and fails fast with a readable
+  message if it predates 26, instead of building for ten minutes and
+  being rejected at upload.
+- Deployment target raised to iOS 16 (Tauri defaulted to 14). Under
+  Xcode 26 the old target failed to link: the Swift 5.x compatibility
+  shims are gone, and `SwiftUICore` refuses clients built against
+  older releases.
+- The Rust cache key carries the toolchain, so a staticlib built
+  against an older iOS SDK is never linked into a newer-SDK build.
+
 ## 0.6.0 — 2026-08-17
 
 Correctness and generality release. Two audits (`AUDIT-2026-08.md`,
